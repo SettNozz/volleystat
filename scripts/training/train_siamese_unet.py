@@ -94,8 +94,6 @@ class SiameseDataset(Dataset):
         # Concatenate query and support images (6 channels)
         input_tensor = torch.cat([query_img, support_img], dim=0)
         
-        print(f"Query: {query_name} -> Support: {support_name}")
-        
         return input_tensor, mask
 
 
@@ -581,28 +579,17 @@ def main():
     ])
     
     # Dataset paths
-    train_support_path = "data/datasets/combined_datasets/combined_run_20250618_005343/train/support/"
-    train_query_path = "data/datasets/combined_datasets/combined_run_20250618_005343/train/query/"
-    train_mask_path = "data/datasets/combined_datasets/combined_run_20250618_005343/train/masks/"
-
-    val_support_path = "data/datasets/combined_datasets/combined_run_20250618_005343/val/support/"
-    val_query_path = "data/datasets/combined_datasets/combined_run_20250618_005343/val/query/"
-    val_mask_path = "data/datasets/combined_datasets/combined_run_20250618_005343/val/masks/"
-
-    test_support_path = "data/datasets/combined_datasets/combined_run_20250618_005343/test/support/"
-    test_query_path ="data/datasets/combined_datasets/combined_run_20250618_005343/test/query/"
-    test_mask_path = "data/datasets/combined_datasets/combined_run_20250618_005343/test/masks/"
-    # train_support_path = "data/train_val_test_prepared_for_training/train/support/"
-    # train_query_path = "data/train_val_test_prepared_for_training/train/query/"
-    # train_mask_path = "data/train_val_test_prepared_for_training/train/masks/"
-    #
-    # val_support_path = "data/train_val_test_prepared_for_training/val/support/"
-    # val_query_path = "data/train_val_test_prepared_for_training/val/query/"
-    # val_mask_path = "data/train_val_test_prepared_for_training/val/masks/"
-    #
-    # test_support_path = "data/train_val_test_prepared_for_training/test/support/"
-    # test_query_path = "data/train_val_test_prepared_for_training/test/query/"
-    # test_mask_path = "data/train_val_test_prepared_for_training/test/masks/"
+    train_support_path = "data/train_val_test_prepared_for_training/train/support/"
+    train_query_path = "data/train_val_test_prepared_for_training/train/query/"
+    train_mask_path = "data/train_val_test_prepared_for_training/train/masks/"
+    
+    val_support_path = "data/train_val_test_prepared_for_training/val/support/"
+    val_query_path = "data/train_val_test_prepared_for_training/val/query/"
+    val_mask_path = "data/train_val_test_prepared_for_training/val/masks/"
+    
+    test_support_path = "data/train_val_test_prepared_for_training/test/support/"
+    test_query_path = "data/train_val_test_prepared_for_training/test/query/"
+    test_mask_path = "data/train_val_test_prepared_for_training/test/masks/"
     
     # Check if datasets exist
     for path in [train_support_path, train_query_path, train_mask_path,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Few-Shot Ball Segmentation Training (Fixed Version)
+Few-Shot Ball Segmentation Training (Fixed Version) - No MLflow
 Trains a U-Net model for few-shot ball segmentation.
 """
 
@@ -20,6 +20,8 @@ import json
 from datetime import datetime
 import torch.nn.functional as F
 from sklearn.metrics import precision_score, recall_score, f1_score
+# import mlflow  # Commented out
+# import mlflow.pytorch  # Commented out
 
 
 class UNet(nn.Module):
@@ -201,7 +203,7 @@ def evaluate_epoch(model, data_loader, criterion, device):
     return avg_loss, avg_metrics
 
 
-def train_model_v2_fixed(
+def train_model_with_mlflow_v2_fixed(
     model,
     train_loader,
     val_loader,
@@ -210,10 +212,26 @@ def train_model_v2_fixed(
     optimizer,
     num_epochs,
     device,
+    experiment_name="few_shot_ball_segmentation_v2_fixed",
     save_dir="models/checkpoints"
 ):
-    """Train the few-shot segmentation model."""
+    """Train the few-shot segmentation model with MLflow tracking."""
     
+    # Set up MLflow - COMMENTED OUT
+    # mlflow.set_experiment(experiment_name)
+    
+    # with mlflow.start_run():  # COMMENTED OUT
+    # mlflow.log_params({  # COMMENTED OUT
+    #     "model_type": "UNet",
+    #     "in_channels": 6,
+    #     "out_channels": 1,
+    #     "num_epochs": num_epochs,
+    #     "learning_rate": optimizer.param_groups[0]['lr'],
+    #     "batch_size": train_loader.batch_size,
+    #     "criterion": "BCELoss",
+    #     "optimizer": "Adam"
+    # })
+
     model = model.to(device)
     criterion = criterion
     optimizer = optimizer
@@ -230,18 +248,11 @@ def train_model_v2_fixed(
     val_f1_scores = []
     best_val_precision = 0.0
     
-    # Test results tracking
-    test_epochs = []
-    test_losses = []
-    test_precisions = []
-    test_recalls = []
-    test_f1_scores = []
-    
     print(f"🚀 Starting few-shot training for {num_epochs} epochs...")
     print(f"📊 Training samples: {len(train_loader.dataset)}")
     print(f"📊 Validation samples: {len(val_loader.dataset)}")
     print(f"📊 Test samples: {len(test_loader.dataset)}")
-    print(f"🧪 Will test model every 25 epochs")
+    print(f"🔬 MLflow experiment: {experiment_name}")
     
     for epoch in range(num_epochs):
         # Training phase
@@ -297,9 +308,23 @@ def train_model_v2_fixed(
         # Learning rate scheduling based on validation loss
         scheduler.step(val_loss)
         
+        # Log metrics to MLflow - COMMENTED OUT
+        # mlflow.log_metrics({
+        #     "train_loss": train_loss,
+        #     "val_loss": val_loss,
+        #     "train_precision": train_avg_metrics['precision'],
+        #     "val_precision": val_metrics['precision'],
+        #     "train_recall": train_avg_metrics['recall'],
+        #     "val_recall": val_metrics['recall'],
+        #     "train_f1": train_avg_metrics['f1_score'],
+        #     "val_f1": val_metrics['f1_score'],
+        #     "learning_rate": optimizer.param_groups[0]['lr']
+        # }, step=epoch)
+        
         # Save best model based on validation precision
         if val_metrics['precision'] > best_val_precision:
             best_val_precision = val_metrics['precision']
+            # mlflow.pytorch.log_model(model, "best_model")  # COMMENTED OUT
             print(f"💾 Saved best model (val_precision: {val_metrics['precision']:.4f})")
             
             # Save the best model checkpoint
@@ -310,27 +335,6 @@ def train_model_v2_fixed(
         print(f"Epoch {epoch+1}/{num_epochs}:")
         print(f"  Train - Loss: {train_loss:.4f}, Precision: {train_avg_metrics['precision']:.4f}, Recall: {train_avg_metrics['recall']:.4f}, F1: {train_avg_metrics['f1_score']:.4f}")
         print(f"  Val   - Loss: {val_loss:.4f}, Precision: {val_metrics['precision']:.4f}, Recall: {val_metrics['recall']:.4f}, F1: {val_metrics['f1_score']:.4f}")
-        
-        # Test model every 25 epochs
-        if (epoch + 1) % 25 == 0:
-            print(f"\n🧪 Testing model at epoch {epoch + 1}...")
-            test_loss, test_metrics = test_model_with_visualizations(
-                model, test_loader, device, epoch + 1, 
-                save_dir=f"{save_dir}/test_epochs"
-            )
-            
-            # Track test results
-            test_epochs.append(epoch + 1)
-            test_losses.append(test_loss)
-            test_precisions.append(test_metrics['precision'])
-            test_recalls.append(test_metrics['recall'])
-            test_f1_scores.append(test_metrics['f1_score'])
-            
-            print(f"📊 Test at epoch {epoch + 1}:")
-            print(f"  Loss: {test_loss:.4f}")
-            print(f"  Precision: {test_metrics['precision']:.4f}")
-            print(f"  Recall: {test_metrics['recall']:.4f}")
-            print(f"  F1 Score: {test_metrics['f1_score']:.4f}")
         
         # Save checkpoint every 10 epochs
         if (epoch + 1) % 10 == 0:
@@ -349,6 +353,12 @@ def train_model_v2_fixed(
                 'train_f1': train_avg_metrics['f1_score'],
                 'val_f1': val_metrics['f1_score'],
             }, checkpoint_path)
+            # mlflow.log_artifact(checkpoint_path)  # COMMENTED OUT
+        
+        # Test phase using the new evaluation function
+        test_loss, test_metrics = evaluate_epoch(model, test_loader, criterion, device)
+        # mlflow.log_metrics({"test_loss": test_loss})  # COMMENTED OUT
+        # mlflow.pytorch.log_model(model, "final_model")  # COMMENTED OUT
         
         # Create and log training plots
         plt.figure(figsize=(15, 10))
@@ -418,129 +428,18 @@ def train_model_v2_fixed(
         plt.tight_layout()
         plot_path = f'{save_dir}/few_shot_v2_fixed_training_history.png'
         plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+        # mlflow.log_artifact(plot_path)  # COMMENTED OUT
         plt.close()
         
-        return train_losses, val_losses, test_losses, {
+        return train_losses, val_losses, test_loss, {
             'train_precisions': train_precisions,
             'val_precisions': val_precisions,
             'train_recalls': train_recalls,
             'val_recalls': val_recalls,
             'train_f1_scores': train_f1_scores,
             'val_f1_scores': val_f1_scores,
-            'test_losses': test_losses,
-            'test_precisions': test_precisions,
-            'test_recalls': test_recalls,
-            'test_f1_scores': test_f1_scores
+            'test_metrics': test_metrics
         }
-
-
-def test_model_with_visualizations(model, test_loader, device, epoch, save_dir="results/test_epochs"):
-    """Test model and save visualizations for each sample."""
-    model.eval()
-    test_loss = 0.0
-    all_metrics = []
-    
-    # Create directory for this epoch's results
-    epoch_dir = os.path.join(save_dir, f"epoch_{epoch}")
-    os.makedirs(epoch_dir, exist_ok=True)
-    os.makedirs(os.path.join(epoch_dir, "visualizations"), exist_ok=True)
-    
-    print(f"🧪 Testing model at epoch {epoch}...")
-    
-    with torch.no_grad():
-        for batch_idx, (images, masks) in enumerate(test_loader):
-            images = images.to(device)
-            masks = masks.to(device)
-            
-            outputs = model(images)
-            loss = criterion(outputs, masks.unsqueeze(1))
-            test_loss += loss.item()
-            
-            # Process each sample in the batch
-            pred_masks = outputs.squeeze().cpu().numpy()
-            true_masks = masks.cpu().numpy()
-            
-            # Split the 6-channel input back to query and support
-            query_images = images[:, :3, :, :].cpu().numpy()  # First 3 channels
-            support_images = images[:, 3:, :, :].cpu().numpy()  # Last 3 channels
-            
-            for sample_idx in range(images.size(0)):
-                pred_mask = pred_masks[sample_idx]
-                true_mask = true_masks[sample_idx]
-                query_img = query_images[sample_idx]
-                support_img = support_images[sample_idx]
-                
-                # Calculate metrics
-                metrics = calculate_metrics(pred_mask, true_mask)
-                all_metrics.append(metrics)
-                
-                # Create visualization
-                fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-                
-                # Query image
-                query_img_display = np.transpose(query_img, (1, 2, 0))
-                # Denormalize
-                query_img_display = query_img_display * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
-                query_img_display = np.clip(query_img_display, 0, 1)
-                axes[0, 0].imshow(query_img_display)
-                axes[0, 0].set_title("Query Image")
-                axes[0, 0].axis('off')
-                
-                # Support image
-                support_img_display = np.transpose(support_img, (1, 2, 0))
-                # Denormalize
-                support_img_display = support_img_display * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
-                support_img_display = np.clip(support_img_display, 0, 1)
-                axes[0, 1].imshow(support_img_display)
-                axes[0, 1].set_title("Support Image")
-                axes[0, 1].axis('off')
-                
-                # Ground truth mask
-                axes[1, 0].imshow(true_mask, cmap='gray')
-                axes[1, 0].set_title("Ground Truth Mask")
-                axes[1, 0].axis('off')
-                
-                # Predicted mask
-                pred_binary = (pred_mask > 0.5).astype(np.uint8)
-                axes[1, 1].imshow(pred_binary, cmap='gray')
-                axes[1, 1].set_title(f"Predicted Mask\nPrecision: {metrics['precision']:.3f}, Recall: {metrics['recall']:.3f}, F1: {metrics['f1_score']:.3f}")
-                axes[1, 1].axis('off')
-                
-                plt.tight_layout()
-                
-                # Save visualization
-                viz_path = os.path.join(epoch_dir, "visualizations", f"sample_{batch_idx}_{sample_idx}_epoch_{epoch}.png")
-                plt.savefig(viz_path, dpi=300, bbox_inches='tight')
-                plt.close()
-    
-    test_loss /= len(test_loader)
-    
-    # Calculate average metrics
-    avg_metrics = {}
-    for metric_name in ['precision', 'recall', 'f1_score']:
-        avg_metrics[metric_name] = np.mean([m[metric_name] for m in all_metrics])
-    
-    # Save results
-    results = {
-        'epoch': epoch,
-        'test_loss': test_loss,
-        'average_metrics': avg_metrics,
-        'individual_metrics': all_metrics,
-        'num_samples': len(all_metrics)
-    }
-    
-    results_path = os.path.join(epoch_dir, f"test_results_epoch_{epoch}.json")
-    with open(results_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    
-    print(f"📊 Epoch {epoch} Test Results:")
-    print(f"  Loss: {test_loss:.4f}")
-    print(f"  Precision: {avg_metrics['precision']:.4f}")
-    print(f"  Recall: {avg_metrics['recall']:.4f}")
-    print(f"  F1 Score: {avg_metrics['f1_score']:.4f}")
-    print(f"  Results saved to: {epoch_dir}")
-    
-    return test_loss, avg_metrics
 
 
 def main():
@@ -596,8 +495,22 @@ def main():
     print("🏗️ Initializing Siamese U-Net model for few-shot segmentation...")
     model = UNet(in_channels=6, out_channels=1)  # 6 channels for Siamese (3 query + 3 support)
     
+    # Train model with MLflow tracking - COMMENTED OUT
+    # train_losses, val_losses, test_loss = train_model_with_mlflow_v2_fixed(
+    #     model=model,
+    #     train_loader=train_loader,
+    #     val_loader=val_loader,
+    #     test_loader=test_loader,
+    #     criterion=criterion,
+    #     optimizer=optimizer,
+    #     num_epochs=num_epochs,
+    #     device=device,
+    #     experiment_name=experiment_name,
+    #     save_dir=save_dir
+    # )
+
     # Train model WITHOUT MLflow tracking
-    train_losses, val_losses, test_losses, metrics = train_model_v2_fixed(
+    train_losses, val_losses, test_loss, metrics = train_model_with_mlflow_v2_fixed(
         model=model,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -606,174 +519,21 @@ def main():
         optimizer=optim.Adam(model.parameters(), lr=1e-3),
         num_epochs=num_epochs,
         device='cuda' if torch.cuda.is_available() else 'cpu',
+        experiment_name=f"few_shot_ball_segmentation_v2_fixed_{os.path.basename(dataset_dir)}",
         save_dir="models/checkpoints"
     )
 
     print(f"✅ Training completed!")
-    print(f"📊 Final test loss: {test_losses[-1]:.4f}")
-    print(f"📊 Final test precision: {metrics['test_precisions'][-1]:.4f}")
-    print(f"📊 Final test recall: {metrics['test_recalls'][-1]:.4f}")
-    print(f"📊 Final test F1 score: {metrics['test_f1_scores'][-1]:.4f}")
+    # print(f"🔬 MLflow experiment: {experiment_name}")  # COMMENTED OUT
+    print(f"📊 Final test loss: {test_loss:.4f}")
+    print(f"📊 Final test precision: {metrics['test_metrics']['precision']:.4f}")
+    print(f"📊 Final test recall: {metrics['test_metrics']['recall']:.4f}")
+    print(f"📊 Final test F1 score: {metrics['test_metrics']['f1_score']:.4f}")
+    # print(f"💾 Models logged to MLflow")  # COMMENTED OUT
+    # print(f"📈 Training history logged to MLflow")  # COMMENTED OUT
     print(f"💾 Models saved to: models/checkpoints")
     print(f"📈 Training history saved to: results/viz/")
     print(f"🏆 Best validation precision: {max(metrics['val_precisions']):.4f}")
-    print(f"🏆 Best test precision: {metrics['test_summary']['best_test_precision']:.4f} at epoch {metrics['test_summary']['best_test_epoch']}")
-    print(f"📁 Test visualizations saved to: models/checkpoints/test_epochs/")
-
-    # Final test at the end of training
-    print(f"\n🧪 Final test at epoch {num_epochs}...")
-    final_test_loss, final_test_metrics = test_model_with_visualizations(
-        model, test_loader, device, num_epochs, 
-        save_dir=f"{save_dir}/test_epochs"
-    )
-    
-    # Track final test results
-    test_epochs.append(num_epochs)
-    test_losses.append(final_test_loss)
-    test_precisions.append(final_test_metrics['precision'])
-    test_recalls.append(final_test_metrics['recall'])
-    test_f1_scores.append(final_test_metrics['f1_score'])
-    
-    print(f"📊 Final test results:")
-    print(f"  Loss: {final_test_loss:.4f}")
-    print(f"  Precision: {final_test_metrics['precision']:.4f}")
-    print(f"  Recall: {final_test_metrics['recall']:.4f}")
-    print(f"  F1 Score: {final_test_metrics['f1_score']:.4f}")
-    
-    # Create comprehensive training plots
-    plt.figure(figsize=(20, 12))
-    
-    # Loss plot
-    plt.subplot(2, 4, 1)
-    plt.plot(train_losses, label='Train Loss')
-    plt.plot(val_losses, label='Val Loss')
-    plt.title('Training History - Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    plt.grid(True)
-    
-    # Precision plot
-    plt.subplot(2, 4, 2)
-    plt.plot(train_precisions, label='Train Precision')
-    plt.plot(val_precisions, label='Val Precision')
-    if test_epochs:
-        plt.scatter(test_epochs, test_precisions, color='red', s=50, label='Test Precision', zorder=5)
-    plt.title('Training History - Precision')
-    plt.xlabel('Epoch')
-    plt.ylabel('Precision')
-    plt.legend()
-    plt.grid(True)
-    
-    # Recall plot
-    plt.subplot(2, 4, 3)
-    plt.plot(train_recalls, label='Train Recall')
-    plt.plot(val_recalls, label='Val Recall')
-    if test_epochs:
-        plt.scatter(test_epochs, test_recalls, color='red', s=50, label='Test Recall', zorder=5)
-    plt.title('Training History - Recall')
-    plt.xlabel('Epoch')
-    plt.ylabel('Recall')
-    plt.legend()
-    plt.grid(True)
-    
-    # F1 Score plot
-    plt.subplot(2, 4, 4)
-    plt.plot(train_f1_scores, label='Train F1')
-    plt.plot(val_f1_scores, label='Val F1')
-    if test_epochs:
-        plt.scatter(test_epochs, test_f1_scores, color='red', s=50, label='Test F1', zorder=5)
-    plt.title('Training History - F1 Score')
-    plt.xlabel('Epoch')
-    plt.ylabel('F1 Score')
-    plt.legend()
-    plt.grid(True)
-    
-    # Test metrics comparison
-    plt.subplot(2, 4, 5)
-    if test_epochs:
-        plt.plot(test_epochs, test_precisions, 'o-', label='Test Precision', linewidth=2, markersize=8)
-        plt.plot(test_epochs, test_recalls, 's-', label='Test Recall', linewidth=2, markersize=8)
-        plt.plot(test_epochs, test_f1_scores, '^-', label='Test F1', linewidth=2, markersize=8)
-        plt.title('Test Metrics Over Epochs')
-        plt.xlabel('Epoch')
-        plt.ylabel('Score')
-        plt.legend()
-        plt.grid(True)
-    
-    # Test loss over epochs
-    plt.subplot(2, 4, 6)
-    if test_epochs:
-        plt.plot(test_epochs, test_losses, 'o-', label='Test Loss', linewidth=2, markersize=8, color='red')
-        plt.title('Test Loss Over Epochs')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.legend()
-        plt.grid(True)
-    
-    # Validation metrics comparison
-    plt.subplot(2, 4, 7)
-    plt.plot(val_precisions, label='Val Precision', marker='o')
-    plt.plot(val_recalls, label='Val Recall', marker='s')
-    plt.plot(val_f1_scores, label='Val F1', marker='^')
-    plt.title('Validation Metrics Comparison')
-    plt.xlabel('Epoch')
-    plt.ylabel('Score')
-    plt.legend()
-    plt.grid(True)
-    
-    # Loss plot (Log Scale)
-    plt.subplot(2, 4, 8)
-    plt.plot(train_losses, label='Train Loss', alpha=0.7)
-    plt.plot(val_losses, label='Val Loss', alpha=0.7)
-    plt.title('Training History - Loss (Log Scale)')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.yscale('log')
-    plt.legend()
-    plt.grid(True)
-    
-    plt.tight_layout()
-    plot_path = f'{save_dir}/few_shot_v2_fixed_training_history.png'
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    # Save test results summary
-    test_summary = {
-        'test_epochs': test_epochs,
-        'test_losses': test_losses,
-        'test_precisions': test_precisions,
-        'test_recalls': test_recalls,
-        'test_f1_scores': test_f1_scores,
-        'best_test_precision': max(test_precisions) if test_precisions else 0,
-        'best_test_recall': max(test_recalls) if test_recalls else 0,
-        'best_test_f1': max(test_f1_scores) if test_f1_scores else 0,
-        'best_test_epoch': test_epochs[np.argmax(test_precisions)] if test_precisions else 0
-    }
-    
-    summary_path = f'{save_dir}/test_results_summary.json'
-    with open(summary_path, 'w') as f:
-        json.dump(test_summary, f, indent=2)
-    
-    print(f"📊 Test Results Summary:")
-    print(f"  Best test precision: {test_summary['best_test_precision']:.4f} at epoch {test_summary['best_test_epoch']}")
-    print(f"  Best test recall: {test_summary['best_test_recall']:.4f}")
-    print(f"  Best test F1: {test_summary['best_test_f1']:.4f}")
-    print(f"  Summary saved to: {summary_path}")
-    
-    return train_losses, val_losses, test_losses, {
-        'train_precisions': train_precisions,
-        'val_precisions': val_precisions,
-        'train_recalls': train_recalls,
-        'val_recalls': val_recalls,
-        'train_f1_scores': train_f1_scores,
-        'val_f1_scores': val_f1_scores,
-        'test_losses': test_losses,
-        'test_precisions': test_precisions,
-        'test_recalls': test_recalls,
-        'test_f1_scores': test_f1_scores,
-        'test_summary': test_summary
-    }
 
 
 if __name__ == "__main__":
