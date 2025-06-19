@@ -1,6 +1,6 @@
 # Volleyball Analytics Project
 
-![Pipeline Animation](results/video/segments/volleyball_face_blur_animation.gif)
+![Pipeline Animation](assets/images/volleyball_face_blur_animation.gif)
 
 ## Project Overview
 
