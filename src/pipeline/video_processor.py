@@ -31,13 +31,33 @@ class VideoProcessor:
         self.ball_segmenter = None
         if unet_model_path and os.path.exists(unet_model_path):
             self.ball_segmenter = UNet()
-            self.ball_segmenter.load_state_dict(torch.load(unet_model_path, map_location=self.device))
+            
+            # Load checkpoint
+            checkpoint = torch.load(unet_model_path, map_location=self.device)
+            
+            # Handle different checkpoint formats
+            if 'model_state_dict' in checkpoint:
+                # Full checkpoint with optimizer state, etc.
+                self.ball_segmenter.load_state_dict(checkpoint['model_state_dict'], strict=False)
+                print(f"✅ Loaded ball segmentation model from checkpoint: {unet_model_path}")
+            else:
+                # Just model weights
+                self.ball_segmenter.load_state_dict(checkpoint, strict=False)
+                print(f"✅ Loaded ball segmentation model from {unet_model_path}")
+            
             self.ball_segmenter.eval().to(self.device)
-            print(f"✅ Loaded ball segmentation model from {unet_model_path}")
+            
+            # Enable optimizations for inference
+            if hasattr(torch, 'jit'):
+                try:
+                    self.ball_segmenter = torch.jit.optimize_for_inference(self.ball_segmenter)
+                    print("✅ Applied JIT optimizations for inference")
+                except:
+                    pass
         else:
             print("⚠️ No ball segmentation model provided, will only detect persons")
         
-        # Transform for ball segmentation
+        # Optimized transform for ball segmentation (pre-computed)
         self.transform = transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.ToTensor()
@@ -46,10 +66,16 @@ class VideoProcessor:
         # Support image for ball segmentation (will be set from first ball detection)
         self.support_image = None
         
+        # Performance optimizations
+        self.cache_support_image = True
+        self.support_image_tensor = None
+        
     def set_support_image(self, support_image_path):
         """Set support image for ball segmentation."""
         if os.path.exists(support_image_path):
-            self.support_image = self.transform(Image.open(support_image_path).convert("RGB")).to(self.device)
+            # Pre-process and cache support image tensor
+            support_img = Image.open(support_image_path).convert("RGB")
+            self.support_image_tensor = self.transform(support_img).to(self.device)
             print(f"✅ Set support image from {support_image_path}")
         else:
             print(f"⚠️ Support image not found: {support_image_path}")
@@ -60,25 +86,24 @@ class VideoProcessor:
     
     def segment_ball(self, frame):
         """Segment ball in frame using U-Net."""
-        if self.ball_segmenter is None or self.support_image is None:
+        if self.ball_segmenter is None or self.support_image_tensor is None:
             return None, None
         
-        # Prepare input
-        query_img = self.transform(Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))).to(self.device)
-        input_tensor = torch.cat([query_img, self.support_image], dim=0).unsqueeze(0)
-        
-        # Run inference
-        with torch.no_grad():
-            pred = self.ball_segmenter(input_tensor).squeeze().cpu().numpy()
+        # Use true batch processing for the model
+        batch_tensors = []
+        for frame in frames:
+            batch_tensors.append(self.transform(frame))
+        batch_input = torch.stack(batch_tensors)
+        predictions = self.ball_segmenter(batch_input)  # Single forward pass
         
         # Binarize prediction
-        pred_mask = (pred > 0.5).astype(np.uint8) * 255
+        pred_mask = (predictions.squeeze().cpu().numpy() > 0.5).astype(np.uint8) * 255
         
         # Resize to original frame size
         h, w = frame.shape[:2]
         pred_mask_resized = cv2.resize(pred_mask, (w, h))
         
-        return pred_mask_resized, pred
+        return pred_mask_resized, predictions.squeeze().cpu().numpy()
     
     def find_ball_bounding_box(self, mask, min_area=100):
         """Find bounding box from ball segmentation mask."""
@@ -142,7 +167,11 @@ class VideoProcessor:
         print(f"📐 Resolution: {width}x{height}")
         
         # Skip to start frame
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+        for i in range(0, total_frames, 30):
+            # Skip frames by reading and discarding
+            for _ in range(i):
+                cap.read()
+            ret, frame = cap.read()  # Read the frame we want
         
         # Initialize video writer
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
@@ -157,6 +186,8 @@ class VideoProcessor:
         
         print("🔄 Processing frames...")
         
+        # Save images in batches instead of one by one
+        image_batch = []
         for _ in tqdm(range(frames_to_process)):
             ret, frame = cap.read()
             if not ret:
@@ -190,9 +221,14 @@ class VideoProcessor:
                     cv2.putText(output_frame, 'Ball', (x1, y1 - 10),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             
-            # Write frame
-            out.write(output_frame)
+            # Add frame to batch
+            image_batch.append(output_frame)
             frame_count += 1
+            
+            # Save batch if full
+            if len(image_batch) >= 10:
+                save_image_batch(image_batch)
+                image_batch = []
         
         # Cleanup
         cap.release()
