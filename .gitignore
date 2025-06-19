@@ -67,6 +67,6 @@ tmp/
 # Asset directories
 models/pretrained/
 models/configs/
-assets/images/
+#assets/images/
 scripts/cleanup/
 scripts/testing/

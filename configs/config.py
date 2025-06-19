@@ -1,19 +1,31 @@
 # Configuration file for volleyball ball segmentation project
+import os
+import json
 
-# Data paths
-BASE_PATH = "C:/Users/illya/Documents/volleyball_analitics/data/one_shot_segmentation_data/training_val_test_full_dataset_after_export/project-1-at-2025-06-16-03-31-0d8e2e8a/"
-OUTPUT_BASE = "C:/Users/illya/Documents/volleyball_analitics/data/one_shot_segmentation_data/train_val_test_with_masks/"
-PREPARED_DIR = "C:/Users/illya/Documents/volleyball_analitics/data/train_val_test_prepared_for_training/"
+# Helper to load user-specific paths from local_paths.json
+def load_local_paths():
+    try:
+        with open(os.path.join(os.path.dirname(__file__), '../local_paths.json'), 'r') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+local_paths = load_local_paths()
+
+# Data paths (relative or from local_paths)
+BASE_PATH = local_paths.get('data_paths', {}).get('dataset_root', 'data/')
+OUTPUT_BASE = 'data/one_shot_segmentation_data/train_val_test_with_masks/'
+PREPARED_DIR = 'data/train_val_test_prepared_for_training/'
 
 # Video processing paths
-VIDEO_PATH = "C:/Users/illya/Videos/TMP_VOLLEY_GOPRO/GX010373.mp4"
-VIDEO_OUTPUT_PATH = "C:/Users/illya/Documents/volleyball_analitics/data/bb_visualization/"
-PERSON_BALL_DATASET_PATH = "C:/Users/illya/Documents/volleyball_analitics/data/person_ball_dataset/"
+VIDEO_PATH = local_paths.get('video_paths', {}).get('input_video', 'data/sample_video.mp4')
+VIDEO_OUTPUT_PATH = local_paths.get('video_paths', {}).get('output_dir', 'results/video/segments/')
+PERSON_BALL_DATASET_PATH = 'data/person_ball_dataset/'
 
 # Model paths
-MODEL_SAVE_PATH = "models/siamese_ball_segment_best.pt"
-MODEL_LOAD_PATH = "models/siamese_ball_segment_best.pt"
-YOLO_MODEL_PATH = "models/yolo11n.pt"
+MODEL_SAVE_PATH = local_paths.get('model_paths', {}).get('siamese_model', 'models/checkpoints/siamese_ball_segment_best.pt')
+MODEL_LOAD_PATH = MODEL_SAVE_PATH
+YOLO_MODEL_PATH = local_paths.get('model_paths', {}).get('yolo_model', 'models/pretrained/yolov8n.pt')
 
 # Training parameters
 BATCH_SIZE = 4
@@ -47,10 +59,10 @@ DATASET_SPLITS = {
 # Output directories
 OUTPUT_DIRS = {
     "training_loss_plot": "training_validation_loss.png",
-    "test_results": "C:/Users/illya/Documents/volleyball_analitics/data/segmentation_result_test_dataset_improved_",
-    "person_detection_video": f"{VIDEO_OUTPUT_PATH}GX010373_person_detection_output.avi",
+    "test_results": "results/segmentation_result_test_dataset_improved_",
+    "person_detection_video": os.path.join(VIDEO_OUTPUT_PATH, "person_detection_output.avi"),
     "person_ball_dataset": PERSON_BALL_DATASET_PATH
 }
 
 # Support image for evaluation
-SUPPORT_IMAGE_PATH = "C:/Users/illya/Documents/volleyball_analitics/data/train_val_test_prepared_for_training/test/support/278f8b51-frame_00189_ball.jpg" 
+SUPPORT_IMAGE_PATH = local_paths.get('model_paths', {}).get('support_image', 'data/train_val_test_prepared_for_training/test/support/example_support_ball.jpg') 
