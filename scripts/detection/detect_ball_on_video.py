@@ -6,11 +6,15 @@ Volleyball ball detection on video
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
+
+from sympy import false
 from ultralytics import YOLO
 import time
 from datetime import datetime
 import torch
+import json
+import uuid
 
 
 class BallDetectorVideo:
@@ -73,6 +77,10 @@ class BallDetectorVideo:
         # Ball position history for trajectory
         self.ball_positions: List[Tuple[int, int]] = []
         self.max_trajectory_length = 30
+        
+        # Label Studio annotation data
+        self.label_studio_annotations: List[Dict[str, Any]] = []
+        self.annotation_id_counter = 1
         
     def detect_ball(self, frame: np.ndarray) -> List[Tuple[float, float, float, float, float]]:
         """
@@ -246,6 +254,163 @@ class BallDetectorVideo:
         
         return frame_with_trajectory
     
+    def create_label_studio_annotation(
+        self, 
+        frame: np.ndarray, 
+        detections: List[Tuple[float, float, float, float, float]],
+        frame_filename: str,
+        frame_width: int,
+        frame_height: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Create Label Studio annotation format for detected balls.
+        
+        Args:
+            frame: Video frame
+            detections: List of detections
+            frame_filename: Frame filename
+            frame_width: Frame width
+            frame_height: Frame height
+            
+        Returns:
+            Label Studio annotation or None if no detections
+        """
+        if not detections:
+            return None
+        
+        # Create result items for each detection
+        result_items = []
+        for i, (x1, y1, x2, y2, confidence) in enumerate(detections):
+            # Convert absolute coordinates to percentage
+            x_percent = (x1 / frame_width) * 100
+            y_percent = (y1 / frame_height) * 100
+            width_percent = ((x2 - x1) / frame_width) * 100
+            height_percent = ((y2 - y1) / frame_height) * 100
+            
+            result_item = {
+                "original_width": frame_width,
+                "original_height": frame_height,
+                "image_rotation": 0,
+                "value": {
+                    "x": round(x_percent, 2),
+                    "y": round(y_percent, 2),
+                    "width": round(width_percent, 2),
+                    "height": round(height_percent, 2),
+                    "rotation": 0,
+                    "rectanglelabels": ["Volleyball Ball"]
+                },
+                "id": f"ball_{i}",
+                "from_name": "label",
+                "to_name": "image",
+                "type": "rectanglelabels",
+                "origin": "manual"
+            }
+            result_items.append(result_item)
+        
+        # Create annotation
+        annotation = {
+            "id": self.annotation_id_counter,
+            "completed_by": 1,
+            "result": result_items,
+            "was_cancelled": False,
+            "ground_truth": False,
+            "created_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "draft_created_at": None,
+            "lead_time": 0,
+            "prediction": {},
+            "result_count": len(result_items),
+            "unique_id": f"task_{self.annotation_id_counter}",
+            "import_id": None,
+            "last_action": None,
+            "bulk_created": False,
+            "task": self.annotation_id_counter,
+            "project": 1,
+            "updated_by": 1,
+            "parent_prediction": None,
+            "parent_annotation": None,
+            "last_created_by": None
+        }
+        
+        # Create task
+        task = {
+            "id": self.annotation_id_counter,
+            "annotations": [annotation],
+            "file_upload": frame_filename,
+            "drafts": [],
+            "predictions": [],
+            "data": {
+                "image": f"/data/upload/1/{frame_filename}"
+            },
+            "meta": {},
+            "created_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+            "inner_id": self.annotation_id_counter,
+            "total_annotations": 1,
+            "cancelled_annotations": 0,
+            "total_predictions": 0,
+            "comment_count": 0,
+            "unresolved_comment_count": 0,
+            "last_comment_updated_at": None,
+            "project": 1,
+            "updated_by": 1,
+            "comment_authors": []
+        }
+        
+        self.annotation_id_counter += 1
+        return task
+    
+    def save_frame_with_detections(
+        self, 
+        frame: np.ndarray, 
+        detections: List[Tuple[float, float, float, float, float]], 
+        output_dir: Path, 
+        frame_num: int
+    ) -> Optional[str]:
+        """
+        Save frame with detections as image file.
+        
+        Args:
+            frame: Video frame
+            detections: List of detections
+            output_dir: Output directory for images
+            frame_num: Frame number
+            
+        Returns:
+            Filename if saved, None otherwise
+        """
+        if not detections:
+            return None
+        
+        # Create unique filename
+        frame_id = str(uuid.uuid4())[:8]
+        filename = f"{frame_id}-frame_{frame_num:05d}.jpg"
+        filepath = output_dir / filename
+        
+        # Save frame
+        success = cv2.imwrite(str(filepath), frame)
+        if not success:
+            print(f"Failed to save frame: {filepath}")
+            return None
+        
+        return filename
+    
+    def save_label_studio_annotations(self, output_path: Path) -> None:
+        """
+        Save Label Studio annotations to JSON file.
+        
+        Args:
+            output_path: Path to output JSON file
+        """
+        if not self.label_studio_annotations:
+            print("No annotations to save")
+            return
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(self.label_studio_annotations, f, indent=2, ensure_ascii=False)
+        
+        print(f"Saved {len(self.label_studio_annotations)} annotations to: {output_path}")
+    
     def _process_batch(
         self,
         frame_batch: List[np.ndarray],
@@ -314,7 +479,9 @@ class BallDetectorVideo:
         input_video_path: str,
         output_video_path: str,
         show_trajectory: bool = True,
-        skip_frames: int = 0
+        skip_frames: int = 0,
+        create_labelstudio_data: bool = False,
+        labelstudio_output_dir: Optional[str] = None
     ) -> None:
         """
         Process video with ball detection.
@@ -324,6 +491,8 @@ class BallDetectorVideo:
             output_video_path: Path to output video
             show_trajectory: Whether to show trajectory
             skip_frames: Number of frames to skip (for speedup)
+            create_labelstudio_data: Whether to create Label Studio annotations
+            labelstudio_output_dir: Output directory for Label Studio data
         """
         input_path = Path(input_video_path)
         output_path = Path(output_video_path)
@@ -333,6 +502,21 @@ class BallDetectorVideo:
         
         # Create results folder
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Setup Label Studio directories if needed
+        labelstudio_images_dir = None
+        labelstudio_annotations_file = None
+        if create_labelstudio_data:
+            if not labelstudio_output_dir:
+                labelstudio_output_dir = f"volleystat/data/labelstudio_output_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            labelstudio_base_dir = Path(labelstudio_output_dir)
+            labelstudio_images_dir = labelstudio_base_dir / "images"
+            labelstudio_images_dir.mkdir(parents=True, exist_ok=True)
+            
+            labelstudio_annotations_file = labelstudio_base_dir / "annotations.json"
+            print(f"📝 Label Studio images will be saved to: {labelstudio_images_dir}")
+            print(f"📝 Label Studio annotations will be saved to: {labelstudio_annotations_file}")
         
         print(f"📹 Processing video: {input_path}")
         print(f"💾 Result will be saved to: {output_path}")
@@ -441,8 +625,8 @@ def main():
         detector.process_video(
             input_video_path=input_video,
             output_video_path=output_video,
-            show_trajectory=True,
-            skip_frames=9  # Take every 10th frame for better coverage at high speed
+            show_trajectory=false,
+            skip_frames=0  # Take every 10th frame for better coverage at high speed
         )
         
     except Exception as e:
