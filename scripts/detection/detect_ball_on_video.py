@@ -8,7 +8,6 @@ import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict, Any
 
-from sympy import false
 from ultralytics import YOLO
 import time
 from datetime import datetime
@@ -35,6 +34,18 @@ class BallDetectorVideo:
         self.model = YOLO(str(self.model_path))
         print("✅ Model loaded successfully!")
         
+        # Check model info
+        if hasattr(self.model, 'names'):
+            print(f"📋 Model classes: {self.model.names}")
+            # Check if 'Volleyball Ball' class exists
+            ball_classes = [name for name in self.model.names.values() if 'ball' in name.lower() or 'volleyball' in name.lower()]
+            if ball_classes:
+                print(f"⚽ Found ball-related classes: {ball_classes}")
+            else:
+                print("⚠️ Warning: No ball-related classes found in model!")
+        if hasattr(self.model, 'model') and hasattr(self.model.model, 'yaml'):
+            print(f"🏗️ Model architecture: {self.model.model.yaml.get('nc', 'unknown')} classes")
+        
         # Configure for maximum GPU utilization
         import torch
         if torch.cuda.is_available():
@@ -54,7 +65,7 @@ class BallDetectorVideo:
             print("⚠️ GPU not found, using CPU")
         
         # Detection parameters  
-        self.confidence_threshold = 0.3
+        self.confidence_threshold = 0.1  # Lowered threshold for better detection
         self.nms_threshold = 0.4
         # Maximize batch size due to very low GPU utilization (15% SM)
         if torch.cuda.is_available():
@@ -78,9 +89,42 @@ class BallDetectorVideo:
         self.ball_positions: List[Tuple[int, int]] = []
         self.max_trajectory_length = 30
         
+        # False positive filtering
+        self.last_valid_position: Optional[Tuple[int, int]] = None
+        self.consecutive_misses = 0
+        self.last_bbox_size: Optional[float] = None
+        
+        # Filtering parameters
+        self.max_velocity = 400  # Maximum pixels per frame the ball can move (higher for video)
+        self.min_confidence = 0.2  # Minimum confidence to consider (lower for YOLO)
+        self.max_missing_frames = 15  # Max frames before resetting tracking
+        self.size_change_threshold = 4.0  # Max ratio change in bbox size
+        
+        # Statistics
+        self.total_detections = 0
+        self.valid_detections = 0
+        self.rejected_low_confidence = 0
+        self.rejected_velocity = 0
+        self.rejected_size_change = 0
+        
         # Label Studio annotation data
         self.label_studio_annotations: List[Dict[str, Any]] = []
         self.annotation_id_counter = 1
+    
+    def update_no_detection(self):
+        """Call when no ball detected in frame"""
+        self.consecutive_misses += 1
+        
+        # Reset tracking if ball missing too long
+        if self.consecutive_misses > self.max_missing_frames:
+            self.reset_tracking()
+    
+    def reset_tracking(self):
+        """Reset tracking state for new ball sequence"""
+        self.last_valid_position = None
+        self.last_bbox_size = None
+        self.consecutive_misses = 0
+        # Keep existing trajectory points but stop adding new ones
         
     def detect_ball(self, frame: np.ndarray) -> List[Tuple[float, float, float, float, float]]:
         """
@@ -141,22 +185,27 @@ class BallDetectorVideo:
         )
         
         batch_detections = []
-        for result in results:
+        total_raw_detections = 0
+        total_valid_detections = 0
+        
+        for i, result in enumerate(results):
             detections = []
             if result.boxes is not None:
+                total_raw_detections += len(result.boxes)
                 for box in result.boxes:
                     # Get coordinates and confidence
                     x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
                     confidence = float(box.conf[0].cpu().numpy())
-                    
-                    detections.append((x1, y1, x2, y2, confidence))
+
+                    if confidence >= self.confidence_threshold:
+                        detections.append((x1, y1, x2, y2, confidence))
+                        total_valid_detections += 1
             batch_detections.append(detections)
-        
         return batch_detections
     
     def draw_detections(self, frame: np.ndarray, detections: List[Tuple[float, float, float, float, float]]) -> np.ndarray:
         """
-        Draw detections on frame.
+        Draw detections on frame with false positive filtering.
         
         Args:
             frame: Video frame
@@ -167,59 +216,132 @@ class BallDetectorVideo:
         """
         frame_with_detections = frame.copy()
         
+        if not detections:
+            # No detections - update tracker
+            self.update_no_detection()
+            return frame_with_detections
+        
+        valid_detections = 0
         for x1, y1, x2, y2, confidence in detections:
-            # Bbox coordinates
+            # Try to validate detection
+            center_x = int((x1 + x2) / 2)
+            center_y = int((y1 + y2) / 2)
+            bbox_size = (x2 - x1) * (y2 - y1)
+            
+            self.total_detections += 1
+            is_valid = True
+            rejection_reason = ""
+            
+            # Check confidence threshold
+            if confidence < self.min_confidence:
+                self.consecutive_misses += 1
+                self.rejected_low_confidence += 1
+                is_valid = False
+                rejection_reason = "low_conf"
+            
+            # If we have previous position, validate the movement
+            elif self.last_valid_position is not None:
+                last_x, last_y = self.last_valid_position
+                
+                # Check velocity constraint
+                distance = ((center_x - last_x)**2 + (center_y - last_y)**2)**0.5
+                if distance > self.max_velocity:
+                    self.consecutive_misses += 1
+                    self.rejected_velocity += 1
+                    is_valid = False
+                    rejection_reason = "velocity"
+                
+                # Check size consistency
+                elif self.last_bbox_size is not None:
+                    size_ratio = max(bbox_size, self.last_bbox_size) / min(bbox_size, self.last_bbox_size)
+                    if size_ratio > self.size_change_threshold:
+                        self.consecutive_misses += 1
+                        self.rejected_size_change += 1
+                        is_valid = False
+                        rejection_reason = "size"
+            
+            # Draw detection based on validity
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             
-            # Draw bbox
-            cv2.rectangle(
-                frame_with_detections,
-                (x1, y1), (x2, y2),
-                self.colors['bbox'],
-                2
-            )
-            
-            # Ball center
-            center_x = (x1 + x2) // 2
-            center_y = (y1 + y2) // 2
-            
-            # Draw center
-            cv2.circle(
-                frame_with_detections,
-                (center_x, center_y),
-                5,
-                self.colors['ball'],
-                -1
-            )
-            
-            # Add position to trajectory
-            self.ball_positions.append((center_x, center_y))
-            if len(self.ball_positions) > self.max_trajectory_length:
-                self.ball_positions.pop(0)
-            
-            # Confidence text
-            label = f"Ball: {confidence:.2f}"
-            label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
-            
-            # Text background
-            cv2.rectangle(
-                frame_with_detections,
-                (x1, y1 - label_size[1] - 10),
-                (x1 + label_size[0], y1),
-                self.colors['bbox'],
-                -1
-            )
-            
-            # Text
-            cv2.putText(
-                frame_with_detections,
-                label,
-                (x1, y1 - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                self.colors['text'],
-                2
-            )
+            if is_valid:
+                # Valid detection
+                valid_detections += 1
+                self.valid_detections += 1
+                
+                # Update tracking state
+                self.last_valid_position = (center_x, center_y)
+                self.last_bbox_size = bbox_size
+                self.consecutive_misses = 0
+                
+                # Add position to trajectory
+                self.ball_positions.append((center_x, center_y))
+                if len(self.ball_positions) > self.max_trajectory_length:
+                    self.ball_positions.pop(0)
+                
+                # Draw bbox
+                cv2.rectangle(
+                    frame_with_detections,
+                    (x1, y1), (x2, y2),
+                    self.colors['bbox'],
+                    2
+                )
+                
+                # Draw center
+                cv2.circle(
+                    frame_with_detections,
+                    (center_x, center_y),
+                    5,
+                    self.colors['ball'],
+                    -1
+                )
+                
+                # Confidence text with validation mark
+                label = f"Ball: {confidence:.2f} ✓"
+                label_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+                
+                # Text background
+                cv2.rectangle(
+                    frame_with_detections,
+                    (x1, y1 - label_size[1] - 10),
+                    (x1 + label_size[0], y1),
+                    self.colors['bbox'],
+                    -1
+                )
+                
+                # Text
+                cv2.putText(
+                    frame_with_detections,
+                    label,
+                    (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    self.colors['text'],
+                    2
+                )
+            else:
+                # Invalid detection - draw as rejected
+                cv2.rectangle(
+                    frame_with_detections,
+                    (x1, y1), (x2, y2),
+                    (0, 0, 255),  # Red for rejected
+                    1
+                )
+                
+                # Mark as rejected
+                label = f"Rejected ({rejection_reason}): {confidence:.2f}"
+                cv2.putText(
+                    frame_with_detections,
+                    label,
+                    (x1, y1 - 3),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 255),
+                    1
+                )
+        
+        # Update tracker if no valid detections
+        if valid_detections == 0:
+            self.update_no_detection()
         
         return frame_with_detections
     
@@ -419,8 +541,10 @@ class BallDetectorVideo:
         show_trajectory: bool,
         current_detections_count: int,
         processed_frames: int,
-        total_frames: int,
-        start_time: float
+        max_frames: int,
+        start_time: float,
+        labelstudio_images_dir: Optional[Path] = None,
+        visualization_frames_dir: Optional[Path] = None
     ) -> int:
         """
         Process batch of frames.
@@ -441,6 +565,23 @@ class BallDetectorVideo:
             
             if detections:
                 new_detections_count += len(detections)
+                
+                # Save frame with detections for Label Studio if directory is provided
+                if labelstudio_images_dir is not None:
+                    frame_height, frame_width = frame.shape[:2]
+                    
+                    # Save image
+                    filename = self.save_frame_with_detections(
+                        frame, detections, labelstudio_images_dir, frame_num
+                    )
+                    
+                    # Create Label Studio annotation
+                    if filename:
+                        annotation = self.create_label_studio_annotation(
+                            frame, detections, filename, frame_width, frame_height
+                        )
+                        if annotation:
+                            self.label_studio_annotations.append(annotation)
             
             # Draw detections
             frame_with_detections = self.draw_detections(frame, detections)
@@ -461,12 +602,18 @@ class BallDetectorVideo:
                 2
             )
             
+            # Save visualization frame if requested and has detections
+            if visualization_frames_dir is not None and detections:
+                vis_frame_filename = f"frame_{frame_num:05d}_detections.jpg"
+                vis_frame_path = visualization_frames_dir / vis_frame_filename
+                cv2.imwrite(str(vis_frame_path), frame_with_detections)
+            
             # Write frame
             out.write(frame_with_detections)
         
         # Show progress
         if processed_frames % (self.batch_size * 4) == 0:
-            progress = (processed_frames / (total_frames // 10)) * 100  # Account for skip_frames
+            progress = (processed_frames / max_frames) * 100  # Fixed progress calculation
             elapsed = time.time() - start_time
             fps_current = processed_frames / elapsed if elapsed > 0 else 0
             total_detections = current_detections_count + new_detections_count
@@ -481,7 +628,9 @@ class BallDetectorVideo:
         show_trajectory: bool = True,
         skip_frames: int = 0,
         create_labelstudio_data: bool = False,
-        labelstudio_output_dir: Optional[str] = None
+        labelstudio_output_dir: Optional[str] = None,
+        max_duration_seconds: Optional[int] = None,
+        save_visualization_frames: bool = True
     ) -> None:
         """
         Process video with ball detection.
@@ -493,6 +642,8 @@ class BallDetectorVideo:
             skip_frames: Number of frames to skip (for speedup)
             create_labelstudio_data: Whether to create Label Studio annotations
             labelstudio_output_dir: Output directory for Label Studio data
+            max_duration_seconds: Maximum duration to process (None for full video)
+            save_visualization_frames: Whether to save individual frames with bounding boxes
         """
         input_path = Path(input_video_path)
         output_path = Path(output_video_path)
@@ -518,6 +669,16 @@ class BallDetectorVideo:
             print(f"📝 Label Studio images will be saved to: {labelstudio_images_dir}")
             print(f"📝 Label Studio annotations will be saved to: {labelstudio_annotations_file}")
         
+        # Setup visualization frames directory if needed
+        visualization_frames_dir = None
+        if save_visualization_frames:
+            if labelstudio_output_dir:
+                visualization_frames_dir = Path(labelstudio_output_dir) / "visualization_frames"
+            else:
+                visualization_frames_dir = output_path.parent / "visualization_frames"
+            visualization_frames_dir.mkdir(parents=True, exist_ok=True)
+            print(f"🖼️  Visualization frames will be saved to: {visualization_frames_dir}")
+        
         print(f"📹 Processing video: {input_path}")
         print(f"💾 Result will be saved to: {output_path}")
         
@@ -533,11 +694,19 @@ class BallDetectorVideo:
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         
+        # Apply duration limit if specified
+        max_frames = total_frames
+        if max_duration_seconds is not None:
+            max_frames = min(total_frames, int(fps * max_duration_seconds))
+        
         print(f"📊 Video parameters:")
         print(f"   • Size: {width}x{height}")
         print(f"   • FPS: {fps}")
-        print(f"   • Frames: {total_frames}")
-        print(f"   • Duration: {total_frames/fps:.1f} sec")
+        print(f"   • Total frames: {total_frames}")
+        print(f"   • Total duration: {total_frames/fps:.1f} sec")
+        if max_duration_seconds is not None:
+            print(f"   • Processing frames: {max_frames}")
+            print(f"   • Processing duration: {max_frames/fps:.1f} sec (limited to {max_duration_seconds} sec)")
         
         # Create writer for output video
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -565,26 +734,37 @@ class BallDetectorVideo:
                 # Process last batch if exists
                 if frame_batch:
                     self._process_batch(frame_batch, frame_data_batch, out, show_trajectory, 
-                                      detections_count, processed_frames, total_frames, start_time)
+                                      detections_count, processed_frames, max_frames, start_time, 
+                                      labelstudio_images_dir, visualization_frames_dir)
                 break
             
             frame_num += 1
             
+            # Stop if reached max frames limit
+            if frame_num > max_frames:
+                # Process last batch if exists
+                if frame_batch:
+                    self._process_batch(frame_batch, frame_data_batch, out, show_trajectory, 
+                                      detections_count, processed_frames, max_frames, start_time, 
+                                      labelstudio_images_dir, visualization_frames_dir)
+                break
+
             # Skip frames if needed
             if skip_frames > 0 and frame_num % (skip_frames + 1) != 0:
                 continue
-            
+
             processed_frames += 1
-            
+
             # Add frame to batch
             frame_batch.append(frame.copy())
             frame_data_batch.append((frame_num, processed_frames))
-            
+
             # When batch is full - process it
             if len(frame_batch) >= self.batch_size:
                 detections_count += self._process_batch(
-                    frame_batch, frame_data_batch, out, show_trajectory, 
-                    detections_count, processed_frames, total_frames, start_time
+                    frame_batch, frame_data_batch, out, show_trajectory,
+                    detections_count, processed_frames, max_frames, start_time, 
+                    labelstudio_images_dir, visualization_frames_dir
                 )
                 frame_batch = []
                 frame_data_batch = []
@@ -592,6 +772,11 @@ class BallDetectorVideo:
         # Close files
         cap.release()
         out.release()
+        
+        # Save Label Studio annotations if directory exists
+        if labelstudio_images_dir is not None and self.label_studio_annotations:
+            labelstudio_annotations_file = labelstudio_images_dir.parent / "annotations.json"
+            self.save_label_studio_annotations(labelstudio_annotations_file)
         
         # Final statistics
         total_time = time.time() - start_time
@@ -601,21 +786,38 @@ class BallDetectorVideo:
         print(f"📊 Statistics:")
         print(f"   • Processed frames: {processed_frames}")
         print(f"   • Found detections: {detections_count}")
+        print(f"   • Label Studio annotations: {len(self.label_studio_annotations)}")
         print(f"   • Processing time: {total_time:.1f} sec")
         print(f"   • Average FPS: {avg_fps:.1f}")
+        print(f"   🎾 Ball Filtering Statistics:")
+        print(f"      - Total raw detections:     {self.total_detections}")
+        print(f"      - Valid detections:         {self.valid_detections}")
+        print(f"      - Rejected (low confidence): {self.rejected_low_confidence}")
+        print(f"      - Rejected (velocity):      {self.rejected_velocity}")
+        print(f"      - Rejected (size change):   {self.rejected_size_change}")
+        if self.total_detections > 0:
+            filter_rate = ((self.total_detections - self.valid_detections) / self.total_detections) * 100
+            print(f"      - Filter rate:              {filter_rate:.1f}%")
         print(f"   • Result saved to: {output_path}")
+        if labelstudio_images_dir is not None:
+            print(f"   • Label Studio images: {labelstudio_images_dir}")
+            print(f"   • Label Studio annotations: {labelstudio_images_dir.parent / 'annotations.json'}")
+        if visualization_frames_dir is not None:
+            # Count saved visualization frames
+            viz_frames_count = len(list(visualization_frames_dir.glob("*.jpg"))) if visualization_frames_dir.exists() else 0
+            print(f"   • Visualization frames: {viz_frames_count} saved to {visualization_frames_dir}")
 
 
 def main():
     """Main function."""
     
     # Parameters
-    model_path = "volleystat/models/yolov8_volleyball_training/yolov8n_volleyball/weights/best.pt"
-    input_video = r"C:\Users\illya\Videos\tmp_second_game\GX020380.mp4"
+    model_path = "C:/Users/illya/Documents/volleyball_analitics/volleystat/models/yolov8_curated_training/yolov8n_volleyball_curated4/weights/epoch130.pt"
+    input_video = r"C:/Users/illya/Videos/video_for_sharing/first_record/GX010378_splits/GX010378_part2.mp4"
     
     # Create output filename
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_video = f"volleystat/results/video/GX020380_ball_detection_{timestamp}.mp4"
+    output_video = f"C:/Users/illya/Documents/volleyball_analitics/volleystat/data/yolo_150_epoch_test_video/visualisation_{timestamp}.mp4"
     
     try:
         # Create detector
@@ -625,8 +827,8 @@ def main():
         detector.process_video(
             input_video_path=input_video,
             output_video_path=output_video,
-            show_trajectory=false,
-            skip_frames=0  # Take every 10th frame for better coverage at high speed
+            show_trajectory=True,
+            skip_frames=0  # Process every frame
         )
         
     except Exception as e:

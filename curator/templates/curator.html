@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dataset Curator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        .progress {
+            background: #e0e0e0;
+            border-radius: 10px;
+            height: 30px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+        .progress-bar {
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+            height: 100%;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        .image-container {
+            text-align: center;
+            margin: 30px 0;
+        }
+        .image-container img {
+            max-width: 100%;
+            max-height: 600px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin: 30px 0;
+        }
+        .btn {
+            padding: 15px 40px;
+            font-size: 18px;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+        }
+        .btn-accept {
+            background: #4CAF50;
+            color: white;
+        }
+        .btn-accept:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+        .btn-skip {
+            background: #f44336;
+            color: white;
+        }
+        .btn-skip:hover {
+            background: #da190b;
+            transform: translateY(-2px);
+        }
+        .info {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 16px;
+            color: #666;
+        }
+        .keyboard-help {
+            text-align: center;
+            margin: 20px 0;
+            font-size: 14px;
+            color: #888;
+            background: #f9f9f9;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .loading {
+            text-align: center;
+            font-size: 18px;
+            color: #666;
+            margin: 50px 0;
+        }
+        .completed {
+            text-align: center;
+            font-size: 24px;
+            color: #4CAF50;
+            margin: 50px 0;
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏐 Volleyball Ball Dataset Curator</h1>
+            <div id="stats">
+                <div class="progress">
+                    <div class="progress-bar" id="progressBar">Loading...</div>
+                </div>
+            </div>
+        </div>
+        
+        <div id="imageContainer" class="image-container" style="display: none;">
+            <img id="currentImage" alt="Current Image">
+            <div class="info" id="imageInfo"></div>
+        </div>
+        
+        <div id="controls" class="controls" style="display: none;">
+            <button class="btn btn-accept" onclick="makeDecision('accept')" id="acceptBtn">
+                ✅ Accept (A)
+            </button>
+            <button class="btn btn-skip" onclick="makeDecision('skip')" id="skipBtn">
+                ❌ Skip (S)
+            </button>
+        </div>
+        
+        <div class="keyboard-help">
+            <strong>Keyboard shortcuts:</strong> Press 'A' to Accept, 'S' to Skip
+        </div>
+        
+        <div id="loading" class="loading">Loading...</div>
+        <div id="completed" class="completed" style="display: none;">
+            🎉 Dataset completed! You have curated <span id="completedCount">1000</span> images.
+        </div>
+    </div>
+
+    <script>
+        let currentImageId = null;
+        
+        // Load initial image
+        loadCurrentImage();
+        loadStats();
+        
+        // Keyboard controls
+        document.addEventListener('keydown', function(event) {
+            if (event.key.toLowerCase() === 'a') {
+                makeDecision('accept');
+            } else if (event.key.toLowerCase() === 's') {
+                makeDecision('skip');
+            }
+        });
+        
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+                
+                const progressBar = document.getElementById('progressBar');
+                const progressPercent = stats.progress_percent || 0;
+                
+                progressBar.style.width = progressPercent + '%';
+                progressBar.textContent = `${stats.accepted_count}/${stats.target_count} (${progressPercent.toFixed(1)}%)`;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+        
+        async function loadCurrentImage() {
+            try {
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('imageContainer').style.display = 'none';
+                document.getElementById('controls').style.display = 'none';
+                
+                const response = await fetch('/api/current-image');
+                const data = await response.json();
+                
+                document.getElementById('loading').style.display = 'none';
+                
+                if (data.completed) {
+                    document.getElementById('completed').style.display = 'block';
+                    return;
+                }
+                
+                currentImageId = data.image_id;
+                
+                // Set image
+                const img = document.getElementById('currentImage');
+                img.src = data.image_base64;
+                
+                // Set info
+                const info = document.getElementById('imageInfo');
+                info.textContent = `${data.filename} (${data.bbox_count} balls, ${data.image_size})`;
+                
+                // Show UI
+                document.getElementById('imageContainer').style.display = 'block';
+                document.getElementById('controls').style.display = 'flex';
+                
+                // Update stats
+                loadStats();
+                
+            } catch (error) {
+                console.error('Error loading image:', error);
+                document.getElementById('loading').textContent = 'Error loading image';
+            }
+        }
+        
+        async function makeDecision(action) {
+            if (!currentImageId) return;
+            
+            try {
+                // Disable buttons
+                document.getElementById('acceptBtn').disabled = true;
+                document.getElementById('skipBtn').disabled = true;
+                
+                const response = await fetch('/api/decide', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        image_id: currentImageId,
+                        action: action
+                    })
+                });
+                
+                const result = await response.json();
+                
+                // Re-enable buttons
+                document.getElementById('acceptBtn').disabled = false;
+                document.getElementById('skipBtn').disabled = false;
+                
+                // Load next image
+                loadCurrentImage();
+                
+            } catch (error) {
+                console.error('Error making decision:', error);
+                // Re-enable buttons
+                document.getElementById('acceptBtn').disabled = false;
+                document.getElementById('skipBtn').disabled = false;
+            }
+        }
+    </script>
+</body>
+</html> 
