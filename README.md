@@ -26,6 +26,17 @@ This project implements a comprehensive volleyball analytics pipeline using stat
 
 ---
 
+## Project Components
+
+### 🔧 **Dataset Curator**
+Web-based tool for curating volleyball ball detection datasets with keyboard shortcuts and real-time visualization.
+
+- **Location**: [`curator/`](curator/)
+- **Quick Start**: `cd curator && python run_curator.py`
+- **Documentation**: [Curator README](curator/README.md)
+
+---
+
 ## Installation
 
 ### 1. **Install Dependencies**
