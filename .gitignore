@@ -70,3 +70,23 @@ models/configs/
 #assets/images/
 scripts/cleanup/
 scripts/testing/
+
+# Virtual environments
+volley_env_311/
+
+# Full data/model/results dirs
+data/
+models/
+results/
+notebooks/
+
+# Runtime outputs
+court_calibration*.json
+assets/temp_palette.png
+
+# IDE configs
+.claude/
+.cursor/
+
+# Internal working notes
+CLAUDE.md

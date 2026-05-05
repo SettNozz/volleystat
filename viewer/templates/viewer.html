@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Viewer — {{ job.video_stem }}</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #0f1117; color: #e0e0e0; }
+
+/* Layout */
+.layout { display: grid; grid-template-columns: 1fr 340px; height: 100vh; }
+.main { display: flex; flex-direction: column; overflow: hidden; }
+.sidebar { background: #1a1d27; border-left: 1px solid #2a2d3a; overflow-y: auto; padding: 16px; }
+
+/* Header */
+.header { background: #1a1d27; border-bottom: 1px solid #2a2d3a; padding: 10px 16px; display: flex; align-items: center; gap: 16px; }
+.header h1 { font-size: 1rem; font-weight: 600; color: #fff; }
+.badge { background: #4f8ef7; color: #fff; font-size: 0.75rem; padding: 2px 8px; border-radius: 12px; }
+
+/* Video area */
+.video-wrap { flex: 1; position: relative; background: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+video { max-width: 100%; max-height: 100%; display: block; }
+canvas { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+
+/* Controls */
+.controls { background: #1a1d27; border-top: 1px solid #2a2d3a; padding: 10px 16px; }
+.timeline-bar { position: relative; height: 8px; background: #2a2d3a; border-radius: 4px; margin-bottom: 10px; cursor: pointer; }
+.timeline-progress { height: 100%; background: #4f8ef7; border-radius: 4px; pointer-events: none; }
+.event-marker { position: absolute; top: -4px; width: 4px; height: 16px; border-radius: 2px; transform: translateX(-50%); }
+/* New event types */
+.event-marker.serve         { background: #fbbf24; }
+.event-marker.reception     { background: #34d399; }
+.event-marker.dig           { background: #2dd4bf; }
+.event-marker.pass          { background: #a78bfa; }
+.event-marker.attack        { background: #f87171; }
+.event-marker.block         { background: #fb923c; }
+.event-marker.ace           { background: #facc15; }
+.event-marker.serve_out     { background: #6b7280; }
+.event-marker.out           { background: #6b7280; }
+.event-marker.ball_out      { background: #6b7280; }
+.event-marker.goal_or_out   { background: #6b7280; }
+/* Legacy names (backward compat) */
+.event-marker.reception_pass{ background: #34d399; }
+.event-marker.setting_pass  { background: #60a5fa; }
+.event-marker.rally_start   { background: #fff; width: 2px; }
+/* Rally separator in event list */
+.rally-sep { display:flex; align-items:center; gap:8px; padding:6px 4px 3px; cursor:pointer; margin-top:6px; }
+.rally-sep:first-child { margin-top:0; }
+.rally-sep:hover .rally-sep-label { color:#aaa; }
+.rally-sep-label { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.1em; color:#555; font-weight:600; }
+.rally-sep-line  { flex:1; height:1px; background:#2a2d3a; }
+.btn-row { display: flex; align-items: center; gap: 12px; }
+button.ctrl { background: #2a2d3a; border: none; color: #e0e0e0; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+button.ctrl:hover { background: #3a3d4a; }
+button.ctrl.active { background: #4f8ef7; color: #fff; }
+.time-display { font-size: 0.85rem; color: #888; margin-left: auto; }
+
+/* Overlays toggles */
+.toggle-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.toggle { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; cursor: pointer; }
+.toggle input { accent-color: #4f8ef7; }
+
+/* Sidebar sections */
+.section { margin-bottom: 20px; }
+.section h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: #666; margin-bottom: 10px; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-box { background: #0f1117; border: 1px solid #2a2d3a; border-radius: 8px; padding: 10px; }
+.stat-box .val { font-size: 1.5rem; font-weight: 700; color: #fff; }
+.stat-box .lbl { font-size: 0.72rem; color: #666; }
+
+/* Events list */
+.event-list { display: flex; flex-direction: column; gap: 4px; }
+.event-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
+.event-item:hover { background: #2a2d3a; }
+.event-item.active { background: #1e2a3a; }
+.event-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.event-time { color: #666; min-width: 44px; }
+.event-type { flex: 1; }
+.event-team { font-size: 0.72rem; padding: 1px 6px; border-radius: 4px; }
+.team-a { background: #1a2a4a; color: #60a5fa; }
+.team-b { background: #2a1a1a; color: #f87171; }
+
+/* Rally range */
+.rally-bar { height: 4px; background: #2a2d3a; border-radius: 2px; position: relative; margin: 6px 0; }
+.rally-range { position: absolute; height: 100%; background: #4f8ef7; border-radius: 2px; opacity: 0.5; }
+
+a.back { display: inline-block; margin-bottom: 12px; font-size: 0.8rem; color: #666; text-decoration: none; }
+a.back:hover { color: #999; }
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- Main video area -->
+  <div class="main">
+    <div class="header">
+      <a href="/" style="color:#666;text-decoration:none;font-size:0.85rem;">← Home</a>
+      <h1>{{ job.video_stem }}</h1>
+      <span class="badge">{{ stats.total_rallies }} rallies</span>
+      <span class="badge" style="background:#2a2a2a;color:#888;">{{ (stats.ball_detection_rate * 100) | round(1) }}% ball detection</span>
+    </div>
+
+    <div class="video-wrap" id="videoWrap">
+      <video id="vid" preload="auto">
+        {% if job.original_video_path_url %}
+        <source src="/api/original_video?path={{ job.original_video_path_url }}" type="video/mp4">
+        {% else %}
+        <source src="/api/video/{{ job.job_id }}" type="video/mp4">
+        {% endif %}
+      </video>
+      <canvas id="overlay"></canvas>
+    </div>
+
+    <div class="controls">
+      <!-- Timeline with event markers -->
+      <div class="timeline-bar" id="timelineBar" onclick="seekTo(event)">
+        <div class="timeline-progress" id="timelineProgress"></div>
+        <!-- Event markers injected by JS -->
+      </div>
+
+      <div class="btn-row">
+        <button class="ctrl" onclick="togglePlay()" id="playBtn">▶ Play</button>
+        <button class="ctrl" onclick="stepFrame(-1)">⟨ Frame</button>
+        <button class="ctrl" onclick="stepFrame(1)">Frame ⟩</button>
+        <button class="ctrl" onclick="toggleMute()" id="muteBtn">🔊</button>
+        <span style="color:#666;font-size:0.8rem;">Speed:</span>
+        <button class="ctrl" onclick="setSpeed(0.25)">0.25×</button>
+        <button class="ctrl" onclick="setSpeed(0.5)">0.5×</button>
+        <button class="ctrl" onclick="setSpeed(1)" id="speed1" class="ctrl active">1×</button>
+        <span class="time-display" id="timeDisplay">0:00 / 0:00</span>
+      </div>
+
+      <!-- Overlay toggles -->
+      <div class="toggle-row" style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <label class="toggle"><input type="checkbox" id="togBall" checked onchange="redraw()"> Ball</label>
+        <label class="toggle"><input type="checkbox" id="togTrail" checked onchange="redraw()"> Trail</label>
+        <label class="toggle"><input type="checkbox" id="togNet" checked onchange="redraw()"> Net</label>
+
+        <label class="toggle"><input type="checkbox" id="togState" checked onchange="redraw()"> FSM State</label>
+        <label class="toggle"><input type="checkbox" id="togModel" checked onchange="redraw()"> Model (Transformer)</label>
+        <label class="toggle"><input type="checkbox" id="togEvents" checked onchange="redraw()"> Events</label>
+        <span style="color:#888;font-size:0.75rem;margin-left:4px;">State: FSM vs Transformer</span>
+        <span style="color:#666;font-size:0.8rem;margin-left:8px;">net_y:</span>
+        <input type="range" id="netYSlider" min="50" max="900" step="1" style="width:100px;accent-color:#ffd700;"
+               oninput="updateNetY(this.value)">
+        <span id="netYVal" style="color:#ffd700;font-size:0.8rem;min-width:32px;"></span>
+        <span style="color:#666;font-size:0.8rem;margin-left:4px;">xL:</span>
+        <input type="range" id="netXLSlider" min="0" max="1920" step="1" style="width:80px;accent-color:#60a5fa;"
+               oninput="updateNetX()">
+        <span id="netXLVal" style="color:#60a5fa;font-size:0.8rem;min-width:32px;"></span>
+        <span style="color:#666;font-size:0.8rem;">xR:</span>
+        <input type="range" id="netXRSlider" min="0" max="1920" step="1" style="width:80px;accent-color:#60a5fa;"
+               oninput="updateNetX()">
+        <span id="netXRVal" style="color:#60a5fa;font-size:0.8rem;min-width:32px;"></span>
+        <span style="color:#666;font-size:0.8rem;margin-left:8px;">sync:</span>
+        <button onclick="changeSyncOffset(-1)" style="padding:1px 6px;font-size:0.75rem;background:#1a1d2e;border:1px solid #333;color:#aaa;cursor:pointer;border-radius:3px;">-</button>
+        <span id="syncOffsetVal" style="color:#aaa;font-size:0.8rem;min-width:20px;text-align:center;">0</span>
+        <button onclick="changeSyncOffset(1)" style="padding:1px 6px;font-size:0.75rem;background:#1a1d2e;border:1px solid #333;color:#aaa;cursor:pointer;border-radius:3px;">+</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <!-- Stats -->
+    <div class="section">
+      <h3>Statistics</h3>
+      <div class="stat-grid">
+        <div class="stat-box">
+          <div class="val">{{ stats.total_rallies }}</div>
+          <div class="lbl">Rallies</div>
+        </div>
+        <div class="stat-box">
+          <div class="val">{{ (stats.ball_detection_rate * 100) | round(0) | int }}%</div>
+          <div class="lbl">Ball Detected</div>
+        </div>
+        <div class="stat-box">
+          <div class="val">{{ stats.all_events | length }}</div>
+          <div class="lbl">Contact Events</div>
+        </div>
+        <div class="stat-box">
+          <div class="val">{{ stats.processing_time_sec | round(0) | int }}s</div>
+          <div class="lbl">Proc. Time</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rallies -->
+    {% if stats.rallies %}
+    <div class="section">
+      <h3>Rallies</h3>
+      {% for r in stats.rallies %}
+      <div style="margin-bottom:10px;padding:10px;background:#0f1117;border-radius:8px;border:1px solid #2a2d3a;cursor:pointer;" onclick="seekAndPlay({{ r.start_frame }})">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+          <span style="font-size:0.82rem;font-weight:600;">Rally {{ loop.index }}</span>
+          <span style="font-size:0.75rem;color:#666;">{{ r.duration_sec }}s</span>
+        </div>
+        <div class="rally-bar">
+          <div class="rally-range" style="left:0%;width:100%;"></div>
+        </div>
+        <div style="display:flex;gap:12px;font-size:0.75rem;color:#666;margin-top:4px;">
+          <span style="color:#60a5fa;">Team A: {{ r.contacts_team_a }}</span>
+          <span style="color:#f87171;">Team B: {{ r.contacts_team_b }}</span>
+          <span>f{{ r.start_frame }}–{{ r.end_frame }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Events grouped by rally -->
+    <div class="section">
+      <h3>Contact Events</h3>
+      <div class="event-list" id="eventList">
+        {# Build set of frames that start a new rally (first event frame of each rally) #}
+        {% set rally_first = [] %}
+        {% for r in stats.rallies %}
+          {% if r.events %}{% set _ = rally_first.append(r.events[0].frame) %}{% endif %}
+        {% endfor %}
+        {% set ns = namespace(rally_num=0) %}
+        {% set EV_COLORS = {'serve':'#fbbf24','attack':'#f87171','block':'#fb923c','reception':'#34d399','reception_pass':'#34d399','dig':'#2dd4bf','setting_pass':'#60a5fa','pass':'#a78bfa','ace':'#facc15','serve_out':'#6b7280','out':'#6b7280','ball_out':'#6b7280','goal_or_out':'#6b7280'} %}
+        {% for ev in stats.all_events %}
+          {% if ev.frame in rally_first %}
+            {% set ns.rally_num = ns.rally_num + 1 %}
+            <div class="rally-sep" onclick="seekAndPlay({{ ev.frame }})">
+              <span class="rally-sep-label">Rally {{ ns.rally_num }}</span>
+              <div class="rally-sep-line"></div>
+            </div>
+          {% endif %}
+          <div class="event-item" id="ev{{ loop.index0 }}" onclick="seekAndPlay({{ ev.frame }})">
+            <div class="event-dot" style="background:{{ EV_COLORS.get(ev.type,'#888') }};"></div>
+            <span class="event-time">{{ "%.2f"|format(ev.time) }}s</span>
+            <span class="event-type">{{ ev.type.replace('_', ' ') }}</span>
+            <span class="event-team {{ 'team-a' if ev.team == 'team_a' else 'team-b' }}">
+              {{ 'A' if ev.team == 'team_a' else 'B' }}
+            </span>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const JOB_ID = "{{ job.job_id }}";
+const FPS = {{ stats.fps | default(30) }};
+const TOTAL_FRAMES = {{ stats.total_frames }};
+const EVENTS = {{ stats.all_events | tojson }};
+const RALLIES = {{ stats.rallies | tojson }};
+
+const vid = document.getElementById('vid');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const videoWrap = document.getElementById('videoWrap');
+
+let annotations = null;  // loaded from API
+let currentFrameIdx = 0;
+
+// Load annotations
+fetch('/api/annotations/' + JOB_ID)
+  .then(r => r.json())
+  .then(data => {
+    annotations = {};
+    // Index by frame number for O(1) lookup
+    for (const f of data.frames) {
+      annotations[f.f] = f;
+    }
+    window._annData = data;  // store net info
+    // Initialize net_y slider
+    const slider = document.getElementById('netYSlider');
+    const fw = data.frame_width || 1280;
+    const fh = data.frame_height || 720;
+    slider.max = fh;
+    slider.value = data.net_y;
+    document.getElementById('netYVal').textContent = Math.round(data.net_y);
+    // Initialize net_x sliders
+    const xLSlider = document.getElementById('netXLSlider');
+    const xRSlider = document.getElementById('netXRSlider');
+    xLSlider.max = fw; xLSlider.value = data.net_x_left || Math.round(fw * 0.29);
+    xRSlider.max = fw; xRSlider.value = data.net_x_right || Math.round(fw * 0.66);
+    document.getElementById('netXLVal').textContent = Math.round(xLSlider.value);
+    document.getElementById('netXRVal').textContent = Math.round(xRSlider.value);
+    setupEventMarkers();
+    startRenderLoop();
+    redraw();
+  });
+
+function updateNetY(val) {
+  if (!window._annData) return;
+  const d = window._annData;
+  const newY = parseFloat(val);
+  const tapeH = (d.net_tape_bottom != null && d.net_tape_top != null)
+    ? (d.net_tape_bottom - d.net_tape_top) : 50;
+  d.net_y = newY;
+  d.net_tape_top = newY;
+  d.net_tape_bottom = newY + tapeH;
+  document.getElementById('netYVal').textContent = Math.round(newY);
+  redraw();
+}
+
+function updateNetX() {
+  if (!window._annData) return;
+  const l = parseFloat(document.getElementById('netXLSlider').value);
+  const r = parseFloat(document.getElementById('netXRSlider').value);
+  window._annData.net_x_left = l;
+  window._annData.net_x_right = r;
+  document.getElementById('netXLVal').textContent = Math.round(l);
+  document.getElementById('netXRVal').textContent = Math.round(r);
+  redraw();
+}
+
+let _syncOffset = 0;
+function changeSyncOffset(d) {
+  _syncOffset = Math.max(-5, Math.min(5, _syncOffset + d));
+  document.getElementById('syncOffsetVal').textContent = _syncOffset;
+  redraw();
+}
+
+// Canvas sizing
+function resizeCanvas() {
+  const vr = vid.getBoundingClientRect();
+  const vw = vid.videoWidth || (window._annData && window._annData.frame_width) || 1280;
+  const vh = vid.videoHeight || (window._annData && window._annData.frame_height) || 720;
+  // Match the rendered video size
+  const scale = Math.min(vr.width / vw, vr.height / vh);
+  canvas.width = vw * scale;
+  canvas.height = vh * scale;
+  canvas.style.width = canvas.width + 'px';
+  canvas.style.height = canvas.height + 'px';
+  redraw();
+}
+
+vid.addEventListener('loadedmetadata', () => { resizeCanvas(); startRenderLoop(); });
+window.addEventListener('resize', resizeCanvas);
+
+// Timeline / sidebar sync — timeupdate is fine for these (low-freq is OK)
+vid.addEventListener('timeupdate', () => {
+  updateTimeline();
+  updateActiveEvent();
+});
+
+// Real-time canvas overlay — use requestVideoFrameCallback when available
+// (fires with exact mediaTime of the frame being presented → perfect sync).
+// Falls back to requestAnimationFrame with a small offset for older browsers.
+let _rafId = null;
+let _lastDrawnFrame = -1;
+const SYNC_OFFSET_FRAMES = 0;  // rAF fallback offset (rVFC needs no offset)
+
+function _drawAtMediaTime(mediaTime) {
+  // Use vid.currentTime (container-relative, always starts at 0) not mediaTime.
+  // meta.mediaTime includes the original PTS offset from stream-copied videos
+  // (e.g. ffmpeg -c copy preserves keyframe alignment → PTS starts at ~2s → ~51 frame lead).
+  const fi = Math.max(0, Math.round(vid.currentTime * FPS) + _syncOffset);
+  if (fi !== _lastDrawnFrame) {
+    currentFrameIdx = fi;
+    _lastDrawnFrame = fi;
+    redraw();
+  }
+}
+
+function startRenderLoop() {
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+    // Exact per-frame sync — no manual offset needed
+    function rVFCLoop(now, meta) {
+      _drawAtMediaTime(meta.mediaTime);
+      vid.requestVideoFrameCallback(rVFCLoop);
+    }
+    vid.requestVideoFrameCallback(rVFCLoop);
+  } else {
+    // Fallback: rAF with currentTime estimate
+    if (_rafId) return;
+    function rafLoop() {
+      const fi = Math.max(0, Math.floor(vid.currentTime * FPS) - SYNC_OFFSET_FRAMES + _syncOffset);
+      if (fi !== _lastDrawnFrame) {
+        currentFrameIdx = fi;
+        _lastDrawnFrame = fi;
+        redraw();
+      }
+      _rafId = requestAnimationFrame(rafLoop);
+    }
+    _rafId = requestAnimationFrame(rafLoop);
+  }
+}
+
+vid.addEventListener('play', () => document.getElementById('playBtn').textContent = '⏸ Pause');
+vid.addEventListener('pause', () => document.getElementById('playBtn').textContent = '▶ Play');
+
+function togglePlay() { vid.paused ? vid.play() : vid.pause(); }
+function toggleMute() {
+  vid.muted = !vid.muted;
+  document.getElementById('muteBtn').textContent = vid.muted ? '🔇' : '🔊';
+}
+function setSpeed(s) { vid.playbackRate = s; }
+function stepFrame(d) {
+  vid.pause();
+  vid.currentTime = Math.max(0, vid.currentTime + d / FPS);
+}
+function seekToFrame(f) {
+  vid.currentTime = f / FPS;
+}
+function seekAndPlay(f) {
+  vid.currentTime = f / FPS;
+  vid.play();
+}
+function seekTo(e) {
+  const bar = document.getElementById('timelineBar');
+  const rect = bar.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  vid.currentTime = pct * vid.duration;
+}
+
+function updateTimeline() {
+  const pct = vid.duration ? (vid.currentTime / vid.duration * 100) : 0;
+  document.getElementById('timelineProgress').style.width = pct + '%';
+  const cur = formatTime(vid.currentTime);
+  const tot = formatTime(vid.duration || 0);
+  document.getElementById('timeDisplay').textContent = cur + ' / ' + tot;
+}
+
+function formatTime(s) {
+  const m = Math.floor(s / 60);
+  const ss = Math.floor(s % 60).toString().padStart(2, '0');
+  return m + ':' + ss;
+}
+
+function setupEventMarkers() {
+  const bar = document.getElementById('timelineBar');
+  const dur = TOTAL_FRAMES / FPS;
+
+  const typeColors = {
+    // New event types
+    serve:       '#fbbf24',
+    reception:   '#34d399',
+    dig:         '#2dd4bf',
+    pass:        '#a78bfa',
+    attack:      '#f87171',
+    block:       '#fb923c',
+    ace:         '#facc15',
+    serve_out:   '#6b7280',
+    out:         '#6b7280',
+    ball_out:    '#6b7280',
+    goal_or_out: '#6b7280',
+    // Legacy names (backward compat)
+    reception_pass: '#34d399',
+    setting_pass:   '#60a5fa',
+  };
+
+  for (const ev of EVENTS) {
+    const pct = (ev.time / dur * 100);
+    const m = document.createElement('div');
+    m.className = 'event-marker ' + (ev.type || '');
+    m.style.left = pct + '%';
+    m.style.background = typeColors[ev.type] || '#888';
+    m.title = ev.type + ' ' + ev.team + ' @' + ev.time + 's';
+    m.onclick = (e) => { e.stopPropagation(); seekAndPlay(ev.frame); };
+    bar.appendChild(m);
+  }
+
+  // Rally start markers
+  for (const r of RALLIES) {
+    const pct = (r.start_frame / TOTAL_FRAMES * 100);
+    const m = document.createElement('div');
+    m.className = 'event-marker rally_start';
+    m.style.left = pct + '%';
+    m.title = 'Rally start @f' + r.start_frame;
+    bar.appendChild(m);
+  }
+}
+
+function updateActiveEvent() {
+  const t = vid.currentTime;
+  let closest = null, minDist = 1e9;
+  EVENTS.forEach((ev, i) => {
+    const d = Math.abs(ev.time - t);
+    if (d < minDist) { minDist = d; closest = i; }
+  });
+  document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
+  if (closest !== null && minDist < 1.5) {
+    const el = document.getElementById('ev' + closest);
+    if (el) { el.classList.add('active'); el.scrollIntoView({block:'nearest'}); }
+  }
+}
+
+// Drawing
+const NET_COLOR  = 'rgba(255,220,0,0.9)';
+const BALL_COLOR = '#00ff44';
+const A_COLOR    = 'rgba(96,165,250,0.9)';  // team_a blue
+const B_COLOR    = 'rgba(248,113,113,0.9)'; // team_b red
+
+let _lastAnn = null;  // last valid annotation — prevents flicker on sparse frames
+
+function redraw() {
+  if (!canvas.width) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!annotations) return;
+
+  // Use current frame annotation if available, otherwise hold last known
+  const ann = annotations[currentFrameIdx] || _lastAnn;
+  if (!ann) return;
+  if (annotations[currentFrameIdx]) _lastAnn = ann;
+
+  const vw = vid.videoWidth || (window._annData && window._annData.frame_width) || 1280;
+  const vh = vid.videoHeight || (window._annData && window._annData.frame_height) || 720;
+  const sx = canvas.width / vw;
+  const sy = canvas.height / vh;
+
+  function px(x) { return x * sx; }
+  function py(y) { return y * sy; }
+
+  const showBall    = document.getElementById('togBall').checked;
+  const showTrail   = document.getElementById('togTrail').checked;
+  const showNet     = document.getElementById('togNet').checked;
+  const showState   = document.getElementById('togState').checked;
+  const showModel   = document.getElementById('togModel').checked;
+  const showEvents  = document.getElementById('togEvents').checked;
+
+  // Net visualization
+  if (showNet && window._annData) {
+    const d = window._annData;
+    const xL = px(d.net_x_left);
+    const xR = px(d.net_x_right);
+
+    if (d.net_tape_top != null && d.net_tape_bottom != null) {
+      // ── SAM-detected net band ──────────────────────────────────
+      const yTop = py(d.net_tape_top);
+      const yBot = py(d.net_tape_bottom);
+
+      // Semi-transparent fill for the net band
+      ctx.fillStyle = 'rgba(255, 220, 80, 0.08)';
+      ctx.fillRect(xL, yTop, xR - xL, yBot - yTop);
+
+      // Top tape — white
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(xL, yTop);
+      ctx.lineTo(xR, yTop);
+      ctx.stroke();
+
+      // Bottom tape — orange
+      ctx.strokeStyle = 'rgba(255, 140, 0, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(xL, yBot);
+      ctx.lineTo(xR, yBot);
+      ctx.stroke();
+
+      // Label at top tape
+      ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.font = `bold ${Math.round(12*sx)}px system-ui`;
+      ctx.fillText('NET', xL + 5, yTop - 4);
+    }
+
+    // FSM net_y — dashed yellow line (team-split boundary)
+    ctx.strokeStyle = NET_COLOR;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([Math.round(10*sx), Math.round(6*sx)]);
+    ctx.beginPath();
+    ctx.moveTo(xL, py(d.net_y));
+    ctx.lineTo(xR, py(d.net_y));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (d.net_tape_top == null) {
+      // Fallback label when no tape data
+      ctx.fillStyle = NET_COLOR;
+      ctx.font = `bold ${Math.round(14*sx)}px system-ui`;
+      ctx.fillText('NET', xL, py(d.net_y) - 8);
+    }
+  }
+
+  // Ball trail (line) + dot
+  if (showBall) {
+    const TRAIL_FRAMES = 40;
+    const MAX_TRAIL    = 20;
+
+    // Collect previous positions (newest first)
+    const trailPos = [];
+    for (let fi = currentFrameIdx - 1;
+         fi >= Math.max(0, currentFrameIdx - TRAIL_FRAMES) && trailPos.length < MAX_TRAIL;
+         fi--) {
+      const a = annotations[fi];
+      if (a && a.ball) trailPos.push({ x: a.ball[0], y: a.ball[1], age: currentFrameIdx - fi });
+    }
+
+    // Draw trail as fading line (oldest → current)
+    // Gap > 15 frames = ball was lost → break the line, don't connect
+    const GAP_BREAK = 15;
+    if (showTrail && trailPos.length > 0 && ann.ball) {
+      const pts = [...trailPos].reverse();          // oldest first
+      pts.push({ x: ann.ball[0], y: ann.ball[1], age: 0 });
+
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (let i = 1; i < pts.length; i++) {
+        const p0 = pts[i - 1];
+        const p1 = pts[i];
+        if (p0.age - p1.age > GAP_BREAK) continue;  // skip — detection gap too large
+        const frac  = 1 - p1.age / TRAIL_FRAMES;   // 0=oldest, 1=newest
+        const alpha = Math.pow(frac, 1.1) * 0.9;
+        ctx.strokeStyle = `rgba(0, 255, 68, ${alpha})`;
+        ctx.lineWidth   = 1 + frac * 2.5;           // 1px → 3.5px
+        ctx.beginPath();
+        ctx.moveTo(px(p0.x), py(p0.y));
+        ctx.lineTo(px(p1.x), py(p1.y));
+        ctx.stroke();
+      }
+    }
+
+    // Current ball — solid dot if detected, dashed ring if interpolated
+    if (ann.ball) {
+      const [bx, by] = ann.ball;
+      if (ann.ball_interp) {
+        // Interpolated: dashed circle (semi-transparent)
+        ctx.strokeStyle = 'rgba(255,200,0,0.7)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.arc(px(bx), py(by), 5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        // Detected: solid glow dot
+        ctx.shadowColor = BALL_COLOR;
+        ctx.shadowBlur  = 5;
+        ctx.fillStyle   = BALL_COLOR;
+        ctx.beginPath();
+        ctx.arc(px(bx), py(by), 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur  = 0;
+      }
+    }
+  }
+
+
+  // State overlay: FSM and/or Transformer model (compare both)
+  let stateY = 70;
+  if (showState) {
+    const stateColor = {
+      'serve_prep':   '#ffaa00',
+      'serve_ready':  '#00eeff',
+      'serving':      '#00eeff',
+      'rally_active': '#00ff88',
+      'rally_end':    '#ff6666',
+    }[ann.state] || '#00eeff';
+    ctx.font = `bold ${Math.round(22 * sx)}px system-ui`;
+    ctx.fillStyle = stateColor;
+    ctx.shadowColor = '#000';
+    ctx.shadowBlur = 6;
+    let line1 = (ann.state || '').replace(/_/g, ' ').toUpperCase();
+    if (ann.phase) line1 += ' · ' + (ann.phase || '').replace(/_/g, ' ');
+    if (showModel && ann.event_model != null && ann.event_model !== '-') {
+      line1 += '  |  Model: ' + (ann.event_model || '').replace(/_/g, ' ');
+    }
+    ctx.fillText(line1, px(20), py(stateY));
+    ctx.shadowBlur = 0;
+    stateY += 28;
+  } else if (showModel && ann.event_model != null && ann.event_model !== '-') {
+    ctx.font = `bold ${Math.round(22 * sx)}px system-ui`;
+    ctx.fillStyle = '#f0b030';
+    ctx.shadowColor = '#000';
+    ctx.shadowBlur = 6;
+    ctx.fillText('Model: ' + (ann.event_model || '').replace(/_/g, ' '), px(20), py(stateY));
+    ctx.shadowBlur = 0;
+    stateY += 28;
+  }
+
+  // Event overlay — shows most recent event, fades out over 2.5s
+  if (showEvents) {
+    const evColors = {
+      serve: '#fbbf24', attack: '#f87171', block: '#fb923c',
+      reception: '#34d399', reception_pass: '#34d399', dig: '#2dd4bf',
+      setting_pass: '#60a5fa', pass: '#a78bfa', ace: '#facc15',
+      serve_out: '#aaaaaa', out: '#aaaaaa', ball_out: '#aaaaaa', goal_or_out: '#aaaaaa',
+    };
+    const FADE_SEC = 2.5;
+    const t = vid.currentTime;
+    // Find most recent event within FADE_SEC
+    let recentEv = null;
+    for (let i = EVENTS.length - 1; i >= 0; i--) {
+      const dt = t - EVENTS[i].time;
+      if (dt >= 0 && dt < FADE_SEC) { recentEv = EVENTS[i]; break; }
+      if (dt >= FADE_SEC) break;
+    }
+    if (recentEv) {
+      const dt    = t - recentEv.time;
+      const alpha = Math.pow(1 - dt / FADE_SEC, 1.5);
+      const color = evColors[recentEv.type] || '#ffffff';
+      const label = recentEv.type.replace(/_/g, ' ').toUpperCase();
+      const team  = recentEv.team === 'team_a' ? ' · A' : ' · B';
+      const fs    = Math.round(28 * Math.max(sx, 0.6));
+      ctx.font        = `bold ${fs}px system-ui`;
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur  = 10;
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle   = color;
+      ctx.fillText('⚡ ' + label + team, px(20), py(115));
+      ctx.globalAlpha = 1;
+      ctx.shadowBlur  = 0;
+    }
+  }
+
+  // Frame counter (bottom-right) — helps verify sync
+  ctx.font = `${Math.round(11 * sx)}px monospace`;
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.textAlign = 'right';
+  ctx.fillText(`f${currentFrameIdx}`, canvas.width - 4, canvas.height - 4);
+  ctx.textAlign = 'left';
+}
+
+function drawPlayer(x, y, color, label) {
+  const r = 12;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold 11px system-ui`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, x, y);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+}
+
+// Update title with frame counter (merged into RAF loop for accuracy)
+vid.addEventListener('play',  () => { document.title = `▶ Volleyball Viewer`; });
+vid.addEventListener('pause', () => { document.title = `⏸ f${currentFrameIdx} — Volleyball Viewer`; });
+</script>
+</body>
+</html>

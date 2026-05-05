@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Volleyball Analytics Viewer</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: system-ui, sans-serif; background: #0f1117; color: #e0e0e0; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; }
+h1 { font-size: 2rem; font-weight: 700; margin-bottom: 8px; color: #fff; }
+.subtitle { color: #888; margin-bottom: 40px; }
+.card { background: #1a1d27; border: 1px solid #2a2d3a; border-radius: 12px; padding: 32px; width: 100%; max-width: 580px; }
+label { display: block; font-size: 0.85rem; color: #999; margin-bottom: 6px; margin-top: 20px; }
+label:first-of-type { margin-top: 0; }
+input[type=text], select {
+  width: 100%; padding: 10px 14px; background: #0f1117; border: 1px solid #2a2d3a;
+  border-radius: 8px; color: #e0e0e0; font-size: 0.95rem;
+}
+input[type=text]:focus, select:focus { outline: none; border-color: #4f8ef7; }
+button {
+  margin-top: 24px; width: 100%; padding: 12px; background: #4f8ef7; color: #fff;
+  border: none; border-radius: 8px; font-size: 1rem; font-weight: 600; cursor: pointer;
+  transition: background 0.2s;
+}
+button:hover { background: #3a7be0; }
+button:disabled { background: #333; color: #666; cursor: not-allowed; }
+.status { margin-top: 20px; padding: 14px; border-radius: 8px; font-size: 0.9rem; display: none; }
+.status.running { background: #1a2a1a; border: 1px solid #2a4a2a; color: #4adf4a; display: block; }
+.status.error   { background: #2a1a1a; border: 1px solid #4a2a2a; color: #df4a4a; display: block; }
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #4adf4a; border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.hint { margin-top: 12px; font-size: 0.8rem; color: #555; }
+</style>
+</head>
+<body>
+<h1>Volleyball Analytics</h1>
+<p class="subtitle">Visual validation of detection &amp; FSM pipeline</p>
+<div class="card">
+  <label>Video file path</label>
+  <input type="text" id="videoPath" placeholder="C:/path/to/game.mp4" value="data/processed/ball_extraction_results/original_images_video.mp4">
+
+  <label>Processing speed</label>
+  <select id="skipFrames">
+    <option value="0">Every frame (slowest, most accurate)</option>
+    <option value="1" selected>Every 2nd frame (balanced)</option>
+    <option value="2">Every 3rd frame (fast)</option>
+    <option value="4">Every 5th frame (fastest)</option>
+  </select>
+
+  <button id="analyzeBtn" onclick="startAnalysis()">Analyze Video</button>
+
+  <div class="status" id="statusBox">
+    <span class="spinner" id="spinner"></span>
+    <span id="statusText">Starting...</span>
+  </div>
+  <p class="hint">Analysis runs in background. For a 57s 4K video with skip=1: ~3-5 minutes.</p>
+</div>
+
+<script>
+let pollInterval = null;
+
+function startAnalysis() {
+  const path = document.getElementById('videoPath').value.trim();
+  const skip = document.getElementById('skipFrames').value;
+  if (!path) return;
+
+  document.getElementById('analyzeBtn').disabled = true;
+  showStatus('running', 'Initializing models...');
+
+  fetch('/analyze', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({video_path: path, skip_frames: parseInt(skip)})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) { showStatus('error', data.error); return; }
+    pollStatus(data.job_id);
+  })
+  .catch(e => showStatus('error', e.toString()));
+}
+
+function pollStatus(jobId) {
+  clearInterval(pollInterval);
+  pollInterval = setInterval(() => {
+    fetch('/status/' + jobId)
+      .then(r => r.json())
+      .then(job => {
+        if (job.status === 'running') {
+          showStatus('running', job.message || 'Processing...');
+        } else if (job.status === 'done') {
+          clearInterval(pollInterval);
+          showStatus('running', 'Done! Redirecting...');
+          setTimeout(() => { window.location = '/results/' + jobId; }, 800);
+        } else if (job.status === 'error') {
+          clearInterval(pollInterval);
+          showStatus('error', 'Error: ' + job.message);
+          document.getElementById('analyzeBtn').disabled = false;
+        }
+      });
+  }, 2000);
+}
+
+function showStatus(type, msg) {
+  const box = document.getElementById('statusBox');
+  box.className = 'status ' + type;
+  document.getElementById('statusText').textContent = msg;
+  document.getElementById('spinner').style.display = type === 'running' ? 'inline-block' : 'none';
+}
+</script>
+</body>
+</html>
