@@ -139,6 +139,12 @@ class GameAnalyzer:
         self.skip_frames = skip_frames
         self.net_y_override = net_y_override
 
+        # Resolve and store calibration path for SAM write-back
+        self._calibration_path: Optional[Path] = None
+        if calibration_path:
+            p = Path(calibration_path)
+            self._calibration_path = p if p.is_absolute() else _ROOT / p
+
         self.calibration = self._load_calibration(calibration_path)
         self._init_ball_detector(ball_model_path or str(_ROOT / _BALL_MODEL))
         self._init_pose_model(pose_model_path or str(_ROOT / _POSE_MODEL))
@@ -173,12 +179,13 @@ class GameAnalyzer:
         court_left = float(min(p[0] for p in left_pts))        if left_pts  else 0.0
         court_right= float(max(p[0] for p in right_pts))       if right_pts else float(data.get("frame_width", 3840))
 
-        # Load SAM-detected net tape positions if available
+        # Load SAM-detected net tape positions if available.
+        # net_*_y_720p are in 720p space — convert immediately to native calibration resolution.
         sam = data.get("net_detection_sam", {})
-        net_tape_top    = float(sam["net_top_y_720p"])    if sam.get("net_top_y_720p")    else None
-        net_tape_bottom = float(sam["net_bottom_y_720p"]) if sam.get("net_bottom_y_720p") else None
-        # SAM tape coords are stored in 720p; store the 720p-reference height so we can scale
-        sam_ref_h = 720.0  # SAM was run on 720p frames
+        native_h = float(data.get("frame_height", 2160))
+        sam_sy = native_h / 720.0
+        net_tape_top    = float(sam["net_top_y_720p"])    * sam_sy if sam.get("net_top_y_720p")    else None
+        net_tape_bottom = float(sam["net_bottom_y_720p"]) * sam_sy if sam.get("net_bottom_y_720p") else None
 
         return CalibrationData(
             net_y=net_y,
@@ -213,8 +220,6 @@ class GameAnalyzer:
             sy = actual_h / c.frame_height
             log.info(f"Scaling calibration {c.frame_width}x{c.frame_height} "
                      f"→ {actual_w}x{actual_h}  (sx={sx:.3f} sy={sy:.3f})")
-            # SAM tape coords are stored in 720p; scale to actual frame height
-            sam_sy = actual_h / 720.0
             c = CalibrationData(
                 net_y=c.net_y * sy,
                 net_x_left=c.net_x_left * sx,
@@ -225,8 +230,8 @@ class GameAnalyzer:
                 court_right=c.court_right * sx,
                 frame_width=actual_w,
                 frame_height=actual_h,
-                net_tape_top=c.net_tape_top * sam_sy if c.net_tape_top else None,
-                net_tape_bottom=c.net_tape_bottom * sam_sy if c.net_tape_bottom else None,
+                net_tape_top=c.net_tape_top * sy if c.net_tape_top else None,
+                net_tape_bottom=c.net_tape_bottom * sy if c.net_tape_bottom else None,
             )
         if self.net_y_override is not None:
             log.info(f"net_y override: {c.net_y:.1f} -> {self.net_y_override}")
@@ -239,6 +244,51 @@ class GameAnalyzer:
                 net_tape_top=c.net_tape_top, net_tape_bottom=c.net_tape_bottom,
             )
         return c
+
+    def _maybe_run_sam_net_detection(self, video_path: str, frame_w: float, frame_h: float):
+        """Run SAM net detection if net_tape_top is not already in calibration."""
+        if self.calibration is not None and self.calibration.net_tape_top is not None:
+            log.info(f"Net tape already calibrated: top={self.calibration.net_tape_top:.1f}px (720p)")
+            return
+
+        log.info("Net tape not found in calibration — running SAM detection on first 5 s …")
+        try:
+            from src.detection.net_detector import NetDetector, save_sam_net_to_calibration
+
+            c = self.calibration
+            net_y = c.net_y if c else frame_h * 0.5
+            net_x_left = c.net_x_left if c else 0.0
+            net_x_right = c.net_x_right if c else frame_w
+
+            detector = NetDetector()
+            top, bot = detector.detect_from_video(
+                video_path=video_path,
+                net_y_hint=net_y,
+                net_x_left=net_x_left,
+                net_x_right=net_x_right,
+                frame_h=frame_h,
+                frame_w=frame_w,
+            )
+
+            if top is None:
+                log.warning("SAM net detection returned no result — net_tape bounds unavailable")
+                return
+
+            # Update in-memory calibration
+            if c is not None:
+                self.calibration = CalibrationData(
+                    net_y=c.net_y, net_x_left=c.net_x_left, net_x_right=c.net_x_right,
+                    court_top=c.court_top, court_bottom=c.court_bottom,
+                    court_left=c.court_left, court_right=c.court_right,
+                    frame_width=c.frame_width, frame_height=c.frame_height,
+                    net_tape_top=top, net_tape_bottom=bot,
+                )
+            # Persist to calibration JSON for future runs
+            if self._calibration_path and self._calibration_path.exists():
+                save_sam_net_to_calibration(str(self._calibration_path), top, bot)
+
+        except Exception as exc:
+            log.warning(f"SAM net detection failed ({exc}) — continuing without net tape bounds")
 
     def _init_ball_detector(self, model_path: str):
         from detection.detect_ball_on_video import BallDetectorVideo
@@ -761,6 +811,9 @@ class GameAnalyzer:
 
         log.section(f"Video: {vp.name}")
         log.info(f"Resolution={w}x{h}  fps={fps:.1f}  frames={total}  skip={self.skip_frames}")
+
+        # Auto-detect net tape with SAM if not already in calibration
+        self._maybe_run_sam_net_detection(str(vp), float(w), float(h))
 
         # Scale calibration to actual frame resolution (e.g., 4K calib on 720p video)
         saved_calib = self.calibration
