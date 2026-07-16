@@ -20,7 +20,14 @@ _ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "scripts"))
 
+from src.detection.player_pose import (
+    CourtPlayerGate, CourtProjector, PlayerPose, draw_skeleton,
+    extract_player_poses, poses_to_teams,
+)
 from src.tracking.integrated_volleyball_fsm import CourtBounds, IntegratedVolleyballFSM
+from src.tracking.attack_heatmap import AttackHeatmap
+from src.tracking.pose_feature_extractor import POSE_FEATURE_NAMES, PoseFeatureExtractor
+from src.tracking.serve_reception import annotate_rallies
 from src.utils.logger import get_logger
 
 log = get_logger("Analyzer")
@@ -54,6 +61,16 @@ class CalibrationData:
     # SAM-detected net tape edges (optional, in same coordinate system as net_y)
     net_tape_top: Optional[float] = None
     net_tape_bottom: Optional[float] = None
+    # Ground-level line between the two net-post bases. Unlike the tape, this
+    # line lies on the court and can reliably divide the teams.
+    net_floor_left: Optional[Tuple[float, float]] = None
+    net_floor_right: Optional[Tuple[float, float]] = None
+    # ``sam3_post_mask`` is trusted; older Hough values are automatically
+    # refreshed once by SAM3 before being used as the team divider.
+    net_floor_method: Optional[str] = None
+    # Homography world (court meters) → image pixels, scaled to current frame.
+    # Enables the on-court player filter and court-half team split.
+    homography: Optional[List[List[float]]] = None
 
 
 @dataclass
@@ -77,6 +94,8 @@ class GameStats:
     all_events: List[Dict] = field(default_factory=list)
     # Per-frame data for HTML viewer overlay (ball pos, players, FSM state)
     frame_annotations: List[Dict] = field(default_factory=list)
+    # Trajectory-only contact/attack candidates aggregated into court zones.
+    attack_heatmap: Dict[str, Any] = field(default_factory=dict)
     processing_time_sec: float = 0.0
 
     @property
@@ -93,6 +112,7 @@ class GameStats:
             "total_rallies": len(self.rallies),
             "rallies": self.rallies,
             "all_events": self.all_events,
+            "attack_heatmap": self.attack_heatmap,
             "processing_time_sec": round(self.processing_time_sec, 1),
         }
 
@@ -125,6 +145,9 @@ class GameAnalyzer:
         skip_frames: int = 0,
         net_y_override: Optional[float] = None,
         event_checkpoint_path: Optional[str] = None,
+        max_players_per_team: int = 6,
+        pose_imgsz: Optional[int] = None,
+        refresh_net_floor: bool = False,
     ):
         """
         Args:
@@ -138,6 +161,20 @@ class GameAnalyzer:
         self.output_video = output_video
         self.skip_frames = skip_frames
         self.net_y_override = net_y_override
+
+        self._pose_track_warned = False
+        self.max_players_per_team = max_players_per_team
+        self.pose_imgsz = pose_imgsz  # e.g. 1280 improves recall on small/far players
+        self.refresh_net_floor = refresh_net_floor
+        self._projector: Optional[CourtProjector] = None
+        self._projector_calib: Optional[CalibrationData] = None
+        self._court_gate: Optional[CourtPlayerGate] = None
+
+        # Resolve and store calibration path for SAM net write-back
+        self._calibration_path: Optional[Path] = None
+        if calibration_path:
+            p = Path(calibration_path)
+            self._calibration_path = p if p.is_absolute() else _ROOT / p
 
         self.calibration = self._load_calibration(calibration_path)
         self._init_ball_detector(ball_model_path or str(_ROOT / _BALL_MODEL))
@@ -173,12 +210,29 @@ class GameAnalyzer:
         court_left = float(min(p[0] for p in left_pts))        if left_pts  else 0.0
         court_right= float(max(p[0] for p in right_pts))       if right_pts else float(data.get("frame_width", 3840))
 
-        # Load SAM-detected net tape positions if available
+        # Load SAM-detected net tape positions if available.
+        # net_*_y_720p are stored in 720p space — convert immediately to the
+        # native calibration resolution so all CalibrationData fields share
+        # one coordinate system (then _scale_calibration scales uniformly).
         sam = data.get("net_detection_sam", {})
-        net_tape_top    = float(sam["net_top_y_720p"])    if sam.get("net_top_y_720p")    else None
-        net_tape_bottom = float(sam["net_bottom_y_720p"]) if sam.get("net_bottom_y_720p") else None
-        # SAM tape coords are stored in 720p; store the 720p-reference height so we can scale
-        sam_ref_h = 720.0  # SAM was run on 720p frames
+        native_h = float(data.get("frame_height", 2160))
+        sam_sy = native_h / 720.0
+        net_tape_top    = float(sam["net_top_y_720p"])    * sam_sy if sam.get("net_top_y_720p")    else None
+        net_tape_bottom = float(sam["net_bottom_y_720p"]) * sam_sy if sam.get("net_bottom_y_720p") else None
+        floor_left_720 = sam.get("net_floor_left_720p")
+        floor_right_720 = sam.get("net_floor_right_720p")
+        native_w = float(data.get("frame_width", 3840))
+        net_floor_left = (
+            (float(floor_left_720[0]) * native_w / 1280.0,
+             float(floor_left_720[1]) * sam_sy)
+            if floor_left_720 else None
+        )
+        net_floor_right = (
+            (float(floor_right_720[0]) * native_w / 1280.0,
+             float(floor_right_720[1]) * sam_sy)
+            if floor_right_720 else None
+        )
+        net_floor_method = str(sam.get("net_floor_method")) if floor_left_720 and floor_right_720 else None
 
         return CalibrationData(
             net_y=net_y,
@@ -194,6 +248,10 @@ class GameAnalyzer:
             frame_height=data.get("frame_height", 2160),
             net_tape_top=net_tape_top,
             net_tape_bottom=net_tape_bottom,
+            net_floor_left=net_floor_left,
+            net_floor_right=net_floor_right,
+            net_floor_method=net_floor_method,
+            homography=data.get("perspective_matrix"),
         )
 
     def _scale_calibration(self, actual_w: int, actual_h: int) -> "CalibrationData":
@@ -213,8 +271,12 @@ class GameAnalyzer:
             sy = actual_h / c.frame_height
             log.info(f"Scaling calibration {c.frame_width}x{c.frame_height} "
                      f"→ {actual_w}x{actual_h}  (sx={sx:.3f} sy={sy:.3f})")
-            # SAM tape coords are stored in 720p; scale to actual frame height
-            sam_sy = actual_h / 720.0
+            # Homography maps world → calibration pixels; compose with the
+            # pixel scaling so it maps world → actual-resolution pixels.
+            homography_scaled = None
+            if c.homography is not None:
+                S = np.diag([sx, sy, 1.0])
+                homography_scaled = (S @ np.asarray(c.homography, dtype=np.float64)).tolist()
             c = CalibrationData(
                 net_y=c.net_y * sy,
                 net_x_left=c.net_x_left * sx,
@@ -225,8 +287,14 @@ class GameAnalyzer:
                 court_right=c.court_right * sx,
                 frame_width=actual_w,
                 frame_height=actual_h,
-                net_tape_top=c.net_tape_top * sam_sy if c.net_tape_top else None,
-                net_tape_bottom=c.net_tape_bottom * sam_sy if c.net_tape_bottom else None,
+                net_tape_top=c.net_tape_top * sy if c.net_tape_top else None,
+                net_tape_bottom=c.net_tape_bottom * sy if c.net_tape_bottom else None,
+                net_floor_left=(c.net_floor_left[0] * sx, c.net_floor_left[1] * sy)
+                    if c.net_floor_left else None,
+                net_floor_right=(c.net_floor_right[0] * sx, c.net_floor_right[1] * sy)
+                    if c.net_floor_right else None,
+                net_floor_method=c.net_floor_method,
+                homography=homography_scaled,
             )
         if self.net_y_override is not None:
             log.info(f"net_y override: {c.net_y:.1f} -> {self.net_y_override}")
@@ -237,6 +305,9 @@ class GameAnalyzer:
                 court_left=c.court_left, court_right=c.court_right,
                 frame_width=c.frame_width, frame_height=c.frame_height,
                 net_tape_top=c.net_tape_top, net_tape_bottom=c.net_tape_bottom,
+                net_floor_left=c.net_floor_left, net_floor_right=c.net_floor_right,
+                net_floor_method=c.net_floor_method,
+                homography=c.homography,
             )
         return c
 
@@ -358,38 +429,181 @@ class GameAnalyzer:
         self.ball_detector.update_no_detection()
         return None, 0.0
 
-    def _detect_players(self, frame: np.ndarray) -> Dict[str, List[Tuple[float, float]]]:
+    def _detect_players(
+        self, frame: np.ndarray
+    ) -> Tuple[Dict[str, List[Tuple[float, float]]], List[PlayerPose]]:
         """
-        Returns player centers split by which side of the net they're on:
-            {"team_a": [(cx,cy), ...], "team_b": [(cx,cy), ...]}
-        team_a = above net (y < net_y) — far side
-        team_b = below net (y > net_y) — near side
+        YOLO-pose + ByteTrack. Returns:
+            teams: {"team_a": [(cx,cy), ...], "team_b": [...]} — legacy format
+                   for FSM / StreamingEventPredictor (team_a = far side, y < net_y)
+            poses: List[PlayerPose] — full 17-keypoint skeletons with track IDs
         """
         import torch
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        results = self.pose_model(
-            frame,
-            verbose=False,
-            device=device,
-            half=(device == "cuda"),
-        )
+        kwargs = dict(verbose=False, device=device, half=(device == "cuda"))
+        if self.pose_imgsz:
+            kwargs["imgsz"] = self.pose_imgsz
+
+        try:
+            results = self.pose_model.track(
+                frame, persist=True, tracker="bytetrack.yaml", **kwargs,
+            )
+        except Exception as e:
+            if not self._pose_track_warned:
+                log.warning(f"Pose tracking unavailable ({e}) — using per-frame inference (no IDs)")
+                self._pose_track_warned = True
+            results = self.pose_model(frame, **kwargs)
 
         net_y = self.calibration.net_y if self.calibration else 830.0
-        teams: Dict[str, List[Tuple[float, float]]] = {"team_a": [], "team_b": []}
 
-        if results and results[0].boxes is not None:
-            boxes = results[0].boxes.xyxy.cpu().numpy()
-            for x1, y1, x2, y2 in boxes:
-                cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-                team = "team_a" if cy < net_y else "team_b"
-                teams[team].append((float(cx), float(cy)))
+        # Preferred filter: court homography — foot point must land on the
+        # court (± serve-zone margins). Kills spectators/benches/referees and
+        # splits teams by court half instead of pixel y vs the net tape.
+        projector = self._get_projector()
 
-        return teams
+        # Legacy fallback (no homography in calibration): x-range heuristic
+        court_x_range = None
+        min_bbox_h = 0.0
+        if self.calibration:
+            c = self.calibration
+            margin = 0.06 * c.frame_width
+            court_x_range = (c.court_left - margin, c.court_right + margin)
+            min_bbox_h = 0.025 * c.frame_height  # tiny far-away false detections
+
+        poses = extract_player_poses(
+            results[0] if results else None,
+            net_y=net_y,
+            court_x_range=court_x_range,
+            min_bbox_h=min_bbox_h,
+            projector=projector,
+        )
+
+        # On-court filter with track hysteresis: spectators/benches never get
+        # in; players chasing a ball outside the lines don't drop out.
+        if projector is not None:
+            if self._court_gate is None or self._court_gate.projector is not projector:
+                self._court_gate = CourtPlayerGate(projector, self.max_players_per_team)
+            poses = self._court_gate.filter(poses)
+
+        return poses_to_teams(poses), poses
+
+    def _get_projector(self) -> Optional[CourtProjector]:
+        """CourtProjector for the current (scaled) calibration, cached."""
+        c = self.calibration
+        if c is None or c.homography is None:
+            return None
+        if self._projector_calib is not c:  # calibration object changed (rescaled)
+            try:
+                floor_line = None
+                if c.net_floor_left and c.net_floor_right:
+                    floor_line = (c.net_floor_left, c.net_floor_right)
+                self._projector = CourtProjector(c.homography, net_floor_line=floor_line)
+            except Exception as e:
+                log.warning(f"Court projector unavailable ({e}) — using x-range player filter")
+                self._projector = None
+            self._projector_calib = c
+        return self._projector
+
+    def _maybe_run_sam_net_detection(
+        self,
+        video_path: str,
+        frame_w: float,
+        frame_h: float,
+        refresh_floor: bool = False,
+    ):
+        """Run SAM net-tape segmentation if not already in calibration.
+
+        Results (720p space) are persisted into the calibration JSON so this
+        runs once per camera setup; in-memory calibration gets the values in
+        native calibration resolution.
+        """
+        c = self.calibration
+        if (c is not None and c.net_tape_top is not None
+                and c.net_floor_left is not None and c.net_floor_right is not None
+                and c.net_floor_method == "sam3_post_mask"
+                and not refresh_floor):
+            log.info(f"Net tape already calibrated: top={c.net_tape_top:.0f}px "
+                     f"bottom={c.net_tape_bottom:.0f}px (calibration px)")
+            return
+
+        log.info("Net tape not in calibration — running SAM net segmentation on first 5 s …")
+        try:
+            from src.detection.net_detector import NetDetector, save_sam_net_to_calibration
+
+            net_y = c.net_y if c else frame_h * 0.5
+            net_x_left = c.net_x_left if c else 0.0
+            net_x_right = c.net_x_right if c else frame_w
+
+            detector = NetDetector()
+            if c is not None and c.net_tape_top is not None and c.net_tape_bottom is not None:
+                top = c.net_tape_top * 720.0 / c.frame_height
+                bot = c.net_tape_bottom * 720.0 / c.frame_height
+                log.info("Net tape already calibrated; detecting only post bases")
+            else:
+                top, bot = detector.detect_from_video(
+                    video_path=video_path,
+                    net_y_hint=net_y,
+                    net_x_left=net_x_left,
+                    net_x_right=net_x_right,
+                    frame_h=c.frame_height if c else frame_h,
+                    frame_w=c.frame_width if c else frame_w,
+                )
+            if top is None:
+                log.warning("SAM net detection returned no result — net tape bounds unavailable")
+                return
+
+            # In-memory: convert 720p → native calibration resolution
+            floor_720 = detector.detect_floor_line_sam3(
+                video_path=video_path,
+                calibration_path=str(self._calibration_path) if self._calibration_path else "",
+            )
+            floor_method = "sam3_post_mask" if floor_720 else None
+            if floor_720 is None:
+                floor_720 = detector.detect_floor_line_from_video(
+                    video_path=video_path,
+                    net_x_left=net_x_left,
+                    net_x_right=net_x_right,
+                    frame_h=c.frame_height if c else frame_h,
+                    frame_w=c.frame_width if c else frame_w,
+                    net_tape_top=top * (c.frame_height if c else frame_h) / 720.0,
+                )
+                floor_method = "hough_post_base" if floor_720 else None
+
+            if c is not None:
+                sam_sy = c.frame_height / 720.0
+                self.calibration = CalibrationData(
+                    net_y=c.net_y, net_x_left=c.net_x_left, net_x_right=c.net_x_right,
+                    court_top=c.court_top, court_bottom=c.court_bottom,
+                    court_left=c.court_left, court_right=c.court_right,
+                    frame_width=c.frame_width, frame_height=c.frame_height,
+                    net_tape_top=top * sam_sy, net_tape_bottom=bot * sam_sy,
+                    net_floor_left=(floor_720[0][0] * c.frame_width / 1280.0,
+                                    floor_720[0][1] * sam_sy) if floor_720 else c.net_floor_left,
+                    net_floor_right=(floor_720[1][0] * c.frame_width / 1280.0,
+                                     floor_720[1][1] * sam_sy) if floor_720 else c.net_floor_right,
+                    net_floor_method=floor_method or c.net_floor_method,
+                    homography=c.homography,
+                )
+            # Persist original 720p values for future runs
+            if self._calibration_path and self._calibration_path.exists():
+                save_sam_net_to_calibration(
+                    str(self._calibration_path), top, bot, floor_720, floor_method,
+                )
+
+        except Exception as exc:
+            log.warning(f"SAM net detection failed ({exc}) — continuing without net tape bounds")
 
     # ------------------------------------------------------------------
     # Drawing
     # ------------------------------------------------------------------
+
+    # Skeleton overlay styling: team_b (near side — the team we track) is
+    # highlighted; team_a (far side) is dimmed for context.
+    _SKELETON_STYLE = {
+        "team_b": {"color": (0, 220, 255), "bone": 3, "kp": 5, "draw_id": True},   # bright yellow
+        "team_a": {"color": (180, 120, 80), "bone": 1, "kp": 2, "draw_id": False}, # muted blue-gray
+    }
 
     def _draw_frame(
         self,
@@ -398,14 +612,55 @@ class GameAnalyzer:
         player_teams: Dict[str, List[Tuple[float, float]]],
         fsm_status: Dict,
         event_display: Optional[str] = None,
+        player_poses: Optional[List[PlayerPose]] = None,
     ) -> np.ndarray:
         out = frame.copy()
 
-        # Net line
+        # Court outline from homography (thin) — shows the on-court filter area
+        projector = self._get_projector()
+        if projector is not None:
+            hw, hl = projector.half_width, projector.half_length
+            quad = np.array([
+                projector.world_to_image(w) for w in
+                [(-hw, -hl), (hw, -hl), (hw, hl), (-hw, hl)]
+            ], dtype=np.int32)
+            cv2.polylines(out, [quad], isClosed=True, color=(200, 200, 200), thickness=2)
+            # Line under the net (world y=0) — the actual team split reference
+            floor_line = projector.net_floor_points()
+            if floor_line is not None:
+                p0, p1 = floor_line
+                cv2.line(out, (int(p0[0]), int(p0[1])), (int(p1[0]), int(p1[1])),
+                         (255, 0, 255), 3)
+                for label, point in (("A", p0), ("B", p1)):
+                    px, py = int(point[0]), int(point[1])
+                    cv2.circle(out, (px, py), 12, (255, 0, 255), -1)
+                    cv2.putText(out, label, (px + 14, py - 12),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
+            else:
+                p0 = projector.world_to_image((-hw, 0.0))
+                p1 = projector.world_to_image((hw, 0.0))
+                cv2.line(out, (int(p0[0]), int(p0[1])), (int(p1[0]), int(p1[1])),
+                         (200, 200, 200), 2)
+
+        # Net: SAM-detected tape band if available, else calibration net_y line
         if self.calibration:
             c = self.calibration
-            ny = int(c.net_y)
-            cv2.line(out, (int(c.net_x_left), ny), (int(c.net_x_right), ny), (255, 220, 0), 4)
+            x0, x1 = int(c.net_x_left), int(c.net_x_right)
+            # The physical post bases are the authoritative ends of the net.
+            # Legacy calibration ``net_x_*`` is only a tape/court estimate and
+            # may stop short of a post on a new camera angle.
+            if c.net_floor_left and c.net_floor_right:
+                x0, x1 = sorted((int(c.net_floor_left[0]), int(c.net_floor_right[0])))
+            if c.net_tape_top is not None and c.net_tape_bottom is not None:
+                t, b = int(c.net_tape_top), int(c.net_tape_bottom)
+                band = out.copy()
+                cv2.rectangle(band, (x0, t), (x1, b), (0, 180, 255), -1)
+                cv2.addWeighted(band, 0.25, out, 0.75, 0, out)
+                cv2.line(out, (x0, t), (x1, t), (0, 140, 255), 2)
+                cv2.line(out, (x0, b), (x1, b), (0, 90, 220), 2)
+            else:
+                ny = int(c.net_y)
+                cv2.line(out, (x0, ny), (x1, ny), (255, 220, 0), 4)
 
         # Ball
         if ball_pos:
@@ -413,11 +668,18 @@ class GameAnalyzer:
             cv2.circle(out, (cx, cy), 18, (0, 255, 0), 3)
             cv2.circle(out, (cx, cy), 5, (0, 255, 0), -1)
 
-        # Players — team_a=blue, team_b=red
-        colors = {"team_a": (255, 80, 0), "team_b": (0, 80, 255)}
-        for team, pts in player_teams.items():
-            for px, py in pts:
-                cv2.circle(out, (int(px), int(py)), 10, colors[team], -1)
+        # Players — skeletons when keypoints are available, dots as fallback
+        if player_poses:
+            for pose in player_poses:
+                st = self._SKELETON_STYLE[pose.team]
+                draw_skeleton(out, pose, st["color"],
+                              bone_thickness=st["bone"], kp_radius=st["kp"],
+                              draw_id=st["draw_id"])
+        else:
+            colors = {"team_a": (255, 80, 0), "team_b": (0, 80, 255)}
+            for team, pts in player_teams.items():
+                for px, py in pts:
+                    cv2.circle(out, (int(px), int(py)), 10, colors[team], -1)
 
         # FSM state overlay (line 1)
         state = fsm_status.get("game_state", "?")
@@ -449,6 +711,9 @@ class GameAnalyzer:
     ) -> GameStats:
         """Shared processing loop used by both process_video and process_frames."""
         fsm = self._make_fsm(fps)
+        pose_fx = PoseFeatureExtractor()  # fresh per video — track IDs restart
+        if self._court_gate is not None:
+            self._court_gate.reset()      # membership must not leak across videos
 
         # Accumulated rallies across FSM resets
         completed_rallies: List[Dict] = []
@@ -503,7 +768,16 @@ class GameAnalyzer:
                 fsm._end_rally(frame_idx, "no_ball_timeout")
                 frames_since_ball = 0
 
-            player_teams = self._detect_players(frame)
+            player_teams, player_poses = self._detect_players(frame)
+
+            # Pose-derived features (keypoints + ball) — saved per frame for the
+            # event model dataset and viewer. Reference for "wrist above net":
+            # SAM net tape top (physical top of the net) when available.
+            if self.calibration:
+                net_y_now = self.calibration.net_tape_top or self.calibration.net_y
+            else:
+                net_y_now = 830.0
+            pose_features = pose_fx.update(frame_idx, player_poses, ball_pos, net_y_now)
 
             # --- FSM update ---
             fsm_events = fsm.update(
@@ -562,6 +836,7 @@ class GameAnalyzer:
                 raw_display = self._event_predictor.add_frame(
                     ball_pos, player_teams, self.calibration.net_y, fps,
                     fsm_state=cur_state or "",   # let predictor exclude impossible classes
+                    pose_features=pose_features,  # 8 pose channels (new checkpoints)
                 )
                 # Gate: only pass prediction through when FSM says ball is in play
                 if raw_display is not None and cur_state in _LSTM_ACTIVE_STATES:
@@ -600,6 +875,19 @@ class GameAnalyzer:
                 "state": cur_state,
                 "phase": fsm_status.get("rally_phase"),
                 "ev": [e["type"] for e in frame_events_this],
+                # Full skeletons: id, team (a/b), bbox, 17×[x,y,conf]
+                "poses": [
+                    {
+                        "id": p.track_id,
+                        "team": p.team[-1],  # "a" / "b"
+                        "bb": [round(v, 1) for v in p.bbox],
+                        "kp": [[round(float(x), 1), round(float(y), 1), round(float(c), 2)]
+                               for x, y, c in p.keypoints],
+                    }
+                    for p in player_poses
+                ],
+                # Pose-derived features in POSE_FEATURE_NAMES order
+                "pose_f": pose_features,
             }
             if event_display is not None:
                 ann["event_model"] = event_display
@@ -608,7 +896,8 @@ class GameAnalyzer:
             # --- Annotate output ---
             if self.output_video and (out_writer or out_frames_dir):
                 annotated = self._draw_frame(
-                    frame, ball_pos, player_teams, fsm_status, event_display=event_display
+                    frame, ball_pos, player_teams, fsm_status,
+                    event_display=event_display, player_poses=player_poses,
                 )
                 if out_writer:
                     out_writer.write(annotated)
@@ -628,6 +917,15 @@ class GameAnalyzer:
         stats.rallies = completed_rallies
         stats.processing_time_sec = time.time() - t0
 
+        # Serve-centric derivation: serve → reception (+outcome) from rally
+        # structure. Adds "serve_reception" to each rally dict.
+        sr_counts = annotate_rallies(completed_rallies, fps)
+        if sr_counts["serves"]:
+            log.info(f"Serve/reception: {sr_counts['serves']} serves, "
+                     f"{sr_counts['success']} received OK, "
+                     f"{sr_counts['failed']} failed, "
+                     f"{sr_counts['no_reception']} no reception (ace/fault)")
+
         # Post-process: remove trajectory jumps (false positives inconsistent with neighbours)
         n_removed = self._filter_ball_outliers(stats.frame_annotations)
         if n_removed:
@@ -637,6 +935,14 @@ class GameAnalyzer:
         n_filled = self._interpolate_ball_positions(stats.frame_annotations)
         if n_filled:
             log.info(f"Ball interpolation: filled {n_filled} missing frames")
+
+        # Heatmap intentionally uses the cleaned trajectory and never the FSM:
+        # any sharp, high-speed trajectory turn is a hit candidate even if a
+        # rally was not recognized.
+        stats.attack_heatmap = AttackHeatmap(fps).analyze(
+            stats.frame_annotations, projector=self._get_projector(),
+        )
+        log.info(f"Attack heatmap: {stats.attack_heatmap['total_hits']} trajectory-turn hits")
 
         return stats
 
@@ -762,6 +1068,11 @@ class GameAnalyzer:
         log.section(f"Video: {vp.name}")
         log.info(f"Resolution={w}x{h}  fps={fps:.1f}  frames={total}  skip={self.skip_frames}")
 
+        # Auto-detect net tape with SAM if not already in calibration
+        self._maybe_run_sam_net_detection(
+            str(vp), float(w), float(h), refresh_floor=self.refresh_net_floor,
+        )
+
         # Scale calibration to actual frame resolution (e.g., 4K calib on 720p video)
         saved_calib = self.calibration
         self.calibration = self._scale_calibration(w, h)
@@ -876,6 +1187,11 @@ class GameAnalyzer:
             "net_x_right": calib.net_x_right if calib else 1280.0,
             "net_tape_top": calib.net_tape_top if calib else None,
             "net_tape_bottom": calib.net_tape_bottom if calib else None,
+            "net_floor_left": list(calib.net_floor_left) if calib and calib.net_floor_left else None,
+            "net_floor_right": list(calib.net_floor_right) if calib and calib.net_floor_right else None,
+            "net_floor_method": calib.net_floor_method if calib else None,
+            "pose_feature_names": POSE_FEATURE_NAMES,
+            "attack_heatmap": stats.attack_heatmap,
             "frames": stats.frame_annotations,
         }
         with open(ann_path, "w") as f:

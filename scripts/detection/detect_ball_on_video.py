@@ -404,11 +404,11 @@ class BallDetectorVideo:
         result_items = []
         for i, (x1, y1, x2, y2, confidence) in enumerate(detections):
             # Convert absolute coordinates to percentage
-            x_percent = (x1 / frame_width) * 100
-            y_percent = (y1 / frame_height) * 100
-            width_percent = ((x2 - x1) / frame_width) * 100
-            height_percent = ((y2 - y1) / frame_height) * 100
-            
+            x_percent = float((x1 / frame_width) * 100)
+            y_percent = float((y1 / frame_height) * 100)
+            width_percent = float(((x2 - x1) / frame_width) * 100)
+            height_percent = float(((y2 - y1) / frame_height) * 100)
+
             result_item = {
                 "original_width": frame_width,
                 "original_height": frame_height,
@@ -482,6 +482,34 @@ class BallDetectorVideo:
         self.annotation_id_counter += 1
         return task
     
+    def save_ball_crop(
+        self,
+        frame: np.ndarray,
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        output_dir: Path,
+        frame_num: int,
+        crop_index: int,
+    ) -> Optional[str]:
+        """Save a single ball crop with padding. Returns filename if saved."""
+        h, w = frame.shape[:2]
+        pad = 8
+        x1i = max(0, int(x1) - pad)
+        y1i = max(0, int(y1) - pad)
+        x2i = min(w, int(x2) + pad)
+        y2i = min(h, int(y2) + pad)
+        crop = frame[y1i:y2i, x1i:x2i]
+        if crop.size == 0:
+            return None
+        uid = str(uuid.uuid4())[:8]
+        filename = f"{uid}-frame_{frame_num:05d}_ball_{crop_index}.jpg"
+        filepath = output_dir / filename
+        if cv2.imwrite(str(filepath), crop):
+            return filename
+        return None
+
     def save_frame_with_detections(
         self, 
         frame: np.ndarray, 
@@ -544,7 +572,8 @@ class BallDetectorVideo:
         max_frames: int,
         start_time: float,
         labelstudio_images_dir: Optional[Path] = None,
-        visualization_frames_dir: Optional[Path] = None
+        visualization_frames_dir: Optional[Path] = None,
+        ball_crops_dir: Optional[Path] = None,
     ) -> int:
         """
         Process batch of frames.
@@ -566,6 +595,14 @@ class BallDetectorVideo:
             if detections:
                 new_detections_count += len(detections)
                 
+                # Save ball crops if directory is provided
+                if ball_crops_dir is not None:
+                    for idx, (x1, y1, x2, y2, _) in enumerate(detections):
+                        self.save_ball_crop(
+                            frame, x1, y1, x2, y2,
+                            ball_crops_dir, frame_num, idx,
+                        )
+
                 # Save frame with detections for Label Studio if directory is provided
                 if labelstudio_images_dir is not None:
                     frame_height, frame_width = frame.shape[:2]
@@ -630,7 +667,8 @@ class BallDetectorVideo:
         create_labelstudio_data: bool = False,
         labelstudio_output_dir: Optional[str] = None,
         max_duration_seconds: Optional[int] = None,
-        save_visualization_frames: bool = True
+        save_visualization_frames: bool = True,
+        save_ball_crops: bool = True,
     ) -> None:
         """
         Process video with ball detection.
@@ -668,6 +706,13 @@ class BallDetectorVideo:
             labelstudio_annotations_file = labelstudio_base_dir / "annotations.json"
             print(f"📝 Label Studio images will be saved to: {labelstudio_images_dir}")
             print(f"📝 Label Studio annotations will be saved to: {labelstudio_annotations_file}")
+
+        ball_crops_dir = None
+        if save_ball_crops:
+            base = Path(labelstudio_output_dir) if labelstudio_output_dir else output_path.parent
+            ball_crops_dir = base / "ball_crops"
+            ball_crops_dir.mkdir(parents=True, exist_ok=True)
+            print(f"📦 Ball crops will be saved to: {ball_crops_dir}")
         
         # Setup visualization frames directory if needed
         visualization_frames_dir = None
@@ -735,7 +780,7 @@ class BallDetectorVideo:
                 if frame_batch:
                     self._process_batch(frame_batch, frame_data_batch, out, show_trajectory, 
                                       detections_count, processed_frames, max_frames, start_time, 
-                                      labelstudio_images_dir, visualization_frames_dir)
+                                      labelstudio_images_dir, visualization_frames_dir, ball_crops_dir)
                 break
             
             frame_num += 1
@@ -746,7 +791,7 @@ class BallDetectorVideo:
                 if frame_batch:
                     self._process_batch(frame_batch, frame_data_batch, out, show_trajectory, 
                                       detections_count, processed_frames, max_frames, start_time, 
-                                      labelstudio_images_dir, visualization_frames_dir)
+                                      labelstudio_images_dir, visualization_frames_dir, ball_crops_dir)
                 break
 
             # Skip frames if needed
@@ -764,7 +809,7 @@ class BallDetectorVideo:
                 detections_count += self._process_batch(
                     frame_batch, frame_data_batch, out, show_trajectory,
                     detections_count, processed_frames, max_frames, start_time, 
-                    labelstudio_images_dir, visualization_frames_dir
+                    labelstudio_images_dir, visualization_frames_dir, ball_crops_dir
                 )
                 frame_batch = []
                 frame_data_batch = []
