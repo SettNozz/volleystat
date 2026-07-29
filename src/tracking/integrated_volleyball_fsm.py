@@ -130,15 +130,18 @@ class IntegratedVolleyballFSM:
     BLOCK_NET_MARGIN = 80.0
 
     # ── Out-of-play detection thresholds ───────────────────────────────
-    # Ball moving slower than this (px/frame, averaged over last 4 detections)
-    # is considered rolling or stationary → not in active play.
+    # Ball moving slower than this (px/frame, path length over the recent
+    # window) is considered rolling or stationary → not in active play.
     ROLLING_SPEED_PX_PER_FRAME: float = 6.0
     # When ball is within this many pixels of the near/far baseline AND moving
     # nearly horizontally at moderate speed → also considered out of play.
     FLOOR_MARGIN_PX: float = 70.0
-    # Number of consecutive "out of play" detections required before acting.
-    # Prevents single-frame false negatives from the detector.
-    OUT_OF_PLAY_CONFIRM_FRAMES: int = 3
+    # How long the ball must stay slow before a rally is declared over.
+    # A ball at the apex of a high pass is momentarily slow too, so anything
+    # shorter than about a second cuts live rallies in half.
+    OUT_OF_PLAY_CONFIRM_SEC: float = 1.0
+    # Trajectory points used to estimate current ball speed.
+    SPEED_WINDOW_POINTS: int = 6
 
     def __init__(self, court_bounds: CourtBounds, fps: float = 30.0):
         self.court_bounds = court_bounds
@@ -185,9 +188,20 @@ class IntegratedVolleyballFSM:
         self.min_serve_prep_frames: int = 45
 
         # ── Out-of-play detection state ─────────────────────────────────
-        # Counts consecutive frames where ball appears out of active play.
-        # Only triggers once it reaches OUT_OF_PLAY_CONFIRM_FRAMES.
-        self._out_of_play_consecutive: int = 0
+        # Frame at which the ball first looked out of play (-1 = in play).
+        # A rally only ends once that has held for OUT_OF_PLAY_CONFIRM_SEC.
+        self._out_of_play_since_frame: int = -1
+
+        # ── Deferred serve confirmation ─────────────────────────────────
+        # A contact fast enough to look like a serve is not published as one
+        # until the ball actually crosses the net. Players warming up, passing
+        # the ball back to the server, or a detector re-lock all produce
+        # serve-shaped contacts that never cross — those must not open a rally.
+        self._pending_serve: Optional[RallyEvent] = None
+        # ~2 s at 30fps: a real serve reaches the far court well inside this.
+        self.serve_confirm_frames: int = 60
+        # Events produced by state handlers (not by a contact) for this frame.
+        self._deferred_events: List[RallyEvent] = []
 
     # ──────────────────────────────────────────────────────────────────
     # Public API
@@ -199,9 +213,11 @@ class IntegratedVolleyballFSM:
         ball_pos: Optional[Tuple[float, float]],
         player_positions: Dict[str, List[Tuple[float, float]]],
         timestamp: float,
+        ball_interp: bool = False,
     ) -> List[RallyEvent]:
         """Main per-frame update. Returns new rally events for this frame."""
         new_events: List[RallyEvent] = []
+        self._deferred_events = []
 
         if ball_pos is not None:
             self.ball_trajectory.append((frame_idx, ball_pos[0], ball_pos[1]))
@@ -209,15 +225,15 @@ class IntegratedVolleyballFSM:
             # ── Out-of-play check ───────────────────────────────────────
             ball_in_play = self._is_ball_in_active_play(frame_idx)
             if ball_in_play:
-                self._out_of_play_consecutive = 0
-            else:
-                self._out_of_play_consecutive += 1
+                self._out_of_play_since_frame = -1
+            elif self._out_of_play_since_frame < 0:
+                self._out_of_play_since_frame = frame_idx
 
             # Only detect contacts while ball is in active play
             if ball_in_play:
                 # Physics-based contact detection (WHEN a contact happens)
                 new_contacts = self.event_tracker.update_trajectory(
-                    frame_idx, ball_pos, timestamp, player_positions
+                    frame_idx, ball_pos, timestamp, player_positions, ball_interp
                 )
 
                 # Classify each detected contact using FSM state (WHAT it is)
@@ -229,9 +245,18 @@ class IntegratedVolleyballFSM:
 
             # FSM transitions (net crossing, out of bounds, etc.)
             out_of_play_confirmed = (
-                self._out_of_play_consecutive >= self.OUT_OF_PLAY_CONFIRM_FRAMES
+                self._out_of_play_since_frame >= 0
+                and frame_idx - self._out_of_play_since_frame
+                >= self.OUT_OF_PLAY_CONFIRM_SEC * self.fps
             )
             self._update_fsm_state(frame_idx, ball_pos, timestamp, out_of_play_confirmed)
+
+        # A serve is published by _handle_serving once the ball crosses the net,
+        # so it arrives after the contact frame that produced it.
+        if self._deferred_events:
+            new_events.extend(self._deferred_events)
+            self.rally_events.extend(self._deferred_events)
+            self._deferred_events = []
 
         return new_events
 
@@ -246,22 +271,35 @@ class IntegratedVolleyballFSM:
         timestamp: float,
     ) -> Optional[RallyEvent]:
         """Classify a detected contact using the current FSM state."""
+        was_serve_ready = self.current_state == GameState.SERVE_READY
         event_type = self._determine_event_type(contact, frame_idx)
         if event_type is None:
             return None
 
         self.current_rally_phase = self._event_to_phase(event_type)
 
-        return RallyEvent(
+        event = RallyEvent(
             frame_idx=frame_idx,
             timestamp=timestamp,
             event_type=event_type,
             ball_contact=contact,
             game_state=self.current_state,
             rally_phase=self.current_rally_phase,
-            team_controlling=self.possessing_team or contact.team,
+            # On a serve there is no possessing team yet, and contact.team is
+            # whichever player happened to be nearest the ball — near the net
+            # that is often an opponent, which made serve and reception come
+            # out as the same team. serving_team is the side the FSM resolved
+            # from the ball position, so prefer it.
+            team_controlling=self.possessing_team or self.serving_team or contact.team,
             contacts_count=self.possessing_team_contacts,
         )
+
+        # Hold a candidate serve back until the ball crosses the net.
+        if was_serve_ready and event_type == "serve":
+            self._pending_serve = event
+            return None
+
+        return event
 
     def _determine_event_type(
         self, contact: BallContact, frame_idx: int
@@ -417,11 +455,31 @@ class IntegratedVolleyballFSM:
         MAX_SERVING_FRAMES in the game analyzer / FSM timeout.
         """
         if self._ball_crossed_net():
-            # Ball is now on receiving side — wait for reception contact
-            _log.debug(f"f{frame_idx}: Serve crossed net (awaiting reception)")
+            # The crossing is what confirms a candidate contact really was a
+            # serve; only now does the event become public and the rally start.
+            if self._pending_serve is not None:
+                self._deferred_events.append(self._pending_serve)
+                _log.info(f"f{frame_idx}: SERVE confirmed (crossed net) "
+                          f"by {self.serving_team}")
+                self._pending_serve = None
+            else:
+                _log.debug(f"f{frame_idx}: Serve crossed net (awaiting reception)")
             return
 
         frames_serving = frame_idx - self.serving_start_frame
+
+        # Unconfirmed candidate serve that never crossed the net: the ball was
+        # being passed around between rallies, not served. Drop it silently and
+        # go back to waiting — no event, no rally.
+        if (self._pending_serve is not None
+                and frames_serving >= self.serve_confirm_frames):
+            _log.debug(f"f{frame_idx}: candidate serve discarded (no net crossing)")
+            self._pending_serve = None
+            self.serve_done = False
+            self.serving_team = None
+            self.current_state = GameState.SERVE_READY
+            return
+
         if frames_serving < self.min_serving_frames:
             return
 
@@ -498,22 +556,29 @@ class IntegratedVolleyballFSM:
           • sitting near a baseline and moving nearly horizontally at low speed
             (being carried / walked back after a point)
 
-        Uses the last 4 trajectory points so momentary detector noise doesn't
-        incorrectly suppress contacts.
+        Speed is measured as PATH LENGTH along the recent trajectory, not the
+        straight-line displacement between its endpoints: a ball that rises and
+        falls, or is hit straight back, returns near its starting point while
+        moving fast the whole time, and endpoint distance would read that as
+        stationary.
         """
         traj = self.ball_trajectory
-        if len(traj) < 4:
+        n = self.SPEED_WINDOW_POINTS
+        if len(traj) < n:
             return True  # not enough history → assume active
 
-        recent = traj[-4:]
+        recent = traj[-n:]
         f0, x0, y0 = recent[0]
         fn, xn, yn = recent[-1]
         frame_span = fn - f0
         if frame_span == 0:
             return True
 
-        dist = math.sqrt((xn - x0) ** 2 + (yn - y0) ** 2)
-        speed = dist / frame_span  # px / frame
+        path = sum(
+            math.hypot(recent[i][1] - recent[i - 1][1], recent[i][2] - recent[i - 1][2])
+            for i in range(1, len(recent))
+        )
+        speed = path / frame_span  # px / frame
 
         # Very slow → rolling or stationary
         if speed < self.ROLLING_SPEED_PX_PER_FRAME:
@@ -591,7 +656,8 @@ class IntegratedVolleyballFSM:
         self.serving_team = None
         self.possessing_team = None
         self.possessing_team_contacts = 0
-        self._out_of_play_consecutive = 0
+        self._out_of_play_since_frame = -1
+        self._pending_serve = None
 
     # ──────────────────────────────────────────────────────────────────
     # Status / legacy compatibility

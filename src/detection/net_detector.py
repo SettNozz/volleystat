@@ -30,6 +30,28 @@ _SAM_CHECKPOINT = str(Path.home() / "Downloads" / "sam_vit_h_4b8939.pth")
 _SAM_MODEL_TYPE = "vit_h"
 
 
+def level_floor_line(
+    left: Tuple[float, float],
+    right: Tuple[float, float],
+    base_y: Optional[float] = None,
+) -> Tuple[Tuple[float, float], Tuple[float, float]]:
+    """Force the net's ground line parallel to the net tape.
+
+    The tape is modelled as a horizontal line (``net_tape_top`` is a single y),
+    so the ground line under the net — parallel to the tape in 3D and therefore
+    sharing its vanishing point — has to be horizontal in the image too. The two
+    post bases are found independently, one per post, so detector noise alone
+    tilts the segment by tens of pixels; observed slopes even flip sign between
+    videos shot from the same camera position. Since this segment is the near/far
+    team boundary, a tilt misassigns players standing near the net.
+
+    ``base_y`` overrides the height with a more robust estimate (e.g. the median
+    over all sampled frames); otherwise the two endpoints are averaged.
+    """
+    y = float(base_y) if base_y is not None else (float(left[1]) + float(right[1])) / 2.0
+    return (float(left[0]), y), (float(right[0]), y)
+
+
 class NetDetector:
     """
     Detects net tape boundaries using SAM (Segment Anything Model).
@@ -152,12 +174,13 @@ class NetDetector:
             log.warning("Net post-base detector found insufficient vertical post lines")
             return None
 
-        # A and B are physical ground-contact points of the two posts.  The
-        # divider is exactly segment A-B; do not force its image slope to the
-        # elevated tape, because perspective can make parallel court lines
-        # meet at a vanishing point.
+        # A and B are physical ground-contact points of the two posts.
         left = tuple(np.median(np.asarray(left_points), axis=0).astype(float))
         right = tuple(np.median(np.asarray(right_points), axis=0).astype(float))
+        # Each base is estimated from its own post independently, so detector
+        # noise alone tilts the segment. Level it against the tape.
+        base_y = float(np.median([p[1] for p in left_points + right_points]))
+        left, right = level_floor_line(left, right, base_y)
         log.info(f"Net floor A/B (720p): A=({left[0]:.0f},{left[1]:.0f}) "
                  f"B=({right[0]:.0f},{right[1]:.0f})")
         return left, right
@@ -215,7 +238,7 @@ class NetDetector:
             left, right = floor.get("left"), floor.get("right")
             if not (left and right and len(left) == 2 and len(right) == 2):
                 raise ValueError("missing A/B coordinates")
-            result = (
+            result = level_floor_line(
                 (float(left[0]), float(left[1])),
                 (float(right[0]), float(right[1])),
             )

@@ -60,6 +60,12 @@ def main():
                         help="Override ball detection model path")
     parser.add_argument("--pose-model", default=None, metavar="PATH",
                         help="Override pose estimation model path")
+    parser.add_argument("--ball-ensemble", action="store_true",
+                        help="Collect ball candidates from a second, tiled detector "
+                             "(union recall 0.93 vs 0.72, roughly half the speed)")
+    parser.add_argument("--no-ball-dp", action="store_true",
+                        help="Keep the live per-frame gate instead of re-picking the "
+                             "ball trajectory globally after the video is read")
 
     # Output flags
     parser.add_argument("--no-video", action="store_true",
@@ -94,6 +100,8 @@ def main():
         skip_frames=args.skip_frames,
         net_y_override=args.net_y,
         event_checkpoint_path=event_ckpt,
+        ball_ensemble=args.ball_ensemble,
+        ball_trajectory_dp=not args.no_ball_dp,
     )
 
     if args.video:

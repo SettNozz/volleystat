@@ -45,6 +45,7 @@ class TrajectoryPoint:
     timestamp: float
     speed: float
     direction: float  # Direction angle in radians
+    interp: bool = False  # True when the position came from gap interpolation
 
 
 class EnhancedEventTracker:
@@ -63,25 +64,33 @@ class EnhancedEventTracker:
         self.current_team_contacts = 0  # Contacts by current team (max 3)
         self.current_team = "team_a"
         
-        # Analysis parameters
-        self.min_speed_change = 8.0      # Minimum speed change for contact
-        self.min_direction_change = 25.0  # Minimum direction change (degrees)
+        # ── Contact detection: velocity-vector turn ────────────────────
+        # A contact is a sharp turn of the ball velocity between the frames
+        # before and after it, with both sides moving fast and coherently.
+        # These are the same physics (and thresholds) as AttackHeatmap, which
+        # is validated against real footage; keeping them aligned means the
+        # heatmap and the FSM agree on what counts as a hit.
+        #
+        # Speeds are px/SECOND everywhere in this class.
+        self.window_frames = 3            # frames each side of the candidate
+        self.min_speed_px_per_sec = 120.0  # both sides must exceed this
+        self.min_direction_change = 50.0   # degrees between in/out velocity
+        self.min_velocity_consistency = 0.72  # 1.0 = perfectly straight segment
         self.contact_radius = 40.0       # Player contact detection radius (overridden in GameAnalyzer)
-        # At 30fps: 10 frames ≈ 0.33 s minimum between contacts.
-        # Short enough that a noisy trajectory spike just before a real reception
-        # does not block the reception (volleyball contacts are ~0.5–2 s apart, but
-        # we need the window to be tight to catch rapid rally contacts).
-        # The FSM's state machine prevents impossible double-detections anyway.
+        # At 30fps: 10 frames ≈ 0.33 s minimum between contacts — one physical
+        # hit can bend the trajectory across several adjacent windows.
         self.min_contact_interval = 10   # Minimum frames between contacts
-        
+
         self.last_contact_frame = -1
-        
-    def update_trajectory(self, frame_idx: int, ball_pos: Tuple[float, float], 
-                         timestamp: float, player_positions: Dict[str, List[Tuple[float, float]]]) -> List[BallContact]:
+
+    def update_trajectory(self, frame_idx: int, ball_pos: Tuple[float, float],
+                         timestamp: float, player_positions: Dict[str, List[Tuple[float, float]]],
+                         ball_interp: bool = False) -> List[BallContact]:
         """Update trajectory and detect contacts"""
-        
+
         # Add new trajectory point
         trajectory_point = self._create_trajectory_point(frame_idx, ball_pos, timestamp)
+        trajectory_point.interp = bool(ball_interp)
         self.trajectory_history.append(trajectory_point)
         
         # Limit trajectory history size
@@ -128,79 +137,103 @@ class EnhancedEventTracker:
             direction=direction
         )
     
-    def _detect_contacts(self, current_point: TrajectoryPoint, 
+    def _detect_contacts(self, current_point: TrajectoryPoint,
                         player_positions: Dict[str, List[Tuple[float, float]]]) -> List[BallContact]:
-        """Detect ball contacts based on trajectory analysis"""
-        
+        """Detect ball contacts as sharp turns of the ball velocity vector.
+
+        The candidate is the point `window_frames` back in the history, so a
+        contact is reported with that much latency — both the incoming and the
+        outgoing leg must be observed before a turn can be measured at all.
+        """
+
         contacts = []
-        
-        # Need minimum trajectory history for analysis
-        if len(self.trajectory_history) < 3:
+        w = self.window_frames
+
+        # Need the full window on both sides of the candidate
+        if len(self.trajectory_history) < 2 * w + 1:
             return contacts
-        
+
+        segment = self.trajectory_history[-(2 * w + 1):]
+        centre = segment[w]
+
         # Prevent detecting contacts too frequently
-        if current_point.frame_idx - self.last_contact_frame < self.min_contact_interval:
+        if centre.frame_idx - self.last_contact_frame < self.min_contact_interval:
             return contacts
-        
-        # Calculate trajectory changes
-        speed_change, direction_change = self._calculate_trajectory_changes()
-        
-        # Check if changes are significant enough for contact
-        if (speed_change < self.min_speed_change and 
-            direction_change < self.min_direction_change):
+
+        # Interpolated points are straight by construction: a "turn" at the
+        # edge of a filled gap is an artifact of the fill, not a real hit.
+        if any(p.interp for p in segment):
             return contacts
-        
+
+        incoming, speed_before, consistency_before = self._segment_velocity(segment[:w + 1])
+        outgoing, speed_after, consistency_after = self._segment_velocity(segment[w:])
+
+        if min(consistency_before, consistency_after) < self.min_velocity_consistency:
+            return contacts
+        if min(speed_before, speed_after) < self.min_speed_px_per_sec:
+            return contacts
+
+        cosine = (incoming[0] * outgoing[0] + incoming[1] * outgoing[1]) / (speed_before * speed_after)
+        direction_change = math.degrees(math.acos(max(-1.0, min(1.0, cosine))))
+        if direction_change < self.min_direction_change:
+            return contacts
+
+        speed_change = abs(speed_after - speed_before)
+
         # Find closest player for contact attribution
-        closest_player = self._find_closest_player(current_point, player_positions)
+        closest_player = self._find_closest_player(centre, player_positions)
 
         # If no player found within contact_radius, fall back to team attribution
         # by ball position relative to net (court_bounds.net_y).
         # This ensures contacts are detected even when pose estimation is imperfect.
         if not closest_player:
-            team = "team_a" if current_point.y < self.court_bounds.net_y else "team_b"
+            team = "team_a" if centre.y < self.court_bounds.net_y else "team_b"
             closest_player = {
                 'team': team,
                 'player_id': -1,      # -1 = unknown player
-                'position': (current_point.x, current_point.y),
+                'position': (centre.x, centre.y),
                 'distance': float('inf'),
             }
 
         # Determine contact type
-        contact_type = self._determine_contact_type(current_point, speed_change, direction_change)
+        contact_type = self._determine_contact_type(centre, speed_change, direction_change)
 
         # Create contact event
         contact = self._create_contact_event(
-            current_point, contact_type, closest_player, speed_change, direction_change
+            centre, contact_type, closest_player, speed_change, direction_change,
+            speed_before, speed_after,
         )
 
         contacts.append(contact)
-        self.last_contact_frame = current_point.frame_idx
+        self.last_contact_frame = centre.frame_idx
 
         return contacts
-    
-    def _calculate_trajectory_changes(self) -> Tuple[float, float]:
-        """Calculate speed and direction changes"""
-        
-        if len(self.trajectory_history) < 3:
-            return 0.0, 0.0
-        
-        current = self.trajectory_history[-1]
-        prev = self.trajectory_history[-2]
-        before_prev = self.trajectory_history[-3]
-        
-        # Speed change
-        speed_change = abs(current.speed - prev.speed)
-        
-        # Direction change
-        direction_change = abs(current.direction - prev.direction)
-        # Handle angle wrapping
-        if direction_change > math.pi:
-            direction_change = 2 * math.pi - direction_change
-        
-        direction_change_degrees = math.degrees(direction_change)
-        
-        return speed_change, direction_change_degrees
-    
+
+    def _segment_velocity(self, points: List[TrajectoryPoint]) -> Tuple[Tuple[float, float], float, float]:
+        """Mean velocity (px/s) plus directional coherence for a short segment.
+
+        Consistency is the length of the mean velocity divided by the mean of
+        the step lengths: 1.0 when every step points the same way, near 0 for
+        detector jitter around a stationary ball.
+        """
+        vectors = []
+        for prev, cur in zip(points, points[1:]):
+            df = cur.frame_idx - prev.frame_idx
+            if df <= 0:
+                continue
+            vectors.append(((cur.x - prev.x) * self.fps / df,
+                            (cur.y - prev.y) * self.fps / df))
+        if not vectors:
+            return (0.0, 0.0), 0.0, 0.0
+
+        mx = sum(v[0] for v in vectors) / len(vectors)
+        my = sum(v[1] for v in vectors) / len(vectors)
+        speed = math.hypot(mx, my)
+        mean_magnitude = sum(math.hypot(*v) for v in vectors) / len(vectors)
+        consistency = speed / max(mean_magnitude, 1e-6)
+        return (mx, my), speed, consistency
+
+
     def _find_closest_player(self, trajectory_point: TrajectoryPoint, 
                            player_positions: Dict[str, List[Tuple[float, float]]]) -> Optional[Dict]:
         """Find closest player to ball position"""
@@ -225,44 +258,43 @@ class EnhancedEventTracker:
         
         return closest_player
     
-    def _determine_contact_type(self, current_point: TrajectoryPoint, 
+    def _determine_contact_type(self, current_point: TrajectoryPoint,
                               speed_change: float, direction_change: float) -> ContactType:
-        """Determine type of contact based on trajectory analysis"""
-        
+        """Rough physics label for a contact.
+
+        Only advisory: the FSM assigns the authoritative event type from rally
+        state, because physics alone cannot tell a serve from an attack.
+        Thresholds are px/SECOND, matching TrajectoryPoint.speed.
+        """
+
         speed = current_point.speed
-        
+
         # High speed + significant direction change = Attack
-        if speed > 25.0 and direction_change > 45.0:
+        if speed > 750.0 and direction_change > 45.0:
             return ContactType.ATTACK
-        
+
         # Moderate speed + controlled trajectory = Pass
-        elif 8.0 <= speed <= 20.0 and direction_change <= 30.0:
+        elif 240.0 <= speed <= 600.0 and direction_change <= 30.0:
             return ContactType.PASS
-        
+
         # Low speed from serve position = Serve
-        elif speed > 15.0 and self.current_team_contacts == 0:
+        elif speed > 450.0 and self.current_team_contacts == 0:
             return ContactType.SERVE
-        
+
         # Low speed + big direction change = Dig
-        elif speed <= 8.0 and direction_change > 35.0:
+        elif speed <= 240.0 and direction_change > 35.0:
             return ContactType.DIG
-        
+
         # Default to pass
         else:
             return ContactType.PASS
     
-    def _create_contact_event(self, trajectory_point: TrajectoryPoint, 
+    def _create_contact_event(self, trajectory_point: TrajectoryPoint,
                             contact_type: ContactType, player_data: Dict,
-                            speed_change: float, direction_change: float) -> BallContact:
+                            speed_change: float, direction_change: float,
+                            speed_before: float, speed_after: float) -> BallContact:
         """Create ball contact event"""
-        
-        # Calculate before/after metrics
-        speed_before = 0.0
-        speed_after = trajectory_point.speed
-        
-        if len(self.trajectory_history) >= 2:
-            speed_before = self.trajectory_history[-2].speed
-        
+
         # Calculate contact confidence
         confidence = self._calculate_contact_confidence(speed_change, direction_change, player_data['distance'])
         

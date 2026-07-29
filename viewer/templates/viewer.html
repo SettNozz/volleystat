@@ -2,105 +2,171 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Viewer — {{ job.video_stem }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CourtSense — {{ job.video_stem }}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
+:root {
+  --bg: oklch(98% 0.004 250);
+  --ink: oklch(20% 0.02 260);
+  --muted: oklch(55% 0.015 260);
+  --muted2: oklch(48% 0.02 260);
+  --border: oklch(91% 0.006 255);
+  --border-soft: oklch(94% 0.006 255);
+  --primary: oklch(58% 0.19 265);
+  --primary-soft: oklch(94% 0.03 265);
+  --card: #fff;
+  --head-bg: oklch(96.5% 0.006 250);
+  --green: oklch(62% 0.15 150);
+  --red: oklch(60% 0.18 25);
+  --court: oklch(95% 0.02 265);
+  --court-line: oklch(78% 0.03 265);
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: system-ui, sans-serif; background: #0f1117; color: #e0e0e0; }
+body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--ink); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+::-webkit-scrollbar { height: 8px; width: 8px; }
+::-webkit-scrollbar-thumb { background: oklch(85% 0.01 260); border-radius: 8px; }
 
-/* Layout */
-.layout { display: grid; grid-template-columns: 1fr 340px; height: 100vh; }
-.main { display: flex; flex-direction: column; overflow: hidden; }
-.sidebar { background: #1a1d27; border-left: 1px solid #2a2d3a; overflow-y: auto; padding: 16px; }
+/* ── Top bar ─────────────────────────────────────────── */
+.topbar { height: 60px; min-height: 60px; display: flex; align-items: center; gap: 28px; padding: 0 28px; background: var(--card); border-bottom: 1px solid var(--border); }
+.logo { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
+.logo-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--primary); display: flex; align-items: center; justify-content: center; }
+.logo-mark div { width: 11px; height: 11px; border-radius: 50%; background: #fff; }
+.logo-name { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; }
+.nav { display: flex; gap: 4px; flex: 1; }
+.nav-item { padding: 8px 16px; border-radius: 8px; font-size: 13.5px; font-weight: 600; cursor: pointer; transition: all .15s; color: var(--muted2); }
+.nav-item.active { background: var(--primary-soft); color: var(--primary); }
+.top-meta { font-size: 13px; font-weight: 700; padding: 8px 14px; border-radius: 8px; background: var(--head-bg); color: var(--ink); }
+.upload-btn { padding: 9px 18px; border-radius: 8px; background: var(--primary); color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: none; }
 
-/* Header */
-.header { background: #1a1d27; border-bottom: 1px solid #2a2d3a; padding: 10px 16px; display: flex; align-items: center; gap: 16px; }
-.header h1 { font-size: 1rem; font-weight: 600; color: #fff; }
-.badge { background: #4f8ef7; color: #fff; font-size: 0.75rem; padding: 2px 8px; border-radius: 12px; }
+/* ── Shared ──────────────────────────────────────────── */
+.page { flex: 1; overflow: hidden; display: none; }
+.page.active { display: flex; }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+.card-title { font-size: 13px; font-weight: 700; margin-bottom: 12px; }
+.chip { padding: 7px 13px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--card); color: var(--muted2); transition: all .15s; white-space: nowrap; user-select: none; }
+.chip.on { border-color: var(--primary); background: var(--primary); color: #fff; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.divider { height: 1px; background: var(--border-soft); margin: 16px 0; }
+.filter-label { font-size: 12px; font-weight: 700; color: var(--muted); margin-right: 4px; }
+.vsep { width: 1px; height: 22px; background: var(--border-soft); }
 
-/* Video area */
-.video-wrap { flex: 1; position: relative; background: #000; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-video { max-width: 100%; max-height: 100%; display: block; }
-canvas { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+/* ── Video page ──────────────────────────────────────── */
+#page-video { flex-direction: row; gap: 20px; padding: 20px 28px; overflow: auto; }
+.video-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.video-shell { position: relative; border-radius: 14px; overflow: hidden; background: oklch(20% 0.02 260); aspect-ratio: 16/9; flex-shrink: 0; }
+video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+canvas#overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+.video-badge { position: absolute; bottom: 14px; left: 14px; padding: 5px 10px; border-radius: 6px; background: oklch(0% 0 0 / 0.55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
 
-/* Controls */
-.controls { background: #1a1d27; border-top: 1px solid #2a2d3a; padding: 10px 16px; }
-.timeline-bar { position: relative; height: 8px; background: #2a2d3a; border-radius: 4px; margin-bottom: 10px; cursor: pointer; }
-.timeline-progress { height: 100%; background: #4f8ef7; border-radius: 4px; pointer-events: none; }
+.controls { padding: 14px 16px; }
+.timeline-bar { position: relative; height: 8px; background: var(--border-soft); border-radius: 4px; margin-bottom: 12px; cursor: pointer; }
+.timeline-progress { height: 100%; background: var(--primary); border-radius: 4px; pointer-events: none; }
 .event-marker { position: absolute; top: -4px; width: 4px; height: 16px; border-radius: 2px; transform: translateX(-50%); }
-/* New event types */
-.event-marker.serve         { background: #fbbf24; }
-.event-marker.reception     { background: #34d399; }
-.event-marker.dig           { background: #2dd4bf; }
-.event-marker.pass          { background: #a78bfa; }
-.event-marker.attack        { background: #f87171; }
-.event-marker.block         { background: #fb923c; }
-.event-marker.ace           { background: #facc15; }
-.event-marker.serve_out     { background: #6b7280; }
-.event-marker.out           { background: #6b7280; }
-.event-marker.ball_out      { background: #6b7280; }
-.event-marker.goal_or_out   { background: #6b7280; }
-/* Legacy names (backward compat) */
-.event-marker.reception_pass{ background: #34d399; }
-.event-marker.setting_pass  { background: #60a5fa; }
-.event-marker.rally_start   { background: #fff; width: 2px; }
-/* Rally separator in event list */
-.rally-sep { display:flex; align-items:center; gap:8px; padding:6px 4px 3px; cursor:pointer; margin-top:6px; }
-.rally-sep:first-child { margin-top:0; }
-.rally-sep:hover .rally-sep-label { color:#aaa; }
-.rally-sep-label { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.1em; color:#555; font-weight:600; }
-.rally-sep-line  { flex:1; height:1px; background:#2a2d3a; }
-.btn-row { display: flex; align-items: center; gap: 12px; }
-button.ctrl { background: #2a2d3a; border: none; color: #e0e0e0; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
-button.ctrl:hover { background: #3a3d4a; }
-button.ctrl.active { background: #4f8ef7; color: #fff; }
-.time-display { font-size: 0.85rem; color: #888; margin-left: auto; }
+.event-marker.rally_start { background: var(--ink); width: 2px; }
+.btn-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+button.ctrl { background: var(--card); border: 1px solid var(--border); color: var(--muted2); padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 12.5px; font-weight: 600; font-family: inherit; transition: all .15s; }
+button.ctrl:hover { border-color: var(--primary); color: var(--primary); }
+button.ctrl.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.time-display { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
 
-/* Overlays toggles */
-.toggle-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.toggle { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; cursor: pointer; }
-.toggle input { accent-color: #4f8ef7; }
+.clips-title { font-size: 13px; font-weight: 700; color: var(--muted2); margin-bottom: 8px; }
+.clips-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; }
+.clip-card { width: 150px; flex-shrink: 0; cursor: pointer; }
+.clip-thumb { height: 64px; border-radius: 8px; margin-bottom: 8px; background: var(--court); position: relative; overflow: hidden; border: 1px solid var(--border); }
+.clip-thumb .bar { position: absolute; bottom: 0; left: 0; height: 4px; background: var(--primary); }
+.clip-name { font-size: 12.5px; font-weight: 700; }
+.clip-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 
-/* Sidebar sections */
-.section { margin-bottom: 20px; }
-.section h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; color: #666; margin-bottom: 10px; }
+.side-col { width: 320px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px; }
+.side-card { padding: 18px; }
 .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.stat-box { background: #0f1117; border: 1px solid #2a2d3a; border-radius: 8px; padding: 10px; }
-.stat-box .val { font-size: 1.5rem; font-weight: 700; color: #fff; }
-.stat-box .lbl { font-size: 0.72rem; color: #666; }
+.stat-box { background: var(--head-bg); border-radius: 8px; padding: 10px 12px; }
+.stat-box .val { font-size: 20px; font-weight: 800; }
+.stat-box .lbl { font-size: 11px; font-weight: 600; color: var(--muted); margin-top: 1px; }
+.toggle { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; color: var(--muted2); cursor: pointer; }
+.toggle input { accent-color: var(--primary); }
+.toggle-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cal-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+.cal-row input[type=range] { flex: 1; accent-color: var(--primary); }
+.cal-val { min-width: 34px; text-align: right; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
 
-/* Events list */
-.event-list { display: flex; flex-direction: column; gap: 4px; }
-.event-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; }
-.event-item:hover { background: #2a2d3a; }
-.event-item.active { background: #1e2a3a; }
+.event-list { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; }
+.event-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.event-item:hover { background: var(--head-bg); }
+.event-item.active { background: var(--primary-soft); }
 .event-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.event-time { color: #666; min-width: 44px; }
-.event-type { flex: 1; }
-.event-team { font-size: 0.72rem; padding: 1px 6px; border-radius: 4px; }
-.team-a { background: #1a2a4a; color: #60a5fa; }
-.team-b { background: #2a1a1a; color: #f87171; }
+.event-time { color: var(--muted); min-width: 44px; font-variant-numeric: tabular-nums; }
+.event-type { flex: 1; font-weight: 600; }
+.event-team { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 4px; }
+.team-a { background: var(--primary-soft); color: var(--primary); }
+.team-b { background: oklch(93% 0.03 25); color: var(--red); }
+.rally-sep { display: flex; align-items: center; gap: 8px; padding: 8px 4px 3px; cursor: pointer; }
+.rally-sep-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 700; }
+.rally-sep-line { flex: 1; height: 1px; background: var(--border-soft); }
 
-/* Rally range */
-.rally-bar { height: 4px; background: #2a2d3a; border-radius: 2px; position: relative; margin: 6px 0; }
-.rally-range { position: absolute; height: 100%; background: #4f8ef7; border-radius: 2px; opacity: 0.5; }
+/* ── Charts page ─────────────────────────────────────── */
+#page-charts { flex-direction: column; gap: 18px; padding: 20px 28px; overflow: auto; }
+.charts-filterbar { padding: 16px 18px; display: flex; flex-wrap: wrap; gap: 22px; align-items: center; }
+.charts-grid { display: grid; grid-template-columns: 300px 1fr 300px; gap: 18px; flex: 1; min-height: 0; }
+.chart-col { display: flex; flex-direction: column; gap: 18px; min-height: 0; }
+.chart-card { padding: 14px; flex: 1; display: flex; flex-direction: column; min-height: 220px; }
+.court-panel { position: relative; flex: 1; min-height: 180px; border-radius: 8px; background: var(--court); overflow: hidden; }
+.court-netline { position: absolute; left: 0; right: 0; height: 1px; background: var(--court-line); }
+.court-dot { position: absolute; width: 9px; height: 9px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px #fff; }
+.mini-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mini-table thead td { padding: 6px 0; font-weight: 700; color: var(--muted); }
+.mini-table tbody td { padding: 7px 0; border-top: 1px solid var(--border-soft); font-weight: 600; }
+.mini-table .num { text-align: right; }
+.mini-table .strong { font-weight: 700; }
 
-a.back { display: inline-block; margin-bottom: 12px; font-size: 0.8rem; color: #666; text-decoration: none; }
-a.back:hover { color: #999; }
+/* ── Table page ──────────────────────────────────────── */
+#page-table { flex-direction: column; gap: 16px; padding: 20px 28px; overflow: auto; }
+.presets-row { display: flex; gap: 8px; flex-wrap: wrap; max-height: 116px; overflow-y: auto; padding-right: 4px; }
+.preset { padding: 9px 14px; border-radius: 8px; background: var(--card); border: 1px solid var(--border); flex-shrink: 0; cursor: pointer; min-width: 74px; }
+.preset.on { background: var(--primary-soft); }
+.preset .p-label { font-size: 12px; font-weight: 700; }
+.preset .p-score { font-size: 12px; font-weight: 700; }
+.table-filterbar { padding: 14px 18px; display: flex; flex-wrap: wrap; gap: 22px; align-items: center; }
+.reset-link { font-size: 13px; font-weight: 700; color: var(--primary); cursor: pointer; margin-left: auto; }
+.tab-row { display: flex; gap: 16px; }
+.tab { padding: 9px 4px; font-size: 13.5px; font-weight: 700; cursor: pointer; border-bottom: 2px solid transparent; color: var(--muted); }
+.tab.on { border-bottom-color: var(--primary); color: var(--ink); }
+.big-table-wrap { overflow: auto; }
+.big-table { border-collapse: collapse; font-size: 12.5px; white-space: nowrap; min-width: 100%; }
+.big-table thead tr.grp { background: var(--head-bg); }
+.big-table thead td { padding: 8px 12px; font-weight: 700; color: var(--muted); border-bottom: 1px solid var(--border); }
+.big-table thead td.bl, .big-table tbody td.bl { border-left: 1px solid var(--border-soft); }
+.big-table tbody td { padding: 7px 12px; border-top: 1px solid var(--border-soft); }
+.big-table tbody tr.clickable { cursor: pointer; }
+.big-table tbody tr.clickable:hover { background: var(--head-bg); }
+.big-table tbody tr.total { background: var(--head-bg); font-weight: 700; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.c-green { color: var(--green); } .c-red { color: var(--red); } .c-muted { color: var(--muted); }
 </style>
 </head>
 <body>
-<div class="layout">
 
-  <!-- Main video area -->
-  <div class="main">
-    <div class="header">
-      <a href="/" style="color:#666;text-decoration:none;font-size:0.85rem;">← Home</a>
-      <h1>{{ job.video_stem }}</h1>
-      <span class="badge">{{ stats.total_rallies }} rallies</span>
-      <span class="badge" style="background:#2a2a2a;color:#888;">{{ (stats.ball_detection_rate * 100) | round(1) }}% ball detection</span>
-    </div>
+<!-- ── Top bar ─────────────────────────────────────────── -->
+<div class="topbar">
+  <a class="logo" href="/">
+    <div class="logo-mark"><div></div></div>
+    <div class="logo-name">CourtSense</div>
+  </a>
+  <div class="nav">
+    <div class="nav-item active" data-page="video" onclick="showPage('video')">Video Analysis</div>
+    <div class="nav-item" data-page="charts" onclick="showPage('charts')">Visual Stats</div>
+    <div class="nav-item" data-page="table" onclick="showPage('table')">Match Stats</div>
+  </div>
+  <div class="top-meta">{{ job.video_stem }} · {{ stats.total_rallies }} rallies · {{ (stats.ball_detection_rate * 100) | round(0) | int }}% ball</div>
+  <a class="upload-btn" href="/">Upload</a>
+</div>
 
-    <div class="video-wrap" id="videoWrap">
+<!-- ── Page 1: Video Analysis ──────────────────────────── -->
+<div class="page active" id="page-video">
+  <div class="video-col">
+    <div class="video-shell">
       <video id="vid" preload="auto">
         {% if job.original_video_path_url %}
         <source src="/api/original_video?path={{ job.original_video_path_url }}" type="video/mp4">
@@ -109,135 +175,189 @@ a.back:hover { color: #999; }
         {% endif %}
       </video>
       <canvas id="overlay"></canvas>
+      <div class="video-badge" id="videoBadge">{{ job.video_stem }}</div>
     </div>
 
-    <div class="controls">
-      <!-- Timeline with event markers -->
+    <div class="card controls">
       <div class="timeline-bar" id="timelineBar" onclick="seekTo(event)">
         <div class="timeline-progress" id="timelineProgress"></div>
-        <!-- Event markers injected by JS -->
       </div>
-
       <div class="btn-row">
         <button class="ctrl" onclick="togglePlay()" id="playBtn">▶ Play</button>
         <button class="ctrl" onclick="stepFrame(-1)">⟨ Frame</button>
         <button class="ctrl" onclick="stepFrame(1)">Frame ⟩</button>
         <button class="ctrl" onclick="toggleMute()" id="muteBtn">🔊</button>
-        <span style="color:#666;font-size:0.8rem;">Speed:</span>
-        <button class="ctrl" onclick="setSpeed(0.25)">0.25×</button>
-        <button class="ctrl" onclick="setSpeed(0.5)">0.5×</button>
-        <button class="ctrl" onclick="setSpeed(1)" id="speed1" class="ctrl active">1×</button>
+        <button class="ctrl" onclick="setSpeed(0.25, this)">0.25×</button>
+        <button class="ctrl" onclick="setSpeed(0.5, this)">0.5×</button>
+        <button class="ctrl active" onclick="setSpeed(1, this)" id="speed1">1×</button>
         <span class="time-display" id="timeDisplay">0:00 / 0:00</span>
       </div>
+    </div>
 
-      <!-- Overlay toggles -->
-      <div class="toggle-row" style="margin-top:8px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-        <label class="toggle"><input type="checkbox" id="togBall" checked onchange="redraw()"> Ball</label>
-        <label class="toggle"><input type="checkbox" id="togTrail" checked onchange="redraw()"> Trail</label>
-        <label class="toggle"><input type="checkbox" id="togNet" checked onchange="redraw()"> Net</label>
-
-        <label class="toggle"><input type="checkbox" id="togState" checked onchange="redraw()"> FSM State</label>
-        <label class="toggle"><input type="checkbox" id="togModel" checked onchange="redraw()"> Model (Transformer)</label>
-        <label class="toggle"><input type="checkbox" id="togEvents" checked onchange="redraw()"> Events</label>
-        <span style="color:#888;font-size:0.75rem;margin-left:4px;">State: FSM vs Transformer</span>
-        <span style="color:#666;font-size:0.8rem;margin-left:8px;">net_y:</span>
-        <input type="range" id="netYSlider" min="50" max="900" step="1" style="width:100px;accent-color:#ffd700;"
-               oninput="updateNetY(this.value)">
-        <span id="netYVal" style="color:#ffd700;font-size:0.8rem;min-width:32px;"></span>
-        <span style="color:#666;font-size:0.8rem;margin-left:4px;">xL:</span>
-        <input type="range" id="netXLSlider" min="0" max="1920" step="1" style="width:80px;accent-color:#60a5fa;"
-               oninput="updateNetX()">
-        <span id="netXLVal" style="color:#60a5fa;font-size:0.8rem;min-width:32px;"></span>
-        <span style="color:#666;font-size:0.8rem;">xR:</span>
-        <input type="range" id="netXRSlider" min="0" max="1920" step="1" style="width:80px;accent-color:#60a5fa;"
-               oninput="updateNetX()">
-        <span id="netXRVal" style="color:#60a5fa;font-size:0.8rem;min-width:32px;"></span>
-        <span style="color:#666;font-size:0.8rem;margin-left:8px;">sync:</span>
-        <button onclick="changeSyncOffset(-1)" style="padding:1px 6px;font-size:0.75rem;background:#1a1d2e;border:1px solid #333;color:#aaa;cursor:pointer;border-radius:3px;">-</button>
-        <span id="syncOffsetVal" style="color:#aaa;font-size:0.8rem;min-width:20px;text-align:center;">0</span>
-        <button onclick="changeSyncOffset(1)" style="padding:1px 6px;font-size:0.75rem;background:#1a1d2e;border:1px solid #333;color:#aaa;cursor:pointer;border-radius:3px;">+</button>
-      </div>
+    <div>
+      <div class="clips-title">Rally clips</div>
+      <div class="clips-row" id="rallyClips"></div>
     </div>
   </div>
 
-  <!-- Sidebar -->
-  <div class="sidebar">
-    <!-- Stats -->
-    <div class="section">
-      <h3>Statistics</h3>
+  <div class="side-col">
+    <div class="card side-card">
+      <div class="card-title">Event type</div>
+      <div class="chip-row" id="typeChips"></div>
+      <div class="divider"></div>
+      <div class="card-title">Team</div>
+      <div class="chip-row" id="teamChips"></div>
+      <div class="divider"></div>
+      <div class="card-title">Overlays</div>
+      <div class="toggle-grid">
+        <label class="toggle"><input type="checkbox" id="togBall" checked onchange="redraw()"> Ball</label>
+        <label class="toggle"><input type="checkbox" id="togTrail" checked onchange="redraw()"> Trail</label>
+        <label class="toggle"><input type="checkbox" id="togNet" checked onchange="redraw()"> Net</label>
+        <label class="toggle"><input type="checkbox" id="togPlayers" checked onchange="redraw()"> Players</label>
+        <label class="toggle"><input type="checkbox" id="togState" checked onchange="redraw()"> FSM State</label>
+        <label class="toggle"><input type="checkbox" id="togModel" checked onchange="redraw()"> Model</label>
+        <label class="toggle"><input type="checkbox" id="togEvents" checked onchange="redraw()"> Events</label>
+        <label class="toggle"><input type="checkbox" id="togAttackHeatmap" onchange="redraw()"> Hit heatmap</label>
+      </div>
+      <div class="divider"></div>
+      <details>
+        <summary style="font-size:12.5px;font-weight:700;color:var(--muted2);cursor:pointer;">Calibration &amp; sync</summary>
+        <div class="cal-row">net_y <input type="range" id="netYSlider" min="50" max="900" step="1" oninput="updateNetY(this.value)"> <span class="cal-val" id="netYVal"></span></div>
+        <div class="cal-row">xL <input type="range" id="netXLSlider" min="0" max="1920" step="1" oninput="updateNetX()"> <span class="cal-val" id="netXLVal"></span></div>
+        <div class="cal-row">xR <input type="range" id="netXRSlider" min="0" max="1920" step="1" oninput="updateNetX()"> <span class="cal-val" id="netXRVal"></span></div>
+        <div class="cal-row">sync
+          <button class="ctrl" style="padding:2px 9px" onclick="changeSyncOffset(-1)">−</button>
+          <span class="cal-val" id="syncOffsetVal">0</span>
+          <button class="ctrl" style="padding:2px 9px" onclick="changeSyncOffset(1)">+</button>
+        </div>
+      </details>
+    </div>
+
+    <div class="card side-card">
+      <div class="card-title">Statistics</div>
       <div class="stat-grid">
-        <div class="stat-box">
-          <div class="val">{{ stats.total_rallies }}</div>
-          <div class="lbl">Rallies</div>
-        </div>
-        <div class="stat-box">
-          <div class="val">{{ (stats.ball_detection_rate * 100) | round(0) | int }}%</div>
-          <div class="lbl">Ball Detected</div>
-        </div>
-        <div class="stat-box">
-          <div class="val">{{ stats.all_events | length }}</div>
-          <div class="lbl">Contact Events</div>
-        </div>
-        <div class="stat-box">
-          <div class="val">{{ stats.processing_time_sec | round(0) | int }}s</div>
-          <div class="lbl">Proc. Time</div>
-        </div>
+        <div class="stat-box"><div class="val">{{ stats.total_rallies }}</div><div class="lbl">Rallies</div></div>
+        <div class="stat-box"><div class="val">{{ (stats.ball_detection_rate * 100) | round(0) | int }}%</div><div class="lbl">Ball detected</div></div>
+        <div class="stat-box"><div class="val">{{ stats.all_events | length }}</div><div class="lbl">Contact events</div></div>
+        <div class="stat-box"><div class="val">{{ stats.processing_time_sec | round(0) | int }}s</div><div class="lbl">Proc. time</div></div>
+      </div>
+      <div id="attackHeatmapPanel" style="display:none;">
+        <div class="divider"></div>
+        <div class="card-title">Trajectory hit heatmap <span id="attackHeatmapTotal" style="color:var(--primary)"></span></div>
+        <div id="attackHeatmapZones" style="display:grid;grid-template-columns:1fr 1fr;gap:5px;"></div>
       </div>
     </div>
 
-    <!-- Rallies -->
-    {% if stats.rallies %}
-    <div class="section">
-      <h3>Rallies</h3>
-      {% for r in stats.rallies %}
-      <div style="margin-bottom:10px;padding:10px;background:#0f1117;border-radius:8px;border:1px solid #2a2d3a;cursor:pointer;" onclick="seekAndPlay({{ r.start_frame }})">
-        <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-          <span style="font-size:0.82rem;font-weight:600;">Rally {{ loop.index }}</span>
-          <span style="font-size:0.75rem;color:#666;">{{ r.duration_sec }}s</span>
-        </div>
-        <div class="rally-bar">
-          <div class="rally-range" style="left:0%;width:100%;"></div>
-        </div>
-        <div style="display:flex;gap:12px;font-size:0.75rem;color:#666;margin-top:4px;">
-          <span style="color:#60a5fa;">Team A: {{ r.contacts_team_a }}</span>
-          <span style="color:#f87171;">Team B: {{ r.contacts_team_b }}</span>
-          <span>f{{ r.start_frame }}–{{ r.end_frame }}</span>
-        </div>
-      </div>
-      {% endfor %}
+    <div class="card side-card">
+      <div class="card-title">Contact events</div>
+      <div class="event-list" id="eventList"></div>
     </div>
-    {% endif %}
+  </div>
+</div>
 
-    <!-- Events grouped by rally -->
-    <div class="section">
-      <h3>Contact Events</h3>
-      <div class="event-list" id="eventList">
-        {# Build set of frames that start a new rally (first event frame of each rally) #}
-        {% set rally_first = [] %}
-        {% for r in stats.rallies %}
-          {% if r.events %}{% set _ = rally_first.append(r.events[0].frame) %}{% endif %}
-        {% endfor %}
-        {% set ns = namespace(rally_num=0) %}
-        {% set EV_COLORS = {'serve':'#fbbf24','attack':'#f87171','block':'#fb923c','reception':'#34d399','reception_pass':'#34d399','dig':'#2dd4bf','setting_pass':'#60a5fa','pass':'#a78bfa','ace':'#facc15','serve_out':'#6b7280','out':'#6b7280','ball_out':'#6b7280','goal_or_out':'#6b7280'} %}
-        {% for ev in stats.all_events %}
-          {% if ev.frame in rally_first %}
-            {% set ns.rally_num = ns.rally_num + 1 %}
-            <div class="rally-sep" onclick="seekAndPlay({{ ev.frame }})">
-              <span class="rally-sep-label">Rally {{ ns.rally_num }}</span>
-              <div class="rally-sep-line"></div>
-            </div>
-          {% endif %}
-          <div class="event-item" id="ev{{ loop.index0 }}" onclick="seekAndPlay({{ ev.frame }})">
-            <div class="event-dot" style="background:{{ EV_COLORS.get(ev.type,'#888') }};"></div>
-            <span class="event-time">{{ "%.2f"|format(ev.time) }}s</span>
-            <span class="event-type">{{ ev.type.replace('_', ' ') }}</span>
-            <span class="event-team {{ 'team-a' if ev.team == 'team_a' else 'team-b' }}">
-              {{ 'A' if ev.team == 'team_a' else 'B' }}
-            </span>
-          </div>
-        {% endfor %}
+<!-- ── Page 2: Visual Stats ────────────────────────────── -->
+<div class="page" id="page-charts">
+  <div class="card charts-filterbar">
+    <div style="display:flex;gap:6px;align-items:center;">
+      <span class="filter-label">Team</span>
+      <div class="chip-row" id="chartTeamChips"></div>
+    </div>
+    <div class="vsep"></div>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <span class="filter-label">Rally</span>
+      <div class="chip-row" id="chartRallyChips" style="max-width:560px;overflow-x:auto;flex-wrap:nowrap;"></div>
+    </div>
+    <div style="flex:1"></div>
+    <div class="top-meta">{{ job.video_stem }}</div>
+  </div>
+
+  <div class="charts-grid">
+    <div class="chart-col">
+      <div class="card chart-card">
+        <div class="card-title">Serve</div>
+        <div class="court-panel" id="serveMap"></div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-title">Reception</div>
+        <div class="court-panel" id="receptionMap"></div>
       </div>
     </div>
+
+    <div class="card chart-card" style="min-height:420px;">
+      <div class="card-title">Attacking</div>
+      <div class="court-panel" id="attackMap"></div>
+    </div>
+
+    <div class="chart-col">
+      <div class="card" style="padding:16px;">
+        <div class="card-title">Contacts by team</div>
+        <table class="mini-table">
+          <thead><tr><td>Type</td><td class="num">Team A</td><td class="num">Team B</td></tr></thead>
+          <tbody id="contactsTable"></tbody>
+        </table>
+      </div>
+      <div class="card" style="padding:16px;">
+        <div class="card-title">Serve → Reception</div>
+        <table class="mini-table">
+          <thead><tr><td>Outcome</td><td class="num">Count</td><td class="num">%</td></tr></thead>
+          <tbody id="srTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Page 3: Match Stats ─────────────────────────────── -->
+<div class="page" id="page-table">
+  <div class="presets-row" id="rallyPresets"></div>
+
+  <div class="card table-filterbar">
+    <div style="display:flex;gap:6px;align-items:center;">
+      <span class="filter-label">Team</span>
+      <div class="chip-row" id="tableTeamChips"></div>
+    </div>
+    <div class="vsep"></div>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <span class="filter-label">Reception outcome</span>
+      <div class="chip-row" id="tableOutcomeChips"></div>
+    </div>
+    <span class="reset-link" onclick="resetTableFilters()">Reset filters</span>
+  </div>
+
+  <div class="tab-row">
+    <div class="tab on" id="tabStats" onclick="setTableTab('stats')">Rallies</div>
+    <div class="tab" id="tabScoring" onclick="setTableTab('scoring')">Contact log</div>
+  </div>
+
+  <div class="card big-table-wrap" id="statsTabPanel">
+    <table class="big-table">
+      <thead>
+        <tr class="grp">
+          <td colspan="3">Rally</td>
+          <td colspan="2" class="bl">Contacts</td>
+          <td colspan="3" class="bl">Serve → Reception</td>
+          <td class="bl">Events</td>
+        </tr>
+        <tr>
+          <td>#</td><td>Start</td><td class="num">Duration</td>
+          <td class="num bl">A</td><td class="num">B</td>
+          <td class="bl">Serve by</td><td>Received by</td><td>Outcome</td>
+          <td class="num bl">Total</td>
+        </tr>
+      </thead>
+      <tbody id="rallyTableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="card big-table-wrap" id="scoringTabPanel" style="display:none;">
+    <table class="big-table" style="width:100%;">
+      <thead>
+        <tr>
+          <td>Rally</td><td>Time</td><td>Type</td><td>Team</td><td>Phase</td><td>FSM state</td>
+        </tr>
+      </thead>
+      <tbody id="scoringTableBody"></tbody>
+    </table>
   </div>
 </div>
 
@@ -248,41 +368,411 @@ const TOTAL_FRAMES = {{ stats.total_frames }};
 const EVENTS = {{ stats.all_events | tojson }};
 const RALLIES = {{ stats.rallies | tojson }};
 
+const EV_COLORS = {
+  serve: '#eab308', attack: '#ef4444', block: '#f97316',
+  reception: '#10b981', reception_pass: '#10b981', dig: '#14b8a6',
+  setting_pass: '#3b82f6', pass: '#8b5cf6', ace: '#facc15',
+  serve_out: '#9ca3af', out: '#9ca3af', ball_out: '#9ca3af', goal_or_out: '#9ca3af',
+};
+const GREEN = 'oklch(62% 0.15 150)', RED = 'oklch(60% 0.18 25)', INK = 'oklch(30% 0.03 260)';
+
 const vid = document.getElementById('vid');
 const canvas = document.getElementById('overlay');
 const ctx = canvas.getContext('2d');
-const videoWrap = document.getElementById('videoWrap');
 
-let annotations = null;  // loaded from API
+let annotations = null;
 let currentFrameIdx = 0;
 
-// Load annotations
+/* ── Page navigation ─────────────────────────────────── */
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n =>
+    n.classList.toggle('active', n.dataset.page === name));
+  if (name === 'charts') renderCharts();
+  if (name === 'table') renderTables();
+  if (name === 'video') resizeCanvas();
+}
+
+/* ── Filters (video page) ────────────────────────────── */
+const allTypes = [...new Set(EVENTS.map(e => e.type))];
+const filterState = { types: new Set(allTypes), teams: new Set(['team_a', 'team_b']) };
+
+function buildChips(containerId, items, activeSet, labelFn, onToggle) {
+  const box = document.getElementById(containerId);
+  box.innerHTML = '';
+  for (const it of items) {
+    const el = document.createElement('div');
+    el.className = 'chip' + (activeSet.has(it) ? ' on' : '');
+    el.textContent = labelFn ? labelFn(it) : it;
+    el.onclick = () => { onToggle(it); el.classList.toggle('on', activeSet.has(it)); };
+    box.appendChild(el);
+  }
+}
+
+function initVideoFilters() {
+  buildChips('typeChips', allTypes, filterState.types,
+    t => t.replace(/_/g, ' '),
+    t => { toggleSet(filterState.types, t); applyEventFilters(); });
+  buildChips('teamChips', ['team_a', 'team_b'], filterState.teams,
+    t => t === 'team_a' ? 'Team A' : 'Team B',
+    t => { toggleSet(filterState.teams, t); applyEventFilters(); });
+}
+
+function toggleSet(set, v) { set.has(v) ? set.delete(v) : set.add(v); }
+function evVisible(ev) { return filterState.types.has(ev.type) && filterState.teams.has(ev.team); }
+
+function applyEventFilters() {
+  renderEventList();
+  setupEventMarkers();
+}
+
+/* ── Event list (video page sidebar) ─────────────────── */
+function renderEventList() {
+  const box = document.getElementById('eventList');
+  box.innerHTML = '';
+  const rallyFirst = new Map();
+  RALLIES.forEach((r, i) => { if (r.events && r.events.length) rallyFirst.set(r.events[0].frame, i + 1); });
+  EVENTS.forEach((ev, i) => {
+    if (rallyFirst.has(ev.frame)) {
+      const sep = document.createElement('div');
+      sep.className = 'rally-sep';
+      sep.innerHTML = `<span class="rally-sep-label">Rally ${rallyFirst.get(ev.frame)}</span><div class="rally-sep-line"></div>`;
+      sep.onclick = () => seekAndPlay(ev.frame);
+      box.appendChild(sep);
+    }
+    if (!evVisible(ev)) return;
+    const el = document.createElement('div');
+    el.className = 'event-item';
+    el.id = 'ev' + i;
+    el.onclick = () => seekAndPlay(ev.frame);
+    el.innerHTML = `<div class="event-dot" style="background:${EV_COLORS[ev.type] || '#888'}"></div>` +
+      `<span class="event-time">${ev.time.toFixed(2)}s</span>` +
+      `<span class="event-type">${ev.type.replace(/_/g, ' ')}</span>` +
+      `<span class="event-team ${ev.team === 'team_a' ? 'team-a' : 'team-b'}">${ev.team === 'team_a' ? 'A' : 'B'}</span>`;
+    box.appendChild(el);
+  });
+}
+
+/* ── Rally clips strip ───────────────────────────────── */
+function renderRallyClips() {
+  const box = document.getElementById('rallyClips');
+  box.innerHTML = '';
+  RALLIES.forEach((r, i) => {
+    const sr = r.serve_reception || {};
+    const outcome = sr.outcome || '—';
+    const outColor = outcome === 'success' ? GREEN : (outcome === 'failed' ? RED : 'var(--muted)');
+    const el = document.createElement('div');
+    el.className = 'clip-card';
+    el.onclick = () => seekAndPlay(r.start_frame);
+    const widthPct = Math.min(100, (r.duration_sec / 15) * 100);
+    el.innerHTML =
+      `<div class="clip-thumb"><div class="bar" style="width:${widthPct}%"></div></div>` +
+      `<div class="clip-name">Rally ${i + 1} · ${r.duration_sec}s</div>` +
+      `<div class="clip-meta">A:${r.contacts_team_a} B:${r.contacts_team_b} · <span style="color:${outColor};font-weight:700">${outcome}</span></div>`;
+    box.appendChild(el);
+  });
+}
+
+/* ── Charts page ─────────────────────────────────────── */
+const chartState = { team: 'all', rally: 'all' };
+let chartsBuilt = false;
+
+function initChartFilters() {
+  const teamBox = document.getElementById('chartTeamChips');
+  const mkChip = (box, label, val, stateKey) => {
+    const el = document.createElement('div');
+    el.className = 'chip' + (chartState[stateKey] === val ? ' on' : '');
+    el.textContent = label;
+    el.dataset.val = val;
+    el.onclick = () => {
+      chartState[stateKey] = val;
+      box.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.val === val));
+      renderCharts(true);
+    };
+    box.appendChild(el);
+  };
+  mkChip(teamBox, 'All', 'all', 'team');
+  mkChip(teamBox, 'Team A', 'team_a', 'team');
+  mkChip(teamBox, 'Team B', 'team_b', 'team');
+  const rallyBox = document.getElementById('chartRallyChips');
+  mkChip(rallyBox, 'All', 'all', 'rally');
+  RALLIES.forEach((r, i) => mkChip(rallyBox, String(i + 1), String(i), 'rally'));
+}
+
+function ballPosNear(frame, tol = 8) {
+  if (!annotations) return null;
+  for (let d = 0; d <= tol; d++) {
+    for (const fi of [frame + d, frame - d]) {
+      const a = annotations[fi];
+      if (a && a.ball) return a.ball;
+    }
+  }
+  return null;
+}
+
+function rallyIndexOf(ev) {
+  for (let i = 0; i < RALLIES.length; i++) {
+    const r = RALLIES[i];
+    if (r.events && r.events.some(e => e.frame === ev.frame && e.type === ev.type)) return i;
+  }
+  return -1;
+}
+
+function chartEvVisible(ev) {
+  if (chartState.team !== 'all' && ev.team !== chartState.team) return false;
+  if (chartState.rally !== 'all' && rallyIndexOf(ev) !== Number(chartState.rally)) return false;
+  return true;
+}
+
+function renderCourtMap(panelId, evs, opts = {}) {
+  const panel = document.getElementById(panelId);
+  panel.innerHTML = '';
+  const d = window._annData || {};
+  const fw = d.frame_width || 1280, fh = d.frame_height || 720;
+  if (d.net_y) {
+    const line = document.createElement('div');
+    line.className = 'court-netline';
+    line.style.top = (d.net_y / fh * 100) + '%';
+    panel.appendChild(line);
+  }
+  const svgLines = [];
+  const dots = [];
+  for (const ev of evs) {
+    const pos = ballPosNear(ev.frame);
+    if (!pos) continue;
+    const x = pos[0] / fw * 100, y = pos[1] / fh * 100;
+    let color = INK;
+    if (opts.colorByOutcome) {
+      const ri = rallyIndexOf(ev);
+      const out = ri >= 0 && RALLIES[ri].serve_reception ? RALLIES[ri].serve_reception.outcome : null;
+      color = out === 'success' ? GREEN : (out ? RED : INK);
+    } else if (opts.colorByTeam) {
+      color = ev.team === 'team_a' ? 'oklch(58% 0.19 265)' : RED;
+    }
+    if (opts.approachLines) {
+      const from = ballPosNear(ev.frame - 8);
+      if (from) svgLines.push([from[0] / fw * 100, from[1] / fh * 100, x, y, color]);
+    }
+    dots.push([x, y, color, ev]);
+  }
+  if (svgLines.length) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 100 100');
+    svg.setAttribute('preserveAspectRatio', 'none');
+    svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
+    for (const [x1, y1, x2, y2, c] of svgLines) {
+      const l = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      l.setAttribute('x1', x1); l.setAttribute('y1', y1);
+      l.setAttribute('x2', x2); l.setAttribute('y2', y2);
+      l.setAttribute('stroke', c); l.setAttribute('stroke-width', '0.4');
+      l.setAttribute('opacity', '0.7'); l.setAttribute('vector-effect', 'non-scaling-stroke');
+      svg.appendChild(l);
+    }
+    panel.appendChild(svg);
+  }
+  for (const [x, y, color, ev] of dots) {
+    const el = document.createElement('div');
+    el.className = 'court-dot';
+    el.style.cssText = `left:${x}%;top:${y}%;background:${color};cursor:pointer`;
+    el.title = `${ev.type} · ${ev.team === 'team_a' ? 'A' : 'B'} @ ${ev.time.toFixed(1)}s`;
+    el.onclick = () => { showPage('video'); seekAndPlay(ev.frame); };
+    panel.appendChild(el);
+  }
+  if (!dots.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted)';
+    empty.textContent = annotations ? 'No events for this filter' : 'Loading annotations…';
+    panel.appendChild(empty);
+  }
+}
+
+function renderCharts(force) {
+  if (chartsBuilt && !force) { /* re-render is cheap; always refresh */ }
+  chartsBuilt = true;
+  const vis = EVENTS.filter(chartEvVisible);
+  renderCourtMap('serveMap', vis.filter(e => e.type === 'serve'), { colorByOutcome: true });
+  renderCourtMap('receptionMap', vis.filter(e => ['reception', 'reception_pass', 'dig'].includes(e.type)), { colorByOutcome: true });
+  renderCourtMap('attackMap', vis.filter(e => ['attack', 'block'].includes(e.type)), { colorByTeam: true, approachLines: true });
+  renderContactsTable(vis);
+  renderSRTable();
+}
+
+function renderContactsTable(vis) {
+  const counts = {};
+  for (const ev of vis) {
+    counts[ev.type] = counts[ev.type] || { team_a: 0, team_b: 0 };
+    counts[ev.type][ev.team] = (counts[ev.type][ev.team] || 0) + 1;
+  }
+  const body = document.getElementById('contactsTable');
+  body.innerHTML = '';
+  let ta = 0, tb = 0;
+  for (const t of Object.keys(counts)) {
+    ta += counts[t].team_a; tb += counts[t].team_b;
+    body.insertAdjacentHTML('beforeend',
+      `<tr><td>${t.replace(/_/g, ' ')}</td><td class="num">${counts[t].team_a}</td><td class="num">${counts[t].team_b}</td></tr>`);
+  }
+  body.insertAdjacentHTML('beforeend',
+    `<tr><td class="strong">Total</td><td class="num strong">${ta}</td><td class="num strong">${tb}</td></tr>`);
+}
+
+function renderSRTable() {
+  const counts = { success: 0, failed: 0, no_reception: 0 };
+  for (const r of RALLIES) {
+    const o = r.serve_reception && r.serve_reception.outcome;
+    if (o in counts) counts[o]++;
+  }
+  const total = Object.values(counts).reduce((a, b) => a + b, 0) || 1;
+  const body = document.getElementById('srTable');
+  body.innerHTML = '';
+  const colors = { success: GREEN, failed: RED, no_reception: 'var(--muted)' };
+  for (const [k, v] of Object.entries(counts)) {
+    body.insertAdjacentHTML('beforeend',
+      `<tr><td style="color:${colors[k]};font-weight:700">${k.replace(/_/g, ' ')}</td>` +
+      `<td class="num">${v}</td><td class="num">${(v / total * 100).toFixed(0)}%</td></tr>`);
+  }
+}
+
+/* ── Match Stats page ────────────────────────────────── */
+const tableState = { team: 'all', outcome: 'all', rally: 'all', tab: 'stats' };
+
+function initTableFilters() {
+  const mk = (boxId, label, val, key) => {
+    const box = document.getElementById(boxId);
+    const el = document.createElement('div');
+    el.className = 'chip' + (tableState[key] === val ? ' on' : '');
+    el.textContent = label;
+    el.dataset.val = val;
+    el.onclick = () => {
+      tableState[key] = val;
+      box.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.dataset.val === val));
+      renderTables();
+    };
+    box.appendChild(el);
+  };
+  mk('tableTeamChips', 'All', 'all', 'team');
+  mk('tableTeamChips', 'Team A', 'team_a', 'team');
+  mk('tableTeamChips', 'Team B', 'team_b', 'team');
+  for (const o of ['all', 'success', 'failed', 'no_reception'])
+    mk('tableOutcomeChips', o === 'all' ? 'All' : o.replace(/_/g, ' '), o, 'outcome');
+}
+
+function resetTableFilters() {
+  tableState.team = 'all'; tableState.outcome = 'all'; tableState.rally = 'all';
+  document.querySelectorAll('#tableTeamChips .chip').forEach(c => c.classList.toggle('on', c.dataset.val === 'all'));
+  document.querySelectorAll('#tableOutcomeChips .chip').forEach(c => c.classList.toggle('on', c.dataset.val === 'all'));
+  document.querySelectorAll('#rallyPresets .preset').forEach(p => p.classList.remove('on'));
+  renderTables();
+}
+
+function setTableTab(t) {
+  tableState.tab = t;
+  document.getElementById('tabStats').classList.toggle('on', t === 'stats');
+  document.getElementById('tabScoring').classList.toggle('on', t === 'scoring');
+  document.getElementById('statsTabPanel').style.display = t === 'stats' ? '' : 'none';
+  document.getElementById('scoringTabPanel').style.display = t === 'scoring' ? '' : 'none';
+}
+
+function renderRallyPresets() {
+  const box = document.getElementById('rallyPresets');
+  box.innerHTML = '';
+  RALLIES.forEach((r, i) => {
+    const sr = r.serve_reception || {};
+    const outcome = sr.outcome || '—';
+    const el = document.createElement('div');
+    el.className = 'preset' + (tableState.rally === String(i) ? ' on' : '');
+    el.innerHTML = `<div class="p-label">Rally ${i + 1}</div>` +
+      `<div class="p-score" style="color:${outcome === 'success' ? GREEN : outcome === 'failed' ? RED : 'var(--muted)'}">${r.duration_sec}s · ${outcome}</div>`;
+    el.onclick = () => {
+      tableState.rally = tableState.rally === String(i) ? 'all' : String(i);
+      box.querySelectorAll('.preset').forEach((p, j) => p.classList.toggle('on', tableState.rally === String(j)));
+      renderTables();
+    };
+    box.appendChild(el);
+  });
+}
+
+function rallyRowVisible(r, i) {
+  if (tableState.rally !== 'all' && String(i) !== tableState.rally) return false;
+  const o = (r.serve_reception && r.serve_reception.outcome) || '';
+  if (tableState.outcome !== 'all' && o !== tableState.outcome) return false;
+  return true;
+}
+
+function renderTables() {
+  renderRallyPresets();
+  // Rally table
+  const body = document.getElementById('rallyTableBody');
+  body.innerHTML = '';
+  let sumA = 0, sumB = 0, sumEv = 0, shown = 0;
+  RALLIES.forEach((r, i) => {
+    if (!rallyRowVisible(r, i)) return;
+    shown++;
+    sumA += r.contacts_team_a; sumB += r.contacts_team_b; sumEv += (r.events || []).length;
+    const sr = r.serve_reception || {};
+    const serveTeam = sr.serve ? (sr.serve.team === 'team_a' ? 'A' : 'B') : '—';
+    const recTeam = sr.reception ? (sr.reception.team === 'team_a' ? 'A' : 'B') : '—';
+    const outcome = sr.outcome || '—';
+    const oColor = outcome === 'success' ? 'c-green' : (outcome === 'failed' ? 'c-red' : 'c-muted');
+    body.insertAdjacentHTML('beforeend',
+      `<tr class="clickable" onclick="showPage('video');seekAndPlay(${r.start_frame})">` +
+      `<td class="strong">${i + 1}</td><td>${formatTime(r.start_frame / FPS)}</td><td class="num">${r.duration_sec}s</td>` +
+      `<td class="num bl">${r.contacts_team_a}</td><td class="num">${r.contacts_team_b}</td>` +
+      `<td class="bl">${serveTeam}</td><td>${recTeam}</td><td class="${oColor}" style="font-weight:700">${outcome.replace(/_/g, ' ')}</td>` +
+      `<td class="num bl">${(r.events || []).length}</td></tr>`);
+  });
+  body.insertAdjacentHTML('beforeend',
+    `<tr class="total"><td></td><td>${shown} rallies</td><td></td>` +
+    `<td class="num bl">${sumA}</td><td class="num">${sumB}</td>` +
+    `<td class="bl"></td><td></td><td></td><td class="num bl">${sumEv}</td></tr>`);
+
+  // Contact log
+  const log = document.getElementById('scoringTableBody');
+  log.innerHTML = '';
+  EVENTS.forEach(ev => {
+    if (tableState.team !== 'all' && ev.team !== tableState.team) return;
+    const ri = rallyIndexOf(ev);
+    if (tableState.rally !== 'all' && ri !== Number(tableState.rally)) return;
+    if (tableState.outcome !== 'all') {
+      const o = ri >= 0 && RALLIES[ri].serve_reception ? RALLIES[ri].serve_reception.outcome : '';
+      if (o !== tableState.outcome) return;
+    }
+    log.insertAdjacentHTML('beforeend',
+      `<tr class="clickable" onclick="showPage('video');seekAndPlay(${ev.frame})">` +
+      `<td>${ri >= 0 ? ri + 1 : '—'}</td><td>${ev.time.toFixed(2)}s</td>` +
+      `<td style="color:${EV_COLORS[ev.type] || '#888'};font-weight:700">${ev.type.replace(/_/g, ' ')}</td>` +
+      `<td>${ev.team === 'team_a' ? 'Team A' : 'Team B'}</td>` +
+      `<td class="c-muted">${(ev.rally_phase || '—').replace(/_/g, ' ')}</td>` +
+      `<td class="c-muted">${(ev.game_state || '—').replace(/_/g, ' ')}</td></tr>`);
+  });
+}
+
+/* ── Annotations load ────────────────────────────────── */
 fetch('/api/annotations/' + JOB_ID)
   .then(r => r.json())
   .then(data => {
     annotations = {};
-    // Index by frame number for O(1) lookup
-    for (const f of data.frames) {
-      annotations[f.f] = f;
-    }
-    window._annData = data;  // store net info
-    // Initialize net_y slider
+    for (const f of data.frames) annotations[f.f] = f;
+    window._annData = data;
     const slider = document.getElementById('netYSlider');
     const fw = data.frame_width || 1280;
     const fh = data.frame_height || 720;
     slider.max = fh;
     slider.value = data.net_y;
     document.getElementById('netYVal').textContent = Math.round(data.net_y);
-    // Initialize net_x sliders
     const xLSlider = document.getElementById('netXLSlider');
     const xRSlider = document.getElementById('netXRSlider');
-    xLSlider.max = fw; xLSlider.value = data.net_x_left || Math.round(fw * 0.29);
-    xRSlider.max = fw; xRSlider.value = data.net_x_right || Math.round(fw * 0.66);
+    const postLeftX = data.net_floor_left ? data.net_floor_left[0] : data.net_x_left;
+    const postRightX = data.net_floor_right ? data.net_floor_right[0] : data.net_x_right;
+    xLSlider.max = fw; xLSlider.value = postLeftX || Math.round(fw * 0.29);
+    xRSlider.max = fw; xRSlider.value = postRightX || Math.round(fw * 0.66);
     document.getElementById('netXLVal').textContent = Math.round(xLSlider.value);
     document.getElementById('netXRVal').textContent = Math.round(xRSlider.value);
+    renderAttackHeatmapSummary(data.attack_heatmap);
     setupEventMarkers();
     startRenderLoop();
     redraw();
+    if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
   });
 
 function updateNetY(val) {
@@ -304,9 +794,31 @@ function updateNetX() {
   const r = parseFloat(document.getElementById('netXRSlider').value);
   window._annData.net_x_left = l;
   window._annData.net_x_right = r;
+  if (window._annData.net_floor_left) window._annData.net_floor_left[0] = l;
+  if (window._annData.net_floor_right) window._annData.net_floor_right[0] = r;
   document.getElementById('netXLVal').textContent = Math.round(l);
   document.getElementById('netXRVal').textContent = Math.round(r);
   redraw();
+}
+
+function renderAttackHeatmapSummary(heatmap) {
+  if (!heatmap || !heatmap.total_hits) return;
+  document.getElementById('attackHeatmapPanel').style.display = 'block';
+  document.getElementById('attackHeatmapTotal').textContent = heatmap.total_hits;
+  const zones = document.getElementById('attackHeatmapZones');
+  zones.innerHTML = '';
+  for (const zone of (heatmap.zones || [])) {
+    const item = document.createElement('div');
+    item.style.cssText = 'background:var(--head-bg);border-radius:5px;padding:5px 8px;font-size:11.5px;display:flex;justify-content:space-between;gap:6px;';
+    const name = document.createElement('span');
+    name.textContent = zone.id.replaceAll('_', ' ');
+    name.style.color = 'var(--muted)';
+    const count = document.createElement('strong');
+    count.textContent = zone.count;
+    count.style.color = 'var(--primary)';
+    item.append(name, count);
+    zones.appendChild(item);
+  }
 }
 
 let _syncOffset = 0;
@@ -316,12 +828,12 @@ function changeSyncOffset(d) {
   redraw();
 }
 
-// Canvas sizing
+/* ── Canvas sizing / render loop ─────────────────────── */
 function resizeCanvas() {
   const vr = vid.getBoundingClientRect();
+  if (!vr.width) return;
   const vw = vid.videoWidth || (window._annData && window._annData.frame_width) || 1280;
   const vh = vid.videoHeight || (window._annData && window._annData.frame_height) || 720;
-  // Match the rendered video size
   const scale = Math.min(vr.width / vw, vr.height / vh);
   canvas.width = vw * scale;
   canvas.height = vh * scale;
@@ -333,23 +845,26 @@ function resizeCanvas() {
 vid.addEventListener('loadedmetadata', () => { resizeCanvas(); startRenderLoop(); });
 window.addEventListener('resize', resizeCanvas);
 
-// Timeline / sidebar sync — timeupdate is fine for these (low-freq is OK)
 vid.addEventListener('timeupdate', () => {
   updateTimeline();
   updateActiveEvent();
 });
 
-// Real-time canvas overlay — use requestVideoFrameCallback when available
-// (fires with exact mediaTime of the frame being presented → perfect sync).
-// Falls back to requestAnimationFrame with a small offset for older browsers.
+// rAF and rVFC are both suspended while the tab is in the background, and
+// neither fires for a seek performed while paused. Sync the overlay straight
+// from the seek so it never shows a stale frame.
+vid.addEventListener('seeked', () => {
+  currentFrameIdx = Math.max(0, Math.round(vid.currentTime * FPS) + _syncOffset);
+  _lastDrawnFrame = currentFrameIdx;
+  updateTimeline();
+  redraw();
+});
+
 let _rafId = null;
 let _lastDrawnFrame = -1;
-const SYNC_OFFSET_FRAMES = 0;  // rAF fallback offset (rVFC needs no offset)
+const SYNC_OFFSET_FRAMES = 0;
 
 function _drawAtMediaTime(mediaTime) {
-  // Use vid.currentTime (container-relative, always starts at 0) not mediaTime.
-  // meta.mediaTime includes the original PTS offset from stream-copied videos
-  // (e.g. ffmpeg -c copy preserves keyframe alignment → PTS starts at ~2s → ~51 frame lead).
   const fi = Math.max(0, Math.round(vid.currentTime * FPS) + _syncOffset);
   if (fi !== _lastDrawnFrame) {
     currentFrameIdx = fi;
@@ -359,27 +874,29 @@ function _drawAtMediaTime(mediaTime) {
 }
 
 function startRenderLoop() {
+  // rVFC gives exact per-frame sync, but some embedded browsers expose the
+  // method and never invoke it — which leaves the overlay frozen on frame 0.
+  // The rAF loop always runs so the overlay can never stall; rVFC refines it
+  // to the presented frame where it genuinely works. Both write the same
+  // fields, so whichever fires first wins and the other is a no-op.
   if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
-    // Exact per-frame sync — no manual offset needed
     function rVFCLoop(now, meta) {
       _drawAtMediaTime(meta.mediaTime);
       vid.requestVideoFrameCallback(rVFCLoop);
     }
     vid.requestVideoFrameCallback(rVFCLoop);
-  } else {
-    // Fallback: rAF with currentTime estimate
-    if (_rafId) return;
-    function rafLoop() {
-      const fi = Math.max(0, Math.floor(vid.currentTime * FPS) - SYNC_OFFSET_FRAMES + _syncOffset);
-      if (fi !== _lastDrawnFrame) {
-        currentFrameIdx = fi;
-        _lastDrawnFrame = fi;
-        redraw();
-      }
-      _rafId = requestAnimationFrame(rafLoop);
+  }
+  if (_rafId) return;
+  function rafLoop() {
+    const fi = Math.max(0, Math.round(vid.currentTime * FPS) - SYNC_OFFSET_FRAMES + _syncOffset);
+    if (fi !== _lastDrawnFrame) {
+      currentFrameIdx = fi;
+      _lastDrawnFrame = fi;
+      redraw();
     }
     _rafId = requestAnimationFrame(rafLoop);
   }
+  _rafId = requestAnimationFrame(rafLoop);
 }
 
 vid.addEventListener('play', () => document.getElementById('playBtn').textContent = '⏸ Pause');
@@ -390,14 +907,18 @@ function toggleMute() {
   vid.muted = !vid.muted;
   document.getElementById('muteBtn').textContent = vid.muted ? '🔇' : '🔊';
 }
-function setSpeed(s) { vid.playbackRate = s; }
+function setSpeed(s, btn) {
+  vid.playbackRate = s;
+  document.querySelectorAll('.btn-row .ctrl').forEach(b => {
+    if (b.textContent.endsWith('×')) b.classList.remove('active');
+  });
+  if (btn) btn.classList.add('active');
+}
 function stepFrame(d) {
   vid.pause();
   vid.currentTime = Math.max(0, vid.currentTime + d / FPS);
 }
-function seekToFrame(f) {
-  vid.currentTime = f / FPS;
-}
+function seekToFrame(f) { vid.currentTime = f / FPS; }
 function seekAndPlay(f) {
   vid.currentTime = f / FPS;
   vid.play();
@@ -415,6 +936,8 @@ function updateTimeline() {
   const cur = formatTime(vid.currentTime);
   const tot = formatTime(vid.duration || 0);
   document.getElementById('timeDisplay').textContent = cur + ' / ' + tot;
+  const badge = document.getElementById('videoBadge');
+  badge.textContent = `{{ job.video_stem }} · f${currentFrameIdx} · ${cur}`;
 }
 
 function formatTime(s) {
@@ -425,38 +948,19 @@ function formatTime(s) {
 
 function setupEventMarkers() {
   const bar = document.getElementById('timelineBar');
+  bar.querySelectorAll('.event-marker').forEach(m => m.remove());
   const dur = TOTAL_FRAMES / FPS;
-
-  const typeColors = {
-    // New event types
-    serve:       '#fbbf24',
-    reception:   '#34d399',
-    dig:         '#2dd4bf',
-    pass:        '#a78bfa',
-    attack:      '#f87171',
-    block:       '#fb923c',
-    ace:         '#facc15',
-    serve_out:   '#6b7280',
-    out:         '#6b7280',
-    ball_out:    '#6b7280',
-    goal_or_out: '#6b7280',
-    // Legacy names (backward compat)
-    reception_pass: '#34d399',
-    setting_pass:   '#60a5fa',
-  };
-
   for (const ev of EVENTS) {
+    if (!evVisible(ev)) continue;
     const pct = (ev.time / dur * 100);
     const m = document.createElement('div');
-    m.className = 'event-marker ' + (ev.type || '');
+    m.className = 'event-marker';
     m.style.left = pct + '%';
-    m.style.background = typeColors[ev.type] || '#888';
+    m.style.background = EV_COLORS[ev.type] || '#888';
     m.title = ev.type + ' ' + ev.team + ' @' + ev.time + 's';
     m.onclick = (e) => { e.stopPropagation(); seekAndPlay(ev.frame); };
     bar.appendChild(m);
   }
-
-  // Rally start markers
   for (const r of RALLIES) {
     const pct = (r.start_frame / TOTAL_FRAMES * 100);
     const m = document.createElement('div');
@@ -477,24 +981,30 @@ function updateActiveEvent() {
   document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
   if (closest !== null && minDist < 1.5) {
     const el = document.getElementById('ev' + closest);
-    if (el) { el.classList.add('active'); el.scrollIntoView({block:'nearest'}); }
+    if (el) {
+      el.classList.add('active');
+      // Scroll inside the event list only — scrollIntoView would drag the
+      // whole page down and push the video out of view.
+      const list = document.getElementById('eventList');
+      const top = el.offsetTop - list.offsetTop;
+      if (top < list.scrollTop || top + el.offsetHeight > list.scrollTop + list.clientHeight) {
+        list.scrollTop = top - list.clientHeight / 2 + el.offsetHeight / 2;
+      }
+    }
   }
 }
 
-// Drawing
+/* ── Canvas drawing (overlays) ───────────────────────── */
 const NET_COLOR  = 'rgba(255,220,0,0.9)';
 const BALL_COLOR = '#00ff44';
-const A_COLOR    = 'rgba(96,165,250,0.9)';  // team_a blue
-const B_COLOR    = 'rgba(248,113,113,0.9)'; // team_b red
 
-let _lastAnn = null;  // last valid annotation — prevents flicker on sparse frames
+let _lastAnn = null;
 
 function redraw() {
   if (!canvas.width) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!annotations) return;
 
-  // Use current frame annotation if available, otherwise hold last known
   const ann = annotations[currentFrameIdx] || _lastAnn;
   if (!ann) return;
   if (annotations[currentFrameIdx]) _lastAnn = ann;
@@ -510,26 +1020,26 @@ function redraw() {
   const showBall    = document.getElementById('togBall').checked;
   const showTrail   = document.getElementById('togTrail').checked;
   const showNet     = document.getElementById('togNet').checked;
+  const showPlayers = document.getElementById('togPlayers').checked;
   const showState   = document.getElementById('togState').checked;
   const showModel   = document.getElementById('togModel').checked;
   const showEvents  = document.getElementById('togEvents').checked;
+  const showAttackHeatmap = document.getElementById('togAttackHeatmap').checked;
 
-  // Net visualization
   if (showNet && window._annData) {
     const d = window._annData;
-    const xL = px(d.net_x_left);
-    const xR = px(d.net_x_right);
+    const postLeftX = d.net_floor_left ? d.net_floor_left[0] : d.net_x_left;
+    const postRightX = d.net_floor_right ? d.net_floor_right[0] : d.net_x_right;
+    const xL = px(Math.min(postLeftX, postRightX));
+    const xR = px(Math.max(postLeftX, postRightX));
 
     if (d.net_tape_top != null && d.net_tape_bottom != null) {
-      // ── SAM-detected net band ──────────────────────────────────
       const yTop = py(d.net_tape_top);
       const yBot = py(d.net_tape_bottom);
 
-      // Semi-transparent fill for the net band
       ctx.fillStyle = 'rgba(255, 220, 80, 0.08)';
       ctx.fillRect(xL, yTop, xR - xL, yBot - yTop);
 
-      // Top tape — white
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -537,7 +1047,6 @@ function redraw() {
       ctx.lineTo(xR, yTop);
       ctx.stroke();
 
-      // Bottom tape — orange
       ctx.strokeStyle = 'rgba(255, 140, 0, 0.9)';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -545,13 +1054,11 @@ function redraw() {
       ctx.lineTo(xR, yBot);
       ctx.stroke();
 
-      // Label at top tape
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
       ctx.font = `bold ${Math.round(12*sx)}px system-ui`;
       ctx.fillText('NET', xL + 5, yTop - 4);
     }
 
-    // FSM net_y — dashed yellow line (team-split boundary)
     ctx.strokeStyle = NET_COLOR;
     ctx.lineWidth = 2;
     ctx.setLineDash([Math.round(10*sx), Math.round(6*sx)]);
@@ -561,32 +1068,48 @@ function redraw() {
     ctx.stroke();
     ctx.setLineDash([]);
     if (d.net_tape_top == null) {
-      // Fallback label when no tape data
       ctx.fillStyle = NET_COLOR;
       ctx.font = `bold ${Math.round(14*sx)}px system-ui`;
       ctx.fillText('NET', xL, py(d.net_y) - 8);
     }
+
+    if (d.net_floor_left && d.net_floor_right) {
+      const [ax, ay] = d.net_floor_left;
+      const [bx, by] = d.net_floor_right;
+      ctx.strokeStyle = 'rgba(255, 0, 255, 0.92)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(px(ax), py(ay));
+      ctx.lineTo(px(bx), py(by));
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255, 0, 255, 0.98)';
+      ctx.font = `bold ${Math.max(11, Math.round(13 * sx))}px system-ui`;
+      ctx.fillText('A', px(ax) + 6, py(ay) - 7);
+      ctx.fillText('B', px(bx) + 6, py(by) - 7);
+    }
   }
 
-  // Ball trail (line) + dot
   if (showBall) {
     const TRAIL_FRAMES = 40;
     const MAX_TRAIL    = 20;
 
-    // Collect previous positions (newest first)
     const trailPos = [];
     for (let fi = currentFrameIdx - 1;
          fi >= Math.max(0, currentFrameIdx - TRAIL_FRAMES) && trailPos.length < MAX_TRAIL;
          fi--) {
       const a = annotations[fi];
-      if (a && a.ball) trailPos.push({ x: a.ball[0], y: a.ball[1], age: currentFrameIdx - fi });
+      if (a && a.ball) {
+        trailPos.push({ x: a.ball[0], y: a.ball[1], age: currentFrameIdx - fi,
+                        newTrack: !!a.ball_new });
+        // The tracker re-acquired the ball here; anything older belongs to a
+        // different hypothesis and must not be joined to this one.
+        if (a.ball_new) break;
+      }
     }
 
-    // Draw trail as fading line (oldest → current)
-    // Gap > 15 frames = ball was lost → break the line, don't connect
     const GAP_BREAK = 15;
     if (showTrail && trailPos.length > 0 && ann.ball) {
-      const pts = [...trailPos].reverse();          // oldest first
+      const pts = [...trailPos].reverse();
       pts.push({ x: ann.ball[0], y: ann.ball[1], age: 0 });
 
       ctx.lineCap = 'round';
@@ -594,11 +1117,11 @@ function redraw() {
       for (let i = 1; i < pts.length; i++) {
         const p0 = pts[i - 1];
         const p1 = pts[i];
-        if (p0.age - p1.age > GAP_BREAK) continue;  // skip — detection gap too large
-        const frac  = 1 - p1.age / TRAIL_FRAMES;   // 0=oldest, 1=newest
+        if (p0.age - p1.age > GAP_BREAK) continue;
+        const frac  = 1 - p1.age / TRAIL_FRAMES;
         const alpha = Math.pow(frac, 1.1) * 0.9;
         ctx.strokeStyle = `rgba(0, 255, 68, ${alpha})`;
-        ctx.lineWidth   = 1 + frac * 2.5;           // 1px → 3.5px
+        ctx.lineWidth   = 1 + frac * 2.5;
         ctx.beginPath();
         ctx.moveTo(px(p0.x), py(p0.y));
         ctx.lineTo(px(p1.x), py(p1.y));
@@ -606,11 +1129,9 @@ function redraw() {
       }
     }
 
-    // Current ball — solid dot if detected, dashed ring if interpolated
     if (ann.ball) {
       const [bx, by] = ann.ball;
       if (ann.ball_interp) {
-        // Interpolated: dashed circle (semi-transparent)
         ctx.strokeStyle = 'rgba(255,200,0,0.7)';
         ctx.lineWidth = 1.5;
         ctx.setLineDash([3, 3]);
@@ -619,7 +1140,6 @@ function redraw() {
         ctx.stroke();
         ctx.setLineDash([]);
       } else {
-        // Detected: solid glow dot
         ctx.shadowColor = BALL_COLOR;
         ctx.shadowBlur  = 5;
         ctx.fillStyle   = BALL_COLOR;
@@ -631,8 +1151,69 @@ function redraw() {
     }
   }
 
+  if (showAttackHeatmap && window._annData && window._annData.attack_heatmap) {
+    const hits = window._annData.attack_heatmap.hits || [];
+    const radius = Math.max(18, 48 * Math.min(sx, sy));
+    for (const hit of hits) {
+      const x = px(hit.x), y = py(hit.y);
+      const strength = Math.max(0.25, hit.confidence || 0.5);
+      const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+      gradient.addColorStop(0, `rgba(255, 70, 0, ${0.58 * strength})`);
+      gradient.addColorStop(0.45, `rgba(255, 180, 0, ${0.24 * strength})`);
+      gradient.addColorStop(1, 'rgba(255, 80, 0, 0)');
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,235,140,0.95)';
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 
-  // State overlay: FSM and/or Transformer model (compare both)
+  if (showPlayers) {
+    const COCO_BONES = [
+      [5, 7], [7, 9], [6, 8], [8, 10], [5, 6], [5, 11], [6, 12],
+      [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [0, 1],
+      [0, 2], [1, 3], [2, 4], [0, 5], [0, 6],
+    ];
+    for (const pose of (ann.poses || [])) {
+      const keypoints = pose.kp || [];
+      const isNearTeam = pose.team === 'b' || pose.team === 'team_b';
+      const color = isNearTeam ? 'rgba(255, 220, 0, 0.98)' : 'rgba(150, 170, 190, 0.58)';
+      const width = isNearTeam ? 3 : 1.5;
+      const radius = isNearTeam ? 3.5 : 2;
+
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.lineCap = 'round';
+      for (const [a, b] of COCO_BONES) {
+        const pa = keypoints[a], pb = keypoints[b];
+        if (!pa || !pb || pa[2] < 0.2 || pb[2] < 0.2) continue;
+        ctx.beginPath();
+        ctx.moveTo(px(pa[0]), py(pa[1]));
+        ctx.lineTo(px(pb[0]), py(pb[1]));
+        ctx.stroke();
+      }
+      ctx.fillStyle = color;
+      for (const point of keypoints) {
+        if (!point || point[2] < 0.2) continue;
+        ctx.beginPath();
+        ctx.arc(px(point[0]), py(point[1]), radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (isNearTeam && pose.id != null && keypoints.length) {
+        const head = keypoints[0] || keypoints.find(p => p && p[2] >= 0.2);
+        if (head && head[2] >= 0.2) {
+          ctx.font = `bold ${Math.max(10, Math.round(12 * sx))}px system-ui`;
+          ctx.fillStyle = color;
+          ctx.fillText(`#${pose.id}`, px(head[0]) + 5, py(head[1]) - 5);
+        }
+      }
+    }
+  }
+
   let stateY = 70;
   if (showState) {
     const stateColor = {
@@ -642,7 +1223,7 @@ function redraw() {
       'rally_active': '#00ff88',
       'rally_end':    '#ff6666',
     }[ann.state] || '#00eeff';
-    ctx.font = `bold ${Math.round(22 * sx)}px system-ui`;
+    ctx.font = `bold ${Math.max(14, Math.round(22 * sx))}px system-ui`;
     ctx.fillStyle = stateColor;
     ctx.shadowColor = '#000';
     ctx.shadowBlur = 6;
@@ -655,7 +1236,7 @@ function redraw() {
     ctx.shadowBlur = 0;
     stateY += 28;
   } else if (showModel && ann.event_model != null && ann.event_model !== '-') {
-    ctx.font = `bold ${Math.round(22 * sx)}px system-ui`;
+    ctx.font = `bold ${Math.max(14, Math.round(22 * sx))}px system-ui`;
     ctx.fillStyle = '#f0b030';
     ctx.shadowColor = '#000';
     ctx.shadowBlur = 6;
@@ -664,17 +1245,9 @@ function redraw() {
     stateY += 28;
   }
 
-  // Event overlay — shows most recent event, fades out over 2.5s
   if (showEvents) {
-    const evColors = {
-      serve: '#fbbf24', attack: '#f87171', block: '#fb923c',
-      reception: '#34d399', reception_pass: '#34d399', dig: '#2dd4bf',
-      setting_pass: '#60a5fa', pass: '#a78bfa', ace: '#facc15',
-      serve_out: '#aaaaaa', out: '#aaaaaa', ball_out: '#aaaaaa', goal_or_out: '#aaaaaa',
-    };
     const FADE_SEC = 2.5;
     const t = vid.currentTime;
-    // Find most recent event within FADE_SEC
     let recentEv = null;
     for (let i = EVENTS.length - 1; i >= 0; i--) {
       const dt = t - EVENTS[i].time;
@@ -684,7 +1257,7 @@ function redraw() {
     if (recentEv) {
       const dt    = t - recentEv.time;
       const alpha = Math.pow(1 - dt / FADE_SEC, 1.5);
-      const color = evColors[recentEv.type] || '#ffffff';
+      const color = EV_COLORS[recentEv.type] || '#ffffff';
       const label = recentEv.type.replace(/_/g, ' ').toUpperCase();
       const team  = recentEv.team === 'team_a' ? ' · A' : ' · B';
       const fs    = Math.round(28 * Math.max(sx, 0.6));
@@ -699,7 +1272,6 @@ function redraw() {
     }
   }
 
-  // Frame counter (bottom-right) — helps verify sync
   ctx.font = `${Math.round(11 * sx)}px monospace`;
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.textAlign = 'right';
@@ -707,24 +1279,16 @@ function redraw() {
   ctx.textAlign = 'left';
 }
 
-function drawPlayer(x, y, color, label) {
-  const r = 12;
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#fff';
-  ctx.font = `bold 11px system-ui`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, x, y);
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'alphabetic';
-}
+vid.addEventListener('play',  () => { document.title = `▶ CourtSense — {{ job.video_stem }}`; });
+vid.addEventListener('pause', () => { document.title = `⏸ f${currentFrameIdx} — CourtSense`; });
 
-// Update title with frame counter (merged into RAF loop for accuracy)
-vid.addEventListener('play',  () => { document.title = `▶ Volleyball Viewer`; });
-vid.addEventListener('pause', () => { document.title = `⏸ f${currentFrameIdx} — Volleyball Viewer`; });
+/* ── Init ────────────────────────────────────────────── */
+initVideoFilters();
+initChartFilters();
+initTableFilters();
+renderEventList();
+renderRallyClips();
+renderTables();
 </script>
 </body>
 </html>

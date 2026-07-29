@@ -50,7 +50,9 @@ class AttackHeatmap:
 
         Interpolated observations are useful for display but never become hit
         centres or velocity anchors: otherwise an artificial straight line in
-        a detector gap could look like a contact.
+        a detector gap could look like a contact. Frames where the ball tracker
+        started a new track are excluded for the same reason — the jump to the
+        new hypothesis is not ball movement, and reads as a very sharp turn.
         """
         samples = [a for a in annotations if a.get("ball")]
         candidates: List[Dict[str, Any]] = []
@@ -58,7 +60,8 @@ class AttackHeatmap:
         for i in range(w, len(samples) - w):
             before, centre, after = samples[i - w], samples[i], samples[i + w]
             segment = samples[i - w:i + w + 1]
-            if any(sample.get("ball_interp") for sample in segment):
+            if any(sample.get("ball_interp") or sample.get("ball_new")
+                   for sample in segment):
                 continue
             f0, f1, f2 = int(before["f"]), int(centre["f"]), int(after["f"])
             if f1 <= f0 or f2 <= f1:
