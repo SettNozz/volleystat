@@ -991,18 +991,26 @@ class GameAnalyzer:
         # The gate above had to choose with only the past in hand; now the
         # frames after each decision are available too, and they are what
         # identifies the ball on frames where a distractor scored higher.
-        if self.ball_trajectory_dp:
-            self._apply_trajectory_dp(stats)
+        solved = self._apply_trajectory_dp(stats) if self.ball_trajectory_dp else False
 
-        # Post-process: remove trajectory jumps (false positives inconsistent with neighbours)
-        n_removed = self._filter_ball_outliers(stats.frame_annotations)
-        if n_removed:
-            log.info(f"Outlier filter: removed {n_removed} false-positive frames")
+        # These two clean up after the greedy gate and must not run after the
+        # solver, which supersedes both: its output is smooth by construction,
+        # and it leaves a frame empty *because* no candidate there was
+        # plausible. Filling those holes anyway — the old pass bridged gaps of
+        # up to 10 frames — replaces a considered "unknown" with a guess, and
+        # measured on the GT window it added 46 wrong positions for 15 right.
+        # They are skipped on the solver actually having run, not on the flag:
+        # a run with no candidates still has gate output that needs them.
+        if not solved:
+            # Post-process: remove trajectory jumps (false positives inconsistent with neighbours)
+            n_removed = self._filter_ball_outliers(stats.frame_annotations)
+            if n_removed:
+                log.info(f"Outlier filter: removed {n_removed} false-positive frames")
 
-        # Post-process: fill short gaps in ball detection by linear interpolation
-        n_filled = self._interpolate_ball_positions(stats.frame_annotations)
-        if n_filled:
-            log.info(f"Ball interpolation: filled {n_filled} missing frames")
+            # Post-process: fill short gaps in ball detection by linear interpolation
+            n_filled = self._interpolate_ball_positions(stats.frame_annotations)
+            if n_filled:
+                log.info(f"Ball interpolation: filled {n_filled} missing frames")
 
         # The inline FSM above has to run on raw per-frame detections, because
         # the annotated video needs a state to draw while the frame is in hand.
@@ -1034,16 +1042,21 @@ class GameAnalyzer:
 
         return stats
 
-    def _apply_trajectory_dp(self, stats: "GameStats") -> None:
+    def _apply_trajectory_dp(self, stats: "GameStats") -> bool:
         """Replace the gate's per-frame picks with a globally chosen path.
 
         Rewrites ``ball`` on every annotation, so everything downstream — the
-        outlier filter, the FSM re-run, the heatmap, the viewer — reads the same
-        trajectory. ``ball_new`` is dropped: it marked a gate re-acquisition,
-        and the solver does not re-acquire, it chooses once.
+        FSM re-run, the heatmap, the viewer — reads the same trajectory.
+        ``ball_new`` is dropped: it marked a gate re-acquisition, and the solver
+        does not re-acquire, it chooses once.
+
+        Returns whether the trajectory was actually replaced. A run with no
+        candidates at all (an empty clip, or every frame below the confidence
+        floor) leaves the gate's output in place, and the caller must then keep
+        the legacy clean-up passes that output still needs.
         """
         if not self._ball_candidates:
-            return
+            return False
 
         solver = BallTrajectoryDP()
         chosen = interpolate_gaps(solver.solve(self._ball_candidates), max_gap=4)
@@ -1064,6 +1077,7 @@ class GameAnalyzer:
             f"in {solver.stats['segments']} segments"
         )
         self._ball_candidates.clear()
+        return True
 
     def _recompute_events_on_clean_trajectory(
         self, annotations: List[Dict], fps: float,
