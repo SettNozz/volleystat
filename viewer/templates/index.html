@@ -80,6 +80,19 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
       <option value="4">Every 5th frame (fastest)</option>
     </select>
 
+    <label>GPU ball batch</label>
+    <select id="ballBatchSize">
+      <option value="4">4 frames (low VRAM)</option>
+      <option value="8" selected>8 frames (recommended for 10 GB)</option>
+      <option value="12">12 frames (maximum throughput)</option>
+    </select>
+
+    <label>Net profile</label>
+    <select id="netProfile">
+      <option value="mixed" selected>Mixed — 2.34 m</option>
+      <option value="men">Men — 2.43 m</option>
+    </select>
+
     <label class="check-label">
       <input type="checkbox" id="refreshNetFloor" checked>
       Refresh SAM3 net-post bases (enable for a new camera angle)
@@ -91,7 +104,11 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
       <span class="spinner" id="spinner"></span>
       <span id="statusText">Starting...</span>
     </div>
-    <p class="hint">Analysis runs in background. For a 57s 4K video with skip=1: ~3-5 minutes.</p>
+    <p class="hint">
+      Measured on an RTX 3080 (10 GB): a 57s 4K video takes ~3 min 30s
+      with Every frame + batch 8. Fresh net calibration adds setup time;
+      other GPUs may vary.
+    </p>
   </div>
 </div>
 
@@ -101,6 +118,8 @@ let pollInterval = null;
 function startAnalysis() {
   const path = document.getElementById('videoPath').value.trim();
   const skip = document.getElementById('skipFrames').value;
+  const ballBatchSize = document.getElementById('ballBatchSize').value;
+  const netProfile = document.getElementById('netProfile').value;
   const refreshNetFloor = document.getElementById('refreshNetFloor').checked;
   if (!path) return;
 
@@ -113,15 +132,29 @@ function startAnalysis() {
     body: JSON.stringify({
       video_path: path,
       skip_frames: parseInt(skip),
+      ball_batch_size: parseInt(ballBatchSize),
+      net_profile: netProfile,
       refresh_net_floor: refreshNetFloor,
     })
   })
-  .then(r => r.json())
+  .then(async r => {
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `Server returned HTTP ${r.status}`);
+    return data;
+  })
   .then(data => {
     if (data.error) { showStatus('error', data.error); return; }
     pollStatus(data.job_id);
   })
-  .catch(e => showStatus('error', e.toString()));
+  .catch(e => {
+    const offline = window.location.protocol === 'file:' ||
+      e instanceof TypeError;
+    const hint = offline
+      ? 'Viewer server is unavailable. Start `python viewer.py` and open http://localhost:5050.'
+      : e.toString();
+    showStatus('error', hint);
+    document.getElementById('analyzeBtn').disabled = false;
+  });
 }
 
 function pollStatus(jobId) {

@@ -1211,6 +1211,11 @@ function redraw() {
           ctx.fillText(`#${pose.id}`, px(head[0]) + 5, py(head[1]) - 5);
         }
       }
+      if (pose.team_prior && pose.bb) {
+        ctx.font = `bold ${Math.max(9, Math.round(10 * sx))}px system-ui`;
+        ctx.fillStyle = '#ff42e6';
+        ctx.fillText('BACK/NET prior', px(pose.bb[0]), py(pose.bb[1]) - 6);
+      }
     }
   }
 

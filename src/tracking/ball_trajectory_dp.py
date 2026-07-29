@@ -92,14 +92,22 @@ class BallTrajectoryDP:
         # overlapping chunks so pathological videos cannot blow up memory.
         max_segment_frames: int = 6000,
         chunk_overlap_frames: int = 120,
+        # Every default above is in pixels, or trades against pixels, and they
+        # were measured on 1280-wide footage. The same ball crossing the same
+        # court moves three times as many pixels in a 4K frame, so on wider
+        # video the limits have to grow with it — otherwise real motion is
+        # gated out as impossible. Pass frame_width / 1280.
+        px_scale: float = 1.0,
     ):
         self.max_gap_frames = max_gap_frames
-        self.max_step_px = max_step_px
-        self.conf_weight = conf_weight
-        self.gap_penalty = gap_penalty
-        self.restart_penalty = restart_penalty
+        self.max_step_px = max_step_px * px_scale
+        # Deviation is measured in pixels, so anything weighed against it is a
+        # pixel quantity too and scales with the frame.
+        self.conf_weight = conf_weight * px_scale
+        self.gap_penalty = gap_penalty * px_scale
+        self.restart_penalty = restart_penalty * px_scale
         self.still_penalty = still_penalty
-        self.still_px = still_px
+        self.still_px = still_px * px_scale
         self.max_segment_frames = max_segment_frames
         self.chunk_overlap_frames = chunk_overlap_frames
 

@@ -28,6 +28,31 @@ _TARGET_W = 1280
 _SAMPLE_COUNT = 5        # frames to sample from first 5 seconds
 _SAM_CHECKPOINT = str(Path.home() / "Downloads" / "sam_vit_h_4b8939.pth")
 _SAM_MODEL_TYPE = "vit_h"
+_DEFAULT_NET_TOP_HEIGHT_M = 2.34
+_NET_MESH_HEIGHT_M = 1.00
+_MIN_POST_SPACING_M = 10.0
+_MAX_POST_SPACING_M = 11.0
+
+
+def infer_floor_y_from_net_bounds(
+    net_tape_top: float,
+    net_tape_bottom: float,
+    net_top_height_m: float = _DEFAULT_NET_TOP_HEIGHT_M,
+) -> float:
+    """Infer the floor under the net from its known physical proportions.
+
+    The segmented mesh/tape band is 1.00 m high.  For the default mixed-game
+    height of 2.34 m, its lower tape is 1.34 m above the floor.  Men's 2.43 m
+    footage can be selected explicitly.  The result stays in the same pixel
+    coordinate system as the inputs.
+    """
+    mesh_px = float(net_tape_bottom) - float(net_tape_top)
+    if mesh_px <= 0:
+        raise ValueError("net_tape_bottom must be below net_tape_top")
+    bottom_height_m = float(net_top_height_m) - _NET_MESH_HEIGHT_M
+    if bottom_height_m <= 0:
+        raise ValueError("net_top_height_m must exceed the 1.00 m mesh height")
+    return float(net_tape_bottom) + mesh_px * (bottom_height_m / _NET_MESH_HEIGHT_M)
 
 
 def level_floor_line(
@@ -60,8 +85,13 @@ class NetDetector:
     calibration JSON and scaled to any target resolution at runtime.
     """
 
-    def __init__(self, sam_checkpoint: str = _SAM_CHECKPOINT):
+    def __init__(
+        self,
+        sam_checkpoint: str = _SAM_CHECKPOINT,
+        net_height_m: float = _DEFAULT_NET_TOP_HEIGHT_M,
+    ):
         self.sam_checkpoint = sam_checkpoint
+        self.net_height_m = float(net_height_m)
         self._predictor = None
 
     # ------------------------------------------------------------------
@@ -145,6 +175,8 @@ class NetDetector:
         frame_h: float,
         frame_w: float,
         net_tape_top: Optional[float] = None,
+        net_tape_bottom: Optional[float] = None,
+        floor_x_priors: Optional[Tuple[float, float]] = None,
     ) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
         """Find ground contact points of the two net posts in 720p pixels.
 
@@ -153,8 +185,13 @@ class NetDetector:
         to the near side, feet above it to the far side.
         """
         sx, sy = _TARGET_W / frame_w, _TARGET_H / frame_h
-        expected = (net_x_left * sx, net_x_right * sx)
+        expected = floor_x_priors or (net_x_left * sx, net_x_right * sx)
         top_y = net_tape_top * sy if net_tape_top is not None else _TARGET_H * 0.35
+        bottom_y = net_tape_bottom * sy if net_tape_bottom is not None else None
+        # A calibrated homography puts the search close to the actual
+        # post/court intersection.  Keep this ROI tight enough that a player's
+        # leg cannot win 100+ pixels away from the post.
+        search_half_width = max(55, int(_TARGET_W * 0.055)) if floor_x_priors else None
 
         left_points, right_points = [], []
         for frame in self._sample_frames(video_path):
@@ -162,9 +199,15 @@ class NetDetector:
             # values, it follows a changed camera crop/pan and excludes the
             # vertical mesh strings that otherwise look like a post.
             tape_span = self._find_tape_span(frame, top_y)
-            frame_expected = tape_span or expected
-            left = self._find_post_base(frame, frame_expected[0], top_y, outer_direction=-1)
-            right = self._find_post_base(frame, frame_expected[1], top_y, outer_direction=1)
+            frame_expected = expected if floor_x_priors else (tape_span or expected)
+            left = self._find_post_base(
+                frame, frame_expected[0], top_y, outer_direction=-1,
+                search_half_width=search_half_width,
+            )
+            right = self._find_post_base(
+                frame, frame_expected[1], top_y, outer_direction=1,
+                search_half_width=search_half_width,
+            )
             if left is not None:
                 left_points.append(left)
             if right is not None:
@@ -179,7 +222,12 @@ class NetDetector:
         right = tuple(np.median(np.asarray(right_points), axis=0).astype(float))
         # Each base is estimated from its own post independently, so detector
         # noise alone tilts the segment. Level it against the tape.
-        base_y = float(np.median([p[1] for p in left_points + right_points]))
+        if bottom_y is not None:
+            base_y = infer_floor_y_from_net_bounds(
+                top_y, bottom_y, self.net_height_m,
+            )
+        else:
+            base_y = float(np.median([p[1] for p in left_points + right_points]))
         left, right = level_floor_line(left, right, base_y)
         log.info(f"Net floor A/B (720p): A=({left[0]:.0f},{left[1]:.0f}) "
                  f"B=({right[0]:.0f},{right[1]:.0f})")
@@ -189,6 +237,8 @@ class NetDetector:
         self,
         video_path: str,
         calibration_path: str,
+        net_tape_top: Optional[float] = None,
+        net_tape_bottom: Optional[float] = None,
     ) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
         """Get net-post ground contacts from the isolated SAM3 worker.
 
@@ -203,7 +253,7 @@ class NetDetector:
             python = Path(override)
         else:
             python = _ROOT / ".sam3_env" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-        worker = _ROOT / "scripts" / "testing" / "test_sam3_net_posts.py"
+        worker = _ROOT / "scripts" / "detection" / "detect_net_posts_sam3.py"
         if not python.exists() or not worker.exists() or not Path(calibration_path).exists():
             log.info("SAM3 post worker unavailable; falling back to Hough post bases")
             return None
@@ -213,7 +263,8 @@ class NetDetector:
             str(python), str(worker),
             "--video", str(video_path),
             "--calibration", str(calibration_path),
-            "--prompt", "metal pipe",
+            "--prompt", "volleyball net post",
+            "--samples", "3",
             "--output-dir", str(output_dir),
         ]
         try:
@@ -238,9 +289,15 @@ class NetDetector:
             left, right = floor.get("left"), floor.get("right")
             if not (left and right and len(left) == 2 and len(right) == 2):
                 raise ValueError("missing A/B coordinates")
+            base_y = None
+            if net_tape_top is not None and net_tape_bottom is not None:
+                base_y = infer_floor_y_from_net_bounds(
+                    net_tape_top, net_tape_bottom, self.net_height_m,
+                )
             result = level_floor_line(
                 (float(left[0]), float(left[1])),
                 (float(right[0]), float(right[1])),
+                base_y=base_y,
             )
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             log.warning(f"Invalid SAM3 post result ({exc}); using Hough fallback")
@@ -249,6 +306,65 @@ class NetDetector:
         log.info(f"SAM3 net floor A/B (720p): A=({result[0][0]:.0f},{result[0][1]:.0f}) "
                  f"B=({result[1][0]:.0f},{result[1][1]:.0f})")
         return result
+
+    @staticmethod
+    def project_net_floor_x_priors(
+        homography,
+        frame_w: float,
+        frame_h: float,
+    ) -> Optional[Tuple[float, float]]:
+        """Project the two court/net intersections into 720p as post priors."""
+        if homography is None:
+            return None
+        try:
+            matrix = np.asarray(homography, dtype=np.float64)
+            if matrix.shape != (3, 3):
+                return None
+            world = np.asarray([[-4.5, 0.0], [4.5, 0.0]], dtype=np.float64)
+            homogeneous = np.c_[world, np.ones(2)] @ matrix.T
+            if np.any(np.abs(homogeneous[:, 2]) < 1e-9):
+                return None
+            image_x = homogeneous[:, 0] / homogeneous[:, 2]
+            result = tuple(sorted(float(x) * _TARGET_W / float(frame_w) for x in image_x))
+            if not all(np.isfinite(result)):
+                return None
+            return result
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    @staticmethod
+    def estimate_post_spacing_m(
+        left: Tuple[float, float],
+        right: Tuple[float, float],
+        homography,
+        frame_w: float,
+        frame_h: float,
+    ) -> Optional[float]:
+        """Measure a 720p A/B pair in court meters through the homography."""
+        if homography is None:
+            return None
+        try:
+            matrix_inv = np.linalg.inv(np.asarray(homography, dtype=np.float64))
+            native = np.asarray([
+                [left[0] * frame_w / _TARGET_W, left[1] * frame_h / _TARGET_H, 1.0],
+                [right[0] * frame_w / _TARGET_W, right[1] * frame_h / _TARGET_H, 1.0],
+            ])
+            world_h = native @ matrix_inv.T
+            if np.any(np.abs(world_h[:, 2]) < 1e-9):
+                return None
+            world = world_h[:, :2] / world_h[:, 2:3]
+            spacing = float(np.linalg.norm(world[1] - world[0]))
+            return spacing if np.isfinite(spacing) else None
+        except (TypeError, ValueError, np.linalg.LinAlgError, ZeroDivisionError):
+            return None
+
+    @staticmethod
+    def post_spacing_is_plausible(spacing_m: Optional[float]) -> bool:
+        """Whether post spacing agrees with the known 10–11 m installation."""
+        return (
+            spacing_m is None
+            or _MIN_POST_SPACING_M <= spacing_m <= _MAX_POST_SPACING_M
+        )
 
     @staticmethod
     def _find_tape_span(
@@ -297,6 +413,7 @@ class NetDetector:
         expected_x: float,
         net_top_y: float,
         outer_direction: int,
+        search_half_width: Optional[int] = None,
     ) -> Optional[Tuple[float, float]]:
         """Return the bottom end of the strongest vertical line near one post."""
         h, w = frame_bgr.shape[:2]
@@ -304,7 +421,11 @@ class NetDetector:
         # they can be displaced by a full post-width (or more), so search a
         # broad strip rather than rejecting the true post for being on the
         # "wrong" side of a stale endpoint.
-        half_roi = max(55, int(w * 0.12))
+        half_roi = (
+            max(20, int(search_half_width))
+            if search_half_width is not None
+            else max(55, int(w * 0.12))
+        )
         x0, x1 = max(0, int(expected_x - half_roi)), min(w, int(expected_x + half_roi))
         y0 = max(0, int(net_top_y - h * 0.12))
         y1 = min(h, int(net_top_y + h * 0.48))
@@ -577,6 +698,8 @@ def save_sam_net_to_calibration(
     net_bottom_y_720p: float,
     net_floor_line_720p: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None,
     net_floor_method: Optional[str] = None,
+    net_height_m: Optional[float] = None,
+    net_post_spacing_m: Optional[float] = None,
 ) -> None:
     """Persist SAM net detection results into calibration JSON."""
     p = Path(calib_path)
@@ -589,6 +712,13 @@ def save_sam_net_to_calibration(
         "net_top_y_720p": net_top_y_720p,
         "net_bottom_y_720p": net_bottom_y_720p,
     })
+    if net_height_m is not None:
+        detected["net_height_m"] = float(net_height_m)
+        metadata = data.setdefault("metadata", {})
+        court_geometry = metadata.setdefault("court_geometry", {})
+        court_geometry["net_height"] = float(net_height_m)
+    if net_post_spacing_m is not None:
+        detected["net_post_spacing_m"] = float(net_post_spacing_m)
     if net_floor_line_720p is not None:
         left, right = net_floor_line_720p
         detected["net_floor_left_720p"] = [float(left[0]), float(left[1])]

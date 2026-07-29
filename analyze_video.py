@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.pipeline.game_analyzer import GameAnalyzer
+from src.utils.path_utils import local_path_from_uri
 
 
 def main():
@@ -44,6 +45,19 @@ def main():
                         help="Court calibration JSON (default: court_calibration.json)")
     parser.add_argument("--net-y", type=float, default=None, metavar="PX",
                         help="Override net Y pixel position (useful when calibration is from different camera)")
+    parser.add_argument(
+        "--net-profile",
+        choices=("mixed", "men"),
+        default="mixed",
+        help="Net height profile: mixed=2.34 m (default), men=2.43 m",
+    )
+    parser.add_argument(
+        "--net-height-m",
+        type=float,
+        default=None,
+        metavar="M",
+        help="Explicit net height in meters; overrides --net-profile",
+    )
 
     # Processing options
     parser.add_argument("--duration", type=float, default=None, metavar="SEC",
@@ -66,6 +80,8 @@ def main():
     parser.add_argument("--no-ball-dp", action="store_true",
                         help="Keep the live per-frame gate instead of re-picking the "
                              "ball trajectory globally after the video is read")
+    parser.add_argument("--ball-batch-size", type=int, default=8, metavar="N",
+                        help="Ball YOLO GPU batch size (default: 8; use 4 on low VRAM)")
 
     # Output flags
     parser.add_argument("--no-video", action="store_true",
@@ -76,6 +92,10 @@ def main():
                         help="Disable event model overlay on video")
 
     args = parser.parse_args()
+    if args.video:
+        args.video = str(local_path_from_uri(args.video))
+        if not Path(args.video).is_file():
+            parser.error(f"video file not found: {args.video}")
 
     print("\nVolleyball Game Analyzer")
     print("=" * 45)
@@ -85,6 +105,10 @@ def main():
         print(f"Input frames : {args.frames}")
     print(f"Output dir   : {args.output}")
     print(f"Calibration  : {args.calibration}")
+    net_height_m = args.net_height_m
+    if net_height_m is None:
+        net_height_m = 2.34 if args.net_profile == "mixed" else 2.43
+    print(f"Net height   : {net_height_m:.2f} m ({args.net_profile})")
     if args.skip_frames:
         print(f"Skip frames  : every {args.skip_frames+1}th frame processed")
     if args.duration:
@@ -102,6 +126,8 @@ def main():
         event_checkpoint_path=event_ckpt,
         ball_ensemble=args.ball_ensemble,
         ball_trajectory_dp=not args.no_ball_dp,
+        ball_batch_size=args.ball_batch_size,
+        net_height_m=net_height_m,
     )
 
     if args.video:

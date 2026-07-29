@@ -99,6 +99,17 @@ def test_empty_input():
     assert BallTrajectoryDP().solve({5: []}) == {}
 
 
+def test_pixel_thresholds_scale_with_4k_input():
+    """A physically plausible 4K trajectory must not be cut by 720p limits."""
+    candidates = flight(n=8, vx=180.0)
+
+    unscaled = BallTrajectoryDP().solve(candidates)
+    scaled = BallTrajectoryDP(px_scale=3.0).solve(candidates)
+
+    assert len(unscaled) == 1
+    assert len(scaled) == len(candidates)
+
+
 def test_long_video_is_split_into_segments():
     """Segmenting keeps the edge count linear; the result must stay coherent."""
     candidates = {}

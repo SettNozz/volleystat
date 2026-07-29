@@ -25,6 +25,8 @@ import numpy as np
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
+from src.detection.net_detector import infer_floor_y_from_net_bounds
+
 TARGET_H = 720
 TARGET_W = 1280
 SAMPLE_COUNT = 8
@@ -82,6 +84,49 @@ def draw_overlay(frame_720: np.ndarray, calib: dict) -> np.ndarray:
         _label(img, f"SAM bot={net_tape_bot_720:.0f}px  h={net_tape_bot_720-net_tape_top_720:.0f}px",
                x0 + 4, b + 16, (0, 60, 200))
 
+    # --- Homography projection of the regulation court/net intersections ---
+    homography = calib.get("perspective_matrix")
+    if homography:
+        matrix = np.asarray(homography, dtype=np.float64)
+        world = np.asarray([[-4.5, 0.0, 1.0], [4.5, 0.0, 1.0]])
+        projected = world @ matrix.T
+        projected = projected[:, :2] / projected[:, 2:3]
+        hp0 = (round(projected[0, 0] * sx), round(projected[0, 1] * sy))
+        hp1 = (round(projected[1, 0] * sx), round(projected[1, 1] * sy))
+        cv2.line(img, hp0, hp1, (210, 210, 210), 2, cv2.LINE_AA)
+        _label(img, "homography y=0", hp0[0] + 8, hp0[1] - 8, (210, 210, 210))
+
+    # --- Physically inferred floor and saved production divider ---
+    floor_left = sam.get("net_floor_left_720p")
+    floor_right = sam.get("net_floor_right_720p")
+    net_height_m = float(sam.get("net_height_m", 2.34))
+    if (
+        net_tape_top_720 is not None
+        and net_tape_bot_720 is not None
+        and floor_left
+        and floor_right
+    ):
+        physical_y = infer_floor_y_from_net_bounds(
+            net_tape_top_720, net_tape_bot_720, net_height_m,
+        )
+        physical_a = (round(float(floor_left[0])), round(physical_y))
+        physical_b = (round(float(floor_right[0])), round(physical_y))
+        for x in range(physical_a[0], physical_b[0], 24):
+            cv2.line(
+                img, (x, physical_a[1]), (min(x + 12, physical_b[0]), physical_b[1]),
+                (255, 255, 0), 1, cv2.LINE_AA,
+            )
+
+    if floor_left and floor_right:
+        a = tuple(round(float(v)) for v in floor_left)
+        b = tuple(round(float(v)) for v in floor_right)
+        cv2.line(img, a, b, (255, 0, 255), 3, cv2.LINE_AA)
+        for label, point in (("A", a), ("B", b)):
+            cv2.line(img, (point[0], int(net_tape_top_720 or 0)), point,
+                     (255, 0, 255), 1, cv2.LINE_AA)
+            cv2.circle(img, point, 7, (255, 0, 255), -1, cv2.LINE_AA)
+            _label(img, label, point[0] + 9, point[1] - 7, (255, 0, 255))
+
     # --- net horizontal extent (vertical guides) ---
     if net_pts:
         cv2.line(img, (x_left, 0), (x_left, h), (0, 255, 0), 1)
@@ -91,6 +136,10 @@ def draw_overlay(frame_720: np.ndarray, calib: dict) -> np.ndarray:
     legend = [
         ("Green dashed line", (0, 255, 0), "net_y from manual calibration"),
         ("Orange band", (0, 180, 255), "SAM net tape bounds"),
+        ("Magenta A-B", (255, 0, 255), "production team divider / post bases"),
+        ("Cyan dashed", (255, 255, 0),
+         f"{net_height_m:.2f}/{net_height_m - 1.0:.2f} m physical estimate"),
+        ("Light gray", (210, 210, 210), "homography court y=0 cross-check"),
     ]
     lx, ly = 8, h - 12 - len(legend) * 22
     for label, color, desc in legend:
@@ -107,6 +156,34 @@ def _label(img, text, x, y, color):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(img, text, (x, max(y, 14)),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
+
+
+def draw_native_floor_overlay(frame: np.ndarray, calib: dict) -> tuple[np.ndarray, list]:
+    """Draw the production A/B line at the video's native resolution."""
+    img = frame.copy()
+    h, w = img.shape[:2]
+    sx, sy = w / TARGET_W, h / TARGET_H
+    sam = calib.get("net_detection_sam", {})
+    left = sam.get("net_floor_left_720p")
+    right = sam.get("net_floor_right_720p")
+    top = sam.get("net_top_y_720p")
+    bottom = sam.get("net_bottom_y_720p")
+    if not (left and right and top is not None and bottom is not None):
+        return img, []
+
+    a = (round(float(left[0]) * sx), round(float(left[1]) * sy))
+    b = (round(float(right[0]) * sx), round(float(right[1]) * sy))
+    top_y, bottom_y = round(float(top) * sy), round(float(bottom) * sy)
+    cv2.rectangle(img, (a[0], top_y), (b[0], bottom_y), (0, 180, 255), 3)
+    cv2.line(img, a, b, (255, 0, 255), 4, cv2.LINE_AA)
+    for label, point in (("A", a), ("B", b)):
+        cv2.line(img, (point[0], top_y), point, (255, 0, 255), 2, cv2.LINE_AA)
+        cv2.circle(img, point, 12, (255, 0, 255), 3, cv2.LINE_AA)
+        cv2.putText(
+            img, label, (point[0] + 25, point[1] - 20),
+            cv2.FONT_HERSHEY_SIMPLEX, 1.4, (255, 0, 255), 4, cv2.LINE_AA,
+        )
+    return img, [a, b]
 
 
 # ---------------------------------------------------------------------------
@@ -144,10 +221,23 @@ def frame_to_b64(frame_bgr: np.ndarray) -> str:
 
 def build_html(frames_b64: list, timestamps: list, calib: dict, video_path: str) -> str:
     sam = calib.get("net_detection_sam", {})
-    method = sam.get("method", "unknown")
+    method = sam.get("net_floor_method", sam.get("method", "unknown"))
     top = sam.get("net_top_y_720p", "n/a")
     bot = sam.get("net_bottom_y_720p", "n/a")
-    height = (bot - top) if isinstance(top, float) and isinstance(bot, float) else "n/a"
+    height = (
+        bot - top
+        if isinstance(top, (int, float)) and isinstance(bot, (int, float))
+        else "n/a"
+    )
+    floor_left = sam.get("net_floor_left_720p", "n/a")
+    floor_right = sam.get("net_floor_right_720p", "n/a")
+    net_height_m = float(sam.get("net_height_m", 2.34))
+    post_spacing_m = sam.get("net_post_spacing_m", "n/a")
+    physical_floor = (
+        infer_floor_y_from_net_bounds(top, bot, net_height_m)
+        if isinstance(top, (int, float)) and isinstance(bot, (int, float))
+        else "n/a"
+    )
 
     cards = ""
     for b64, ts in zip(frames_b64, timestamps):
@@ -185,6 +275,10 @@ def build_html(frames_b64: list, timestamps: list, calib: dict, video_path: str)
   <b>net_tape_top (720p):</b> <span>{top} px</span><br>
   <b>net_tape_bottom (720p):</b> <span>{bot} px</span><br>
   <b>tape height:</b> <span>{f"{height:.1f}" if isinstance(height, float) else height} px</span><br>
+  <b>net height:</b> <span>{net_height_m:.2f} m</span><br>
+  <b>physical floor y:</b> <span>{f"{physical_floor:.2f}" if isinstance(physical_floor, float) else physical_floor} px</span><br>
+  <b>post spacing:</b> <span>{f"{post_spacing_m:.2f}" if isinstance(post_spacing_m, (int, float)) else post_spacing_m} m (expected 10-11 m)</span><br>
+  <b>production A/B:</b> <span>{floor_left} â†’ {floor_right}</span><br>
   <b>Frames shown:</b> <span>first {FIRST_N_SECONDS}s, {len(frames_b64)} samples</span>
 </div>
 <div class="grid">{cards}</div>
@@ -207,6 +301,7 @@ def main():
                         help="Path to court_calibration.json")
     parser.add_argument("--output", default="results/net_validation", help="Output dir")
     parser.add_argument("--frames", type=int, default=SAMPLE_COUNT, help="Frames to sample")
+    parser.add_argument("--no-open", action="store_true", help="Do not open a browser")
     args = parser.parse_args()
 
     out_dir = Path(args.output)
@@ -221,6 +316,32 @@ def main():
 
     print("Drawing overlays …")
     annotated = [draw_overlay(fr, calib) for fr in frames]
+    for index, frame in enumerate(annotated):
+        cv2.imwrite(str(out_dir / f"frame_{index:02d}.jpg"), frame)
+    thumbs = [
+        cv2.resize(frame, (640, 360), interpolation=cv2.INTER_AREA)
+        for frame in annotated
+    ]
+    if thumbs:
+        while len(thumbs) % 2:
+            thumbs.append(np.zeros_like(thumbs[0]))
+        rows = [np.hstack(thumbs[i:i + 2]) for i in range(0, len(thumbs), 2)]
+        cv2.imwrite(str(out_dir / "contact_sheet.jpg"), np.vstack(rows))
+
+    native_cap = cv2.VideoCapture(str(args.video))
+    native_ok, native_frame = native_cap.read()
+    native_cap.release()
+    if native_ok:
+        native_overlay, post_points = draw_native_floor_overlay(native_frame, calib)
+        cv2.imwrite(str(out_dir / "frame_00_native.jpg"), native_overlay)
+        native_h, native_w = native_overlay.shape[:2]
+        for label, (x, y) in zip(("left", "right"), post_points):
+            x0, x1 = max(0, x - 260), min(native_w, x + 260)
+            y0, y1 = max(0, y - 260), min(native_h, y + 180)
+            cv2.imwrite(
+                str(out_dir / f"frame_00_native_{label}_post.jpg"),
+                native_overlay[y0:y1, x0:x1],
+            )
     frames_b64 = [frame_to_b64(fr) for fr in annotated]
 
     html_path = out_dir / "net_validation.html"
@@ -228,8 +349,9 @@ def main():
     html_path.write_text(html, encoding="utf-8")
     print(f"Saved: {html_path}")
 
-    webbrowser.open(html_path.resolve().as_uri())
-    print("Opened in browser.")
+    if not args.no_open:
+        webbrowser.open(html_path.resolve().as_uri())
+        print("Opened in browser.")
 
 
 if __name__ == "__main__":

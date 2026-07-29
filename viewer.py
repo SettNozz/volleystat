@@ -23,6 +23,8 @@ from flask_cors import CORS
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from src.utils.path_utils import local_path_from_uri
+
 app = Flask(__name__, template_folder="viewer/templates", static_folder="viewer/static")
 # Jinja caches compiled templates in memory, so UI edits need a server restart
 # unless auto-reload is on. The viewer is a local dev tool — always reload.
@@ -31,11 +33,20 @@ CORS(app)
 
 # Server can be launched from a shortcut or a different shell directory.
 # Persisted job recovery must therefore never depend on the process CWD.
-RESULTS_DIR = Path(__file__).resolve().parent / "results" / "viewer"
+PROJECT_ROOT = Path(__file__).resolve().parent
+RESULTS_DIR = PROJECT_ROOT / "results" / "viewer"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Track running jobs
 jobs: dict = {}
+
+
+def _resolve_video_path(value: str) -> Path:
+    """Resolve regular paths and file URIs independently of the server CWD."""
+    path = local_path_from_uri(value)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
 
 
 def _restore_completed_job(job_id: str):
@@ -51,7 +62,7 @@ def _restore_completed_job(job_id: str):
     stem = stats_path.name.removesuffix("_stats.json")
     ann_path = output_dir / f"{stem}_annotations.json"
     video_path = output_dir / f"{stem}_analyzed.mp4"
-    if not ann_path.exists() or not video_path.exists():
+    if not ann_path.exists():
         return None
 
     original_video = ""
@@ -60,6 +71,13 @@ def _restore_completed_job(job_id: str):
             original_video = json.load(f).get("original_video_path", "")
     except (OSError, json.JSONDecodeError):
         pass
+    playback_path = (
+        video_path if video_path.exists()
+        else _resolve_video_path(original_video) if original_video
+        else None
+    )
+    if playback_path is None or not playback_path.exists():
+        return None
 
     job = {
         "status": "done",
@@ -67,7 +85,7 @@ def _restore_completed_job(job_id: str):
         "message": "Restored from disk",
         "stats_path": str(stats_path),
         "annotations_path": str(ann_path),
-        "video_path": str(video_path),
+        "video_path": str(playback_path),
         "video_stem": stem,
         "job_id": job_id,
         "original_video_path": original_video,
@@ -86,6 +104,8 @@ def _run_analysis(
     video_path: str,
     skip_frames: int,
     refresh_net_floor: bool = True,
+    ball_batch_size: int = 8,
+    net_height_m: float = 2.34,
 ):
     """Run analysis in background thread."""
     jobs[job_id] = {"status": "running", "progress": 0, "message": "Starting..."}
@@ -97,13 +117,20 @@ def _run_analysis(
         # Patch progress into jobs dict during analysis
         # (GameAnalyzer prints progress — we capture state changes)
         analyzer = GameAnalyzer(
-            output_video=True,
+            # The results page draws overlays from annotations on top of the
+            # original video. Encoding a second 4K MP4 is redundant and nearly
+            # doubles wall time.
+            output_video=False,
             skip_frames=skip_frames,
             pose_imgsz=1280,
             max_players_per_team=6,
             refresh_net_floor=refresh_net_floor,
+            ball_batch_size=ball_batch_size,
+            net_height_m=net_height_m,
         )
-        jobs[job_id]["message"] = "Full workflow: skeletons + SAM3 net posts + heatmap..."
+        jobs[job_id]["message"] = (
+            f"GPU batch {ball_batch_size}: skeletons + SAM3 net posts + heatmap..."
+        )
         stats = analyzer.process_video(
             video_path=video_path,
             output_dir=str(output_dir),
@@ -114,7 +141,7 @@ def _run_analysis(
             "message": "Done",
             "stats_path": str(output_dir / f"{Path(video_path).stem}_stats.json"),
             "annotations_path": str(output_dir / f"{Path(video_path).stem}_annotations.json"),
-            "video_path": str(output_dir / f"{Path(video_path).stem}_analyzed.mp4"),
+            "video_path": video_path,
             "video_stem": Path(video_path).stem,
             "job_id": job_id,
             "original_video_path": video_path,
@@ -178,20 +205,31 @@ def load_existing():
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    data = request.json
-    video_path = data.get("video_path", "").strip()
+    data = request.get_json(silent=True) or {}
+    video_path_raw = str(data.get("video_path", "")).strip()
     skip_frames = int(data.get("skip_frames", 0))
+    ball_batch_size = max(1, min(16, int(data.get("ball_batch_size", 8))))
+    net_profile = str(data.get("net_profile", "mixed")).lower()
+    net_height_m = 2.43 if net_profile == "men" else 2.34
+    if data.get("net_height_m") is not None:
+        net_height_m = float(data["net_height_m"])
+    if not 2.0 <= net_height_m <= 2.6:
+        return jsonify({"error": "net_height_m must be between 2.0 and 2.6"}), 400
     # A viewer upload is normally a new recording. Re-detect its two physical
     # net-post bases instead of reusing endpoints from another camera angle.
     refresh_net_floor = bool(data.get("refresh_net_floor", True))
 
-    if not video_path or not Path(video_path).exists():
-        return jsonify({"error": f"Video not found: {video_path}"}), 400
+    video_path = _resolve_video_path(video_path_raw) if video_path_raw else None
+    if video_path is None or not video_path.is_file():
+        return jsonify({"error": f"Video not found: {video_path_raw}"}), 400
 
     job_id = f"job_{int(time.time())}"
     t = threading.Thread(
         target=_run_analysis,
-        args=(job_id, video_path, skip_frames, refresh_net_floor),
+        args=(
+            job_id, str(video_path), skip_frames, refresh_net_floor,
+            ball_batch_size, net_height_m,
+        ),
         daemon=True,
     )
     t.start()

@@ -30,6 +30,13 @@ def main():
     parser.add_argument("--video", required=True)
     parser.add_argument("--calibration", default=_DEFAULT_CALIB)
     parser.add_argument("--sam-checkpoint", default=_SAM_CHECKPOINT)
+    parser.add_argument("--net-height-m", type=float, default=2.34,
+                        help="Net-top height in meters (mixed=2.34, men=2.43)")
+    parser.add_argument(
+        "--posts-only",
+        action="store_true",
+        help="Reuse saved tape bounds and refresh only posts/team divider",
+    )
     parser.add_argument("--validate", action="store_true",
                         help="Open validation page after detection")
     args = parser.parse_args()
@@ -60,35 +67,85 @@ def main():
     print(f"net_y hint  : {net_y:.0f}px  x=[{net_x_left:.0f}, {net_x_right:.0f}]  "
           f"(original {frame_w:.0f}x{frame_h:.0f})")
 
-    # --- Clear old SAM data ---
     old = calib.get("net_detection_sam", {})
-    if old:
-        print(f"Clearing old SAM data: {old}")
-        calib.pop("net_detection_sam", None)
-        with open(calib_path, "w") as f:
-            json.dump(calib, f, indent=2)
-
-    # --- Run SAM ---
-    detector = NetDetector(sam_checkpoint=args.sam_checkpoint)
-    top, bot = detector.detect_from_video(
-        video_path=args.video,
-        net_y_hint=net_y,
-        net_x_left=net_x_left,
-        net_x_right=net_x_right,
-        frame_h=frame_h,
-        frame_w=frame_w,
+    detector = NetDetector(
+        sam_checkpoint=args.sam_checkpoint,
+        net_height_m=args.net_height_m,
     )
+    if args.posts_only:
+        top = old.get("net_top_y_720p")
+        bot = old.get("net_bottom_y_720p")
+        if top is None or bot is None:
+            print("ERROR: --posts-only needs saved tape bounds")
+            sys.exit(1)
+        top, bot = float(top), float(bot)
+        print(f"Reusing tape bounds: top={top:.1f}, bottom={bot:.1f} (720p)")
+    else:
+        top, bot = detector.detect_from_video(
+            video_path=args.video,
+            net_y_hint=net_y,
+            net_x_left=net_x_left,
+            net_x_right=net_x_right,
+            frame_h=frame_h,
+            frame_w=frame_w,
+        )
 
     if top is None:
         print("SAM detection failed — no net tape found")
         sys.exit(1)
 
-    # --- Save ---
-    save_sam_net_to_calibration(str(calib_path), top, bot)
+    floor = detector.detect_floor_line_sam3(
+        args.video,
+        str(calib_path),
+        net_tape_top=top,
+        net_tape_bottom=bot,
+    )
+    floor_method = "sam3_post_x_physical_height" if floor else None
+    floor_spacing_m = detector.estimate_post_spacing_m(
+        floor[0], floor[1], calib.get("perspective_matrix"), frame_w, frame_h,
+    ) if floor else None
+    if floor and not detector.post_spacing_is_plausible(floor_spacing_m):
+        print(
+            f"SAM3 spacing {floor_spacing_m:.2f} m is outside 10-11 m; "
+            "trying Hough fallback"
+        )
+        floor = None
+        floor_method = None
+    if floor is None:
+        floor_priors = detector.project_net_floor_x_priors(
+            calib.get("perspective_matrix"), frame_w, frame_h,
+        )
+        floor = detector.detect_floor_line_from_video(
+            video_path=args.video,
+            net_x_left=net_x_left,
+            net_x_right=net_x_right,
+            frame_h=frame_h,
+            frame_w=frame_w,
+            net_tape_top=top * frame_h / 720.0,
+            net_tape_bottom=bot * frame_h / 720.0,
+            floor_x_priors=floor_priors,
+        )
+        floor_method = "hough_post_x_physical_height" if floor else None
+        floor_spacing_m = detector.estimate_post_spacing_m(
+            floor[0], floor[1], calib.get("perspective_matrix"), frame_w, frame_h,
+        ) if floor else None
+
+    # Keep the previous calibration intact until replacement values have all
+    # been computed.
+    save_sam_net_to_calibration(
+        str(calib_path), top, bot, floor, floor_method,
+        net_height_m=args.net_height_m,
+        net_post_spacing_m=floor_spacing_m,
+    )
     print(f"\nSaved to calibration:")
     print(f"  net_tape_top  = {top:.1f} px (720p)")
     print(f"  net_tape_bot  = {bot:.1f} px (720p)")
     print(f"  tape height   = {bot - top:.1f} px (720p)")
+    if floor:
+        print(f"  floor A/B     = {floor[0]} -> {floor[1]} (720p)")
+        print(f"  floor method  = {floor_method}")
+        if floor_spacing_m is not None:
+            print(f"  post spacing  = {floor_spacing_m:.2f} m (expected 10-11 m)")
 
     # --- Optionally open validation page ---
     if args.validate:

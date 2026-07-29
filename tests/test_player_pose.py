@@ -2,7 +2,12 @@ import unittest
 
 import numpy as np
 
-from src.detection.player_pose import CourtPlayerGate, CourtProjector, PlayerPose
+from src.detection.player_pose import (
+    CourtPlayerGate,
+    CourtProjector,
+    PlayerPose,
+    estimate_back_facing_score,
+)
 
 
 class _Projector:
@@ -82,6 +87,56 @@ class TestNetFloorLine(unittest.TestCase):
         self.assertEqual(projector.team_of((100.0, 101.0)), "team_b")
         self.assertEqual(projector.team_of((100.0, 94.0), near_tolerance_px=8.0), "team_b")
         self.assertEqual(projector.team_of((100.0, 91.0), near_tolerance_px=8.0), "team_a")
+
+    def test_back_facing_net_occluder_is_near_team_during_serve_setup(self):
+        homography = np.array([
+            [10.0, 0.0, 100.0],
+            [0.0, 10.0, 100.0],
+            [0.0, 0.0, 1.0],
+        ])
+        projector = CourtProjector(
+            homography,
+            net_floor_line=((40.0, 100.0), (160.0, 100.0)),
+            net_tape_band=(40.0, 160.0, 45.0, 80.0),
+        )
+        gate = CourtPlayerGate(projector)
+        pose = _pose(5, 94.0)
+        pose.bbox = (80.0, 35.0, 130.0, 94.0)
+        pose.keypoints[5] = (115.0, 55.0, 1.0)   # anatomical left on image-right
+        pose.keypoints[6] = (90.0, 55.0, 1.0)
+        pose.keypoints[11] = (112.0, 75.0, 1.0)
+        pose.keypoints[12] = (93.0, 75.0, 1.0)
+        pose.back_facing_score = estimate_back_facing_score(pose)
+
+        kept = gate.filter([pose], serve_setup=True)
+
+        self.assertGreater(pose.back_facing_score, 0.45)
+        self.assertEqual(kept[0].team, "team_b")
+        self.assertEqual(kept[0].team_prior, "serve_back_facing_net_override")
+
+    def test_back_facing_prior_does_not_move_clear_far_player(self):
+        homography = np.array([
+            [10.0, 0.0, 100.0],
+            [0.0, 10.0, 100.0],
+            [0.0, 0.0, 1.0],
+        ])
+        projector = CourtProjector(
+            homography,
+            net_floor_line=((40.0, 100.0), (160.0, 100.0)),
+            net_tape_band=(40.0, 160.0, 45.0, 80.0),
+        )
+        gate = CourtPlayerGate(projector)
+        pose = _pose(6, 65.0)
+        pose.bbox = (80.0, 30.0, 130.0, 80.0)
+        pose.keypoints[5] = (115.0, 50.0, 1.0)
+        pose.keypoints[6] = (90.0, 50.0, 1.0)
+        pose.keypoints[11] = (112.0, 65.0, 1.0)
+        pose.keypoints[12] = (93.0, 65.0, 1.0)
+        pose.back_facing_score = estimate_back_facing_score(pose)
+
+        kept = gate.filter([pose], serve_setup=True)
+
+        self.assertEqual(kept[0].team, "team_a")
 
 
 if __name__ == "__main__":

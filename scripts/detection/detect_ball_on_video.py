@@ -226,19 +226,21 @@ class BallDetectorVideo:
             List of detection lists for each frame
         """
         # Run batch detection for maximum GPU utilization
-        results = self.model(
-            frames,
+        kwargs = dict(
             conf=self.confidence_threshold,
             iou=self.nms_threshold,
             verbose=False,
             device='cuda' if torch.cuda.is_available() else 'cpu',
-            half=True,  # Use FP16 for speed
-            stream=False,  # Disable streaming for batches
-            max_det=100,  # Increase maximum detections
-            augment=False,  # Disable TTA for speed
-            agnostic_nms=False,  # Class-specific NMS
-            retina_masks=False  # Disable masks
+            half=torch.cuda.is_available(),
+            stream=False,
+            max_det=100,
+            augment=False,
+            agnostic_nms=False,
+            retina_masks=False,
         )
+        if self.imgsz:
+            kwargs["imgsz"] = self.imgsz
+        results = self.model(frames, **kwargs)
         
         batch_detections = []
         total_raw_detections = 0
@@ -246,13 +248,14 @@ class BallDetectorVideo:
         
         for i, result in enumerate(results):
             detections = []
-            if result.boxes is not None:
+            if result.boxes is not None and len(result.boxes):
                 total_raw_detections += len(result.boxes)
-                for box in result.boxes:
-                    # Get coordinates and confidence
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    confidence = float(box.conf[0].cpu().numpy())
-
+                # One device-to-host transfer per result instead of two CUDA
+                # synchronizations for every individual box.
+                xyxy = result.boxes.xyxy.detach().cpu().numpy()
+                confidences = result.boxes.conf.detach().cpu().numpy()
+                for (x1, y1, x2, y2), confidence in zip(xyxy, confidences):
+                    confidence = float(confidence)
                     if confidence >= self.confidence_threshold:
                         detections.append((x1, y1, x2, y2, confidence))
                         total_valid_detections += 1
@@ -940,4 +943,4 @@ def main():
 
 
 if __name__ == "__main__":
-    exit(main()) 
+    exit(main())

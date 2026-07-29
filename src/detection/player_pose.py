@@ -67,6 +67,7 @@ class CourtProjector:
         half_width: float = 4.5,
         half_length: float = 9.0,
         net_floor_line: Optional[Tuple[Tuple[float, float], Tuple[float, float]]] = None,
+        net_tape_band: Optional[Tuple[float, float, float, float]] = None,
     ):
         H = np.asarray(world_to_image, dtype=np.float64)
         if H.shape != (3, 3):
@@ -80,6 +81,7 @@ class CourtProjector:
         y_neg = self.world_to_image((0.0, -half_length))[1]
         self._near_sign = 1.0 if y_pos > y_neg else -1.0
         self._net_floor_line = net_floor_line
+        self._net_tape_band = net_tape_band
 
     @property
     def has_net_floor_line(self) -> bool:
@@ -98,6 +100,17 @@ class CourtProjector:
 
     def net_floor_points(self) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
         return self._net_floor_line
+
+    def bbox_occludes_net(self, bbox: Tuple[float, float, float, float]) -> bool:
+        """Whether a player silhouette overlaps the visible net band."""
+        if self._net_tape_band is None:
+            return False
+        net_x1, net_x2, net_top, net_bottom = self._net_tape_band
+        x1, y1, x2, y2 = bbox
+        return (
+            x2 >= net_x1 and x1 <= net_x2
+            and y2 >= net_top and y1 <= net_bottom
+        )
 
     def world_to_image(self, wpt: Tuple[float, float]) -> Tuple[float, float]:
         v = self._H @ np.array([wpt[0], wpt[1], 1.0])
@@ -165,6 +178,8 @@ class PlayerPose:
     bbox: Tuple[float, float, float, float]  # x1, y1, x2, y2
     keypoints: np.ndarray           # (17, 3) float32: x, y, conf
     track_id: Optional[int] = None  # ByteTrack ID (None if tracking unavailable)
+    back_facing_score: Optional[float] = None  # 0..1 face-hidden/back evidence
+    team_prior: Optional[str] = None
 
     @property
     def bbox_h(self) -> float:
@@ -190,6 +205,25 @@ class PlayerPose:
             return (sum(a[0] for a in ankles) / len(ankles),
                     max(a[1] for a in ankles))
         return ((self.bbox[0] + self.bbox[2]) / 2.0, self.bbox[3])
+
+
+def estimate_back_facing_score(pose: PlayerPose) -> Optional[float]:
+    """Estimate back-facing evidence from face-vs-torso keypoint visibility.
+
+    YOLO11's anatomical left/right order is not stable enough to distinguish
+    front from back in real match footage.  A hidden face is a safer signal:
+    compare nose/eye/ear confidence with shoulders and hips.  This remains a
+    soft prior and is only consumed together with net occlusion and geometry.
+    """
+    face_indices = (0, 1, 2, 3, 4)
+    torso_indices = (L_SHOULDER, R_SHOULDER, L_HIP, R_HIP)
+    face_conf = float(np.mean([pose.keypoints[i, 2] for i in face_indices]))
+    torso_conf = float(np.mean([pose.keypoints[i, 2] for i in torso_indices]))
+    if torso_conf < KP_CONF_MIN:
+        return None
+    face_ratio = face_conf / max(torso_conf, 1e-6)
+    nose_ratio = float(pose.keypoints[NOSE, 2]) / max(torso_conf, 1e-6)
+    return float(np.clip(1.0 - 0.7 * face_ratio - 0.3 * nose_ratio, 0.0, 1.0))
 
 
 def extract_player_poses(
@@ -235,6 +269,7 @@ def extract_player_poses(
             keypoints=kp.astype(np.float32),
             track_id=int(tid) if tid is not None else None,
         )
+        pose.back_facing_score = estimate_back_facing_score(pose)
 
         if projector is not None:
             pose.team = projector.team_of(pose.foot_point())
@@ -308,7 +343,11 @@ class CourtPlayerGate:
 
     OCCLUSION_OVERLAP = 0.25  # bbox intersection / smaller-bbox area to count as occluded-by
 
-    def filter(self, poses: List[PlayerPose]) -> List[PlayerPose]:
+    def filter(
+        self,
+        poses: List[PlayerPose],
+        serve_setup: bool = False,
+    ) -> List[PlayerPose]:
         self._frame += 1
         proj = self.projector
 
@@ -371,6 +410,36 @@ class CourtPlayerGate:
                 # still receive enough tolerance for ankle-keypoint noise.
                 tolerance = float(np.clip(pose.bbox_h * 0.06, 5.0, 18.0))
                 pose.team = proj.team_of(pose.foot_point(), near_tolerance_px=tolerance)
+
+                # Soft observed-team prior.  The camera-side team commonly
+                # faces away from the camera and physically occludes the net.
+                # Use this only inside a narrow geometric ambiguity band; it
+                # can recover a near player whose ankles were pulled upward by
+                # net/teammate occlusion, but never move a clear far-side pose.
+                back_score = pose.back_facing_score
+                if (
+                    back_score is not None
+                    and back_score >= 0.45
+                    and proj.bbox_occludes_net(pose.bbox)
+                ):
+                    pose.team_prior = "back_facing_net_occlusion"
+                    foot = pose.foot_point()
+                    floor_y = proj.net_floor_y(foot[0])
+                    ambiguity = float(np.clip(
+                        pose.bbox_h * (0.14 if serve_setup else 0.10),
+                        10.0,
+                        40.0 if serve_setup else 30.0,
+                    ))
+                    if (
+                        floor_y is not None
+                        and pose.team == "team_a"
+                        and foot[1] >= floor_y - ambiguity
+                    ):
+                        pose.team = "team_b"
+                        pose.team_prior = (
+                            "serve_back_facing_net_override"
+                            if serve_setup else "back_facing_net_override"
+                        )
 
         # Sticky team: require repeated, trusted ankle measurements before
         # locking.  A player may enter the video while occluded; their first

@@ -32,6 +32,7 @@ from src.tracking.ball_trajectory_dp import BallTrajectoryDP, interpolate_gaps
 from src.tracking.pose_feature_extractor import POSE_FEATURE_NAMES, PoseFeatureExtractor
 from src.tracking.serve_reception import annotate_rallies
 from src.utils.logger import get_logger
+from src.utils.path_utils import local_path_from_uri
 
 log = get_logger("Analyzer")
 
@@ -80,9 +81,11 @@ class CalibrationData:
     # line lies on the court and can reliably divide the teams.
     net_floor_left: Optional[Tuple[float, float]] = None
     net_floor_right: Optional[Tuple[float, float]] = None
-    # ``sam3_post_mask`` is trusted; older Hough values are automatically
-    # refreshed once by SAM3 before being used as the team divider.
+    # SAM3 post X plus the configured physical net-height geometry is
+    # trusted; older Hough values are refreshed before becoming the divider.
     net_floor_method: Optional[str] = None
+    net_height_m: float = 2.34
+    net_post_spacing_m: Optional[float] = None
     # Homography world (court meters) → image pixels, scaled to current frame.
     # Enables the on-court player filter and court-half team split.
     homography: Optional[List[List[float]]] = None
@@ -165,6 +168,8 @@ class GameAnalyzer:
         refresh_net_floor: bool = False,
         ball_ensemble: bool = False,
         ball_trajectory_dp: bool = True,
+        ball_batch_size: int = 1,
+        net_height_m: float = 2.34,
     ):
         """
         Args:
@@ -179,12 +184,20 @@ class GameAnalyzer:
                        video has been read (see BallTrajectoryDP). The live gate
                        still runs, because the annotated video needs a position
                        while the frame is in hand.
+            ball_batch_size: Batch this many frames for the ball YOLO. Pose
+                       tracking remains sequential so ByteTrack IDs stay valid.
+            net_height_m: Physical net-top height. Mixed games default to
+                       2.34 m; men's games use 2.43 m.
         """
         self.output_video = output_video
         self.skip_frames = skip_frames
         self.net_y_override = net_y_override
         self.ball_ensemble = ball_ensemble
         self.ball_trajectory_dp = ball_trajectory_dp
+        self.ball_batch_size = max(1, int(ball_batch_size))
+        self.net_height_m = float(net_height_m)
+        if not 2.0 <= self.net_height_m <= 2.6:
+            raise ValueError("net_height_m must be between 2.0 and 2.6")
         # Raw per-frame candidates, kept for the global trajectory pass.
         self._ball_candidates: Dict[int, List[BallCandidate]] = {}
 
@@ -259,6 +272,16 @@ class GameAnalyzer:
             if floor_right_720 else None
         )
         net_floor_method = str(sam.get("net_floor_method")) if floor_left_720 and floor_right_720 else None
+        stored_net_height = sam.get("net_height_m")
+        if stored_net_height is None:
+            stored_net_height = (
+                data.get("metadata", {}).get("court_geometry", {}).get("net_height", 2.43)
+            )
+        net_height_m = float(stored_net_height)
+        net_post_spacing_m = (
+            float(sam["net_post_spacing_m"])
+            if sam.get("net_post_spacing_m") is not None else None
+        )
         if net_floor_left and net_floor_right:
             # Calibrations persisted before the floor line was levelled still
             # carry a noise tilt, so re-level on load instead of requiring a
@@ -283,6 +306,8 @@ class GameAnalyzer:
             net_floor_left=net_floor_left,
             net_floor_right=net_floor_right,
             net_floor_method=net_floor_method,
+            net_height_m=net_height_m,
+            net_post_spacing_m=net_post_spacing_m,
             homography=data.get("perspective_matrix"),
         )
 
@@ -326,6 +351,8 @@ class GameAnalyzer:
                 net_floor_right=(c.net_floor_right[0] * sx, c.net_floor_right[1] * sy)
                     if c.net_floor_right else None,
                 net_floor_method=c.net_floor_method,
+                net_height_m=c.net_height_m,
+                net_post_spacing_m=c.net_post_spacing_m,
                 homography=homography_scaled,
             )
         if self.net_y_override is not None:
@@ -339,6 +366,8 @@ class GameAnalyzer:
                 net_tape_top=c.net_tape_top, net_tape_bottom=c.net_tape_bottom,
                 net_floor_left=c.net_floor_left, net_floor_right=c.net_floor_right,
                 net_floor_method=c.net_floor_method,
+                net_height_m=c.net_height_m,
+                net_post_spacing_m=c.net_post_spacing_m,
                 homography=c.homography,
             )
         return c
@@ -354,6 +383,29 @@ class GameAnalyzer:
             log.info(f"Ball ensemble: second opinion from {Path(_BALL_MODEL_2).parent.parent.name} "
                      f"tiled {_BALL_TILE_GRID_2[0]}x{_BALL_TILE_GRID_2[1]}")
         self.ball_gate = BallTrackGate()
+        self._ball_px_scale = 1.0
+
+    # Ball selection is tuned in pixels on 1280-wide footage. Everything that
+    # bounds how far the ball may travel between frames has to grow with the
+    # frame, or 4K input — where the same shot covers three times the pixels —
+    # reads as physically impossible motion and the track is never picked up.
+    _BALL_TUNING_WIDTH = 1280.0
+
+    def _configure_ball_selection_for(self, frame_width: int) -> None:
+        scale = float(frame_width) / self._BALL_TUNING_WIDTH
+        self._ball_px_scale = scale
+        if abs(scale - 1.0) < 1e-6:
+            self.ball_gate = BallTrackGate()
+            return
+        self.ball_gate = BallTrackGate(
+            max_travel_px_per_frame=75.0 * scale,
+            gate_jitter_px=25.0 * scale,
+            gate_max_px=320.0 * scale,
+            acquire_min_travel_px=18.0 * scale,
+            acquire_max_step_px=110.0 * scale,
+            still_eps_px=3.0 * scale,
+        )
+        log.info(f"Ball selection scaled x{scale:.2f} for {frame_width}px-wide frames")
 
     def _init_pose_model(self, model_path: str):
         from ultralytics import YOLO
@@ -452,6 +504,12 @@ class GameAnalyzer:
         made the drawn trajectory jump hundreds of pixels and back.
         """
         candidates = self._ball_candidates_for(frame)
+        return self._select_ball_candidate(candidates, frame_idx)
+
+    def _select_ball_candidate(
+        self, candidates: List[BallCandidate], frame_idx: int,
+    ) -> Tuple[Optional[Tuple[float, float]], float]:
+        """Feed precomputed candidates through the stateful live gate."""
         # The global trajectory pass runs after the video is read, so every
         # candidate has to be kept, not just the one the gate picks now.
         if self.ball_trajectory_dp and candidates:
@@ -462,26 +520,30 @@ class GameAnalyzer:
             return None, 0.0
         return (chosen.x, chosen.y), chosen.confidence
 
+    def _candidates_from_detections(self, detections) -> List[BallCandidate]:
+        return [
+            BallCandidate(
+                x=(x1 + x2) / 2,
+                y=(y1 + y2) / 2,
+                confidence=conf,
+                size=max(x2 - x1, y2 - y1),
+            )
+            for x1, y1, x2, y2, conf in detections
+            if conf >= self.BALL_MIN_CONFIDENCE
+        ]
+
     def _ball_candidates_for(self, frame: np.ndarray) -> List[BallCandidate]:
         """Every plausible ball in this frame, from one or both detectors."""
-        def to_candidates(detections):
-            return [
-                BallCandidate(
-                    x=(x1 + x2) / 2,
-                    y=(y1 + y2) / 2,
-                    confidence=conf,
-                    size=max(x2 - x1, y2 - y1),
-                )
-                for x1, y1, x2, y2, conf in detections
-                if conf >= self.BALL_MIN_CONFIDENCE
-            ]
-
-        candidates = to_candidates(self.ball_detector.detect_ball(frame))
+        candidates = self._candidates_from_detections(
+            self.ball_detector.detect_ball(frame)
+        )
         if self.ball_detector_2 is None:
             return candidates
 
         # Merge the second opinion; the two models often report the same ball.
-        for extra in to_candidates(self.ball_detector_2.detect_ball(frame)):
+        for extra in self._candidates_from_detections(
+            self.ball_detector_2.detect_ball(frame)
+        ):
             if not any(
                 math.hypot(extra.x - c.x, extra.y - c.y) < self.BALL_MERGE_RADIUS
                 for c in candidates
@@ -490,7 +552,9 @@ class GameAnalyzer:
         return candidates
 
     def _detect_players(
-        self, frame: np.ndarray
+        self,
+        frame: np.ndarray,
+        fsm_state: str = "",
     ) -> Tuple[Dict[str, List[Tuple[float, float]]], List[PlayerPose]]:
         """
         YOLO-pose + ByteTrack. Returns:
@@ -544,7 +608,10 @@ class GameAnalyzer:
         if projector is not None:
             if self._court_gate is None or self._court_gate.projector is not projector:
                 self._court_gate = CourtPlayerGate(projector, self.max_players_per_team)
-            poses = self._court_gate.filter(poses)
+            poses = self._court_gate.filter(
+                poses,
+                serve_setup=fsm_state in {"serve_prep", "serve_ready"},
+            )
 
         return poses_to_teams(poses), poses
 
@@ -556,9 +623,20 @@ class GameAnalyzer:
         if self._projector_calib is not c:  # calibration object changed (rescaled)
             try:
                 floor_line = None
+                net_tape_band = None
                 if c.net_floor_left and c.net_floor_right:
                     floor_line = (c.net_floor_left, c.net_floor_right)
-                self._projector = CourtProjector(c.homography, net_floor_line=floor_line)
+                if (
+                    c.net_floor_left and c.net_floor_right
+                    and c.net_tape_top is not None and c.net_tape_bottom is not None
+                ):
+                    x1, x2 = sorted((c.net_floor_left[0], c.net_floor_right[0]))
+                    net_tape_band = (x1, x2, c.net_tape_top, c.net_tape_bottom)
+                self._projector = CourtProjector(
+                    c.homography,
+                    net_floor_line=floor_line,
+                    net_tape_band=net_tape_band,
+                )
             except Exception as e:
                 log.warning(f"Court projector unavailable ({e}) — using x-range player filter")
                 self._projector = None
@@ -581,7 +659,8 @@ class GameAnalyzer:
         c = self.calibration
         if (c is not None and c.net_tape_top is not None
                 and c.net_floor_left is not None and c.net_floor_right is not None
-                and c.net_floor_method == "sam3_post_mask"
+                and c.net_floor_method == "sam3_post_x_physical_height"
+                and abs(c.net_height_m - self.net_height_m) < 1e-6
                 and not refresh_floor):
             log.info(f"Net tape already calibrated: top={c.net_tape_top:.0f}px "
                      f"bottom={c.net_tape_bottom:.0f}px (calibration px)")
@@ -595,7 +674,7 @@ class GameAnalyzer:
             net_x_left = c.net_x_left if c else 0.0
             net_x_right = c.net_x_right if c else frame_w
 
-            detector = NetDetector()
+            detector = NetDetector(net_height_m=self.net_height_m)
             if c is not None and c.net_tape_top is not None and c.net_tape_bottom is not None:
                 top = c.net_tape_top * 720.0 / c.frame_height
                 bot = c.net_tape_bottom * 720.0 / c.frame_height
@@ -617,9 +696,29 @@ class GameAnalyzer:
             floor_720 = detector.detect_floor_line_sam3(
                 video_path=video_path,
                 calibration_path=str(self._calibration_path) if self._calibration_path else "",
+                net_tape_top=top,
+                net_tape_bottom=bot,
             )
-            floor_method = "sam3_post_mask" if floor_720 else None
+            floor_method = "sam3_post_x_physical_height" if floor_720 else None
+            floor_spacing_m = None
+            if floor_720 is not None and c is not None:
+                floor_spacing_m = detector.estimate_post_spacing_m(
+                    floor_720[0], floor_720[1], c.homography,
+                    c.frame_width, c.frame_height,
+                )
+                if not detector.post_spacing_is_plausible(floor_spacing_m):
+                    log.warning(
+                        f"SAM3 post spacing {floor_spacing_m:.2f} m is outside "
+                        "the expected 10-11 m; trying Hough fallback"
+                    )
+                    floor_720 = None
+                    floor_method = None
             if floor_720 is None:
+                floor_x_priors = detector.project_net_floor_x_priors(
+                    c.homography if c else None,
+                    c.frame_width if c else frame_w,
+                    c.frame_height if c else frame_h,
+                )
                 floor_720 = detector.detect_floor_line_from_video(
                     video_path=video_path,
                     net_x_left=net_x_left,
@@ -627,8 +726,22 @@ class GameAnalyzer:
                     frame_h=c.frame_height if c else frame_h,
                     frame_w=c.frame_width if c else frame_w,
                     net_tape_top=top * (c.frame_height if c else frame_h) / 720.0,
+                    net_tape_bottom=bot * (c.frame_height if c else frame_h) / 720.0,
+                    floor_x_priors=floor_x_priors,
                 )
-                floor_method = "hough_post_base" if floor_720 else None
+                floor_method = "hough_post_x_physical_height" if floor_720 else None
+                if floor_720 is not None and c is not None:
+                    floor_spacing_m = detector.estimate_post_spacing_m(
+                        floor_720[0], floor_720[1], c.homography,
+                        c.frame_width, c.frame_height,
+                    )
+                    if not detector.post_spacing_is_plausible(floor_spacing_m):
+                        log.warning(
+                            f"Hough post spacing {floor_spacing_m:.2f} m is outside "
+                            "the expected 10-11 m; keep it only as a low-confidence fallback"
+                        )
+            if floor_spacing_m is not None:
+                log.info(f"Net post spacing: {floor_spacing_m:.2f} m (expected 10-11 m)")
 
             if c is not None:
                 sam_sy = c.frame_height / 720.0
@@ -643,12 +756,16 @@ class GameAnalyzer:
                     net_floor_right=(floor_720[1][0] * c.frame_width / 1280.0,
                                      floor_720[1][1] * sam_sy) if floor_720 else c.net_floor_right,
                     net_floor_method=floor_method or c.net_floor_method,
+                    net_height_m=self.net_height_m,
+                    net_post_spacing_m=floor_spacing_m,
                     homography=c.homography,
                 )
             # Persist original 720p values for future runs
             if self._calibration_path and self._calibration_path.exists():
                 save_sam_net_to_calibration(
                     str(self._calibration_path), top, bot, floor_720, floor_method,
+                    net_height_m=self.net_height_m,
+                    net_post_spacing_m=floor_spacing_m,
                 )
 
         except Exception as exc:
@@ -735,6 +852,12 @@ class GameAnalyzer:
                 draw_skeleton(out, pose, st["color"],
                               bone_thickness=st["bone"], kp_radius=st["kp"],
                               draw_id=st["draw_id"])
+                if pose.team_prior:
+                    x1, y1 = int(pose.bbox[0]), int(pose.bbox[1])
+                    cv2.putText(
+                        out, "BACK/NET prior", (x1, max(20, y1 - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 255), 2,
+                    )
         else:
             colors = {"team_a": (255, 80, 0), "team_b": (0, 80, 255)}
             for team, pts in player_teams.items():
@@ -800,8 +923,51 @@ class GameAnalyzer:
         _last_rally_display_frame: int = -_STICKY_FRAMES
 
         t0 = time.time()
+        batch_enabled = self.ball_batch_size > 1 and self.ball_detector_2 is None
+        if batch_enabled:
+            log.info(f"Ball YOLO batch size: {self.ball_batch_size}")
 
-        for frame_idx, frame in frame_iter:
+        def frame_chunks():
+            chunk = []
+            for item in frame_iter:
+                chunk.append(item)
+                if len(chunk) >= self.ball_batch_size:
+                    yield chunk
+                    chunk = []
+            if chunk:
+                yield chunk
+
+        def frames_with_ball_candidates():
+            nonlocal batch_enabled
+            for frame_chunk in frame_chunks():
+                batched_candidates: Dict[int, List[BallCandidate]] = {}
+                if batch_enabled:
+                    processable = [
+                        (idx, frame)
+                        for idx, frame in frame_chunk
+                        if self.skip_frames <= 0
+                        or idx % (self.skip_frames + 1) == 0
+                    ]
+                    if len(processable) > 1:
+                        try:
+                            detections = self.ball_detector.detect_ball_batch(
+                                [frame for _, frame in processable]
+                            )
+                            batched_candidates = {
+                                idx: self._candidates_from_detections(frame_detections)
+                                for (idx, _), frame_detections
+                                in zip(processable, detections)
+                            }
+                        except Exception as exc:
+                            log.warning(
+                                f"Ball batch inference unavailable ({exc}); "
+                                "falling back to per-frame inference"
+                            )
+                            batch_enabled = False
+                for frame_idx, frame in frame_chunk:
+                    yield frame_idx, frame, batched_candidates.get(frame_idx)
+
+        for frame_idx, frame, candidates in frames_with_ball_candidates():
             stats.total_frames += 1
 
             # Frame skipping
@@ -814,7 +980,12 @@ class GameAnalyzer:
             timestamp = frame_idx / fps
 
             # --- Detect ---
-            ball_pos, ball_conf = self._detect_ball(frame, frame_idx)
+            if candidates is None:
+                ball_pos, ball_conf = self._detect_ball(frame, frame_idx)
+            else:
+                ball_pos, ball_conf = self._select_ball_candidate(
+                    candidates, frame_idx,
+                )
             if ball_pos:
                 stats.ball_detected_frames += 1
                 frames_since_ball = 0
@@ -829,7 +1000,10 @@ class GameAnalyzer:
                 fsm._end_rally(frame_idx, "no_ball_timeout")
                 frames_since_ball = 0
 
-            player_teams, player_poses = self._detect_players(frame)
+            player_teams, player_poses = self._detect_players(
+                frame,
+                fsm_state=cur_state_pre,
+            )
 
             # Pose-derived features (keypoints + ball) — saved per frame for the
             # event model dataset and viewer. Reference for "wrist above net":
@@ -953,6 +1127,11 @@ class GameAnalyzer:
                         "bb": [round(v, 1) for v in p.bbox],
                         "kp": [[round(float(x), 1), round(float(y), 1), round(float(c), 2)]
                                for x, y, c in p.keypoints],
+                        "back": (
+                            round(float(p.back_facing_score), 2)
+                            if p.back_facing_score is not None else None
+                        ),
+                        "team_prior": p.team_prior,
                     }
                     for p in player_poses
                 ],
@@ -1058,7 +1237,7 @@ class GameAnalyzer:
         if not self._ball_candidates:
             return False
 
-        solver = BallTrajectoryDP()
+        solver = BallTrajectoryDP(px_scale=self._ball_px_scale)
         chosen = interpolate_gaps(solver.solve(self._ball_candidates), max_gap=4)
 
         before = sum(1 for a in stats.frame_annotations if a.get("ball"))
@@ -1277,7 +1456,7 @@ class GameAnalyzer:
         max_duration_sec: Optional[float] = None,
     ) -> GameStats:
         """Process a video file."""
-        vp = Path(video_path)
+        vp = local_path_from_uri(video_path)
         od = Path(output_dir)
         od.mkdir(parents=True, exist_ok=True)
 
@@ -1302,6 +1481,7 @@ class GameAnalyzer:
         # Scale calibration to actual frame resolution (e.g., 4K calib on 720p video)
         saved_calib = self.calibration
         self.calibration = self._scale_calibration(w, h)
+        self._configure_ball_selection_for(w)
 
         out_writer = None
         if self.output_video:
@@ -1402,6 +1582,12 @@ class GameAnalyzer:
 
         # Save compact per-frame annotations separately (for HTML viewer overlay)
         ann_path = output_dir / f"{stem}_annotations.json"
+        team_prior_counts: Dict[str, int] = {}
+        for frame_ann in stats.frame_annotations:
+            for pose in frame_ann.get("poses") or []:
+                prior = pose.get("team_prior")
+                if prior:
+                    team_prior_counts[prior] = team_prior_counts.get(prior, 0) + 1
         ann_data = {
             "fps": stats.fps,
             "video": stats.video_name,
@@ -1416,6 +1602,9 @@ class GameAnalyzer:
             "net_floor_left": list(calib.net_floor_left) if calib and calib.net_floor_left else None,
             "net_floor_right": list(calib.net_floor_right) if calib and calib.net_floor_right else None,
             "net_floor_method": calib.net_floor_method if calib else None,
+            "net_height_m": calib.net_height_m if calib else self.net_height_m,
+            "net_post_spacing_m": calib.net_post_spacing_m if calib else None,
+            "team_divider_prior_counts": team_prior_counts,
             "pose_feature_names": POSE_FEATURE_NAMES,
             "attack_heatmap": stats.attack_heatmap,
             "frames": stats.frame_annotations,
