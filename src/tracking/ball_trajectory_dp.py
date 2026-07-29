@@ -64,6 +64,10 @@ class BallTrajectoryDP:
         # Longest gap an edge may span. Beyond this the velocity estimate is
         # worthless and the timeline is cut instead.
         max_gap_frames: int = 10,
+        # A hypothesis may be selected across a longer detector gap, but after
+        # five frames its velocity is no longer safe to display or feed into
+        # contact logic as one continuous flight.
+        max_continuity_gap_frames: int = 5,
         # Hard limit on candidate-to-candidate speed, px per frame. 90 px/frame
         # at 30 fps is above any real spike at 720p match framing.
         max_step_px: float = 90.0,
@@ -100,6 +104,7 @@ class BallTrajectoryDP:
         px_scale: float = 1.0,
     ):
         self.max_gap_frames = max_gap_frames
+        self.max_continuity_gap_frames = max_continuity_gap_frames
         self.max_step_px = max_step_px * px_scale
         # Deviation is measured in pixels, so anything weighed against it is a
         # pixel quantity too and scales with the frame.
@@ -112,6 +117,10 @@ class BallTrajectoryDP:
         self.chunk_overlap_frames = chunk_overlap_frames
 
         self.stats = {"frames_with_candidates": 0, "frames_chosen": 0, "segments": 0}
+        # Frames that begin a physically disconnected hypothesis.  The solver
+        # may restart after an occlusion or false-positive run; downstream code
+        # must not interpret that transition as the ball crossing the image.
+        self.track_start_frames: set[int] = set()
 
     # ------------------------------------------------------------------
 
@@ -121,6 +130,7 @@ class BallTrajectoryDP:
         """Pick at most one candidate per frame. Returns {frame: candidate}."""
         frames = sorted(f for f, c in candidates.items() if c)
         self.stats = {"frames_with_candidates": len(frames), "frames_chosen": 0, "segments": 0}
+        self.track_start_frames = set()
         if not frames:
             return {}
 
@@ -136,6 +146,19 @@ class BallTrajectoryDP:
                 chosen[cand.frame] = BallCandidate(
                     x=cand.x, y=cand.y, confidence=cand.confidence, size=cand.size
                 )
+        chosen_frames = sorted(chosen)
+        if chosen_frames:
+            self.track_start_frames.add(chosen_frames[0])
+        for previous_frame, current_frame in zip(chosen_frames, chosen_frames[1:]):
+            dt = current_frame - previous_frame
+            previous = chosen[previous_frame]
+            current = chosen[current_frame]
+            distance = math.dist((previous.x, previous.y), (current.x, current.y))
+            if (
+                dt > self.max_continuity_gap_frames
+                or distance > self.max_step_px * dt
+            ):
+                self.track_start_frames.add(current_frame)
         self.stats["frames_chosen"] = len(chosen)
         return chosen
 
@@ -246,7 +269,9 @@ class BallTrajectoryDP:
 
 
 def interpolate_gaps(
-    chosen: Mapping[int, BallCandidate], max_gap: int = 4
+    chosen: Mapping[int, BallCandidate],
+    max_gap: int = 4,
+    max_step_px: Optional[float] = None,
 ) -> Dict[int, BallCandidate]:
     """Fill short gaps on a straight line between chosen points.
 
@@ -262,6 +287,13 @@ def interpolate_gaps(
         if not 1 < span <= max_gap + 1:
             continue
         ca, cb = chosen[a], chosen[b]
+        if (
+            max_step_px is not None
+            and math.dist((ca.x, ca.y), (cb.x, cb.y)) > max_step_px * span
+        ):
+            # A solver restart is a new hypothesis, not missing samples along
+            # one flight.  Never synthesize a straight line across it.
+            continue
         for step in range(1, span):
             t = step / span
             out[a + step] = BallCandidate(

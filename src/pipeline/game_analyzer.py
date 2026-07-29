@@ -1211,13 +1211,18 @@ class GameAnalyzer:
                      f"{sr_counts['failed']} failed, "
                      f"{sr_counts['no_reception']} no reception (ace/fault)")
 
-        # Heatmap intentionally uses the cleaned trajectory and never the FSM:
-        # any sharp, high-speed trajectory turn is a hit candidate even if a
-        # rally was not recognized.
+        # Count only confirmed attacks. Generic trajectory turns also include
+        # passes, digs and detector restarts, which create a noisy "heatmap"
+        # unrelated to the requested attack-origin statistic.
         stats.attack_heatmap = AttackHeatmap(fps).analyze(
-            stats.frame_annotations, projector=self._get_projector(),
+            stats.frame_annotations,
+            projector=self._get_projector(),
+            events=stats.all_events,
         )
-        log.info(f"Attack heatmap: {stats.attack_heatmap['total_hits']} trajectory-turn hits")
+        log.info(
+            f"Attack zones: {stats.attack_heatmap['total_attacks']} "
+            "confirmed attacks across left/center/right"
+        )
 
         return stats
 
@@ -1226,8 +1231,9 @@ class GameAnalyzer:
 
         Rewrites ``ball`` on every annotation, so everything downstream — the
         FSM re-run, the heatmap, the viewer — reads the same trajectory.
-        ``ball_new`` is dropped: it marked a gate re-acquisition, and the solver
-        does not re-acquire, it chooses once.
+        ``ball_new`` is rebuilt from physically disconnected solver segments.
+        A restart is a change of hypothesis, not a ball flight, so the FSM,
+        heatmap and Viewer must not measure or draw across it.
 
         Returns whether the trajectory was actually replaced. A run with no
         candidates at all (an empty clip, or every frame below the confidence
@@ -1238,22 +1244,30 @@ class GameAnalyzer:
             return False
 
         solver = BallTrajectoryDP(px_scale=self._ball_px_scale)
-        chosen = interpolate_gaps(solver.solve(self._ball_candidates), max_gap=4)
+        solved = solver.solve(self._ball_candidates)
+        chosen = interpolate_gaps(
+            solved, max_gap=4, max_step_px=solver.max_step_px,
+        )
 
         before = sum(1 for a in stats.frame_annotations if a.get("ball"))
         for ann in stats.frame_annotations:
             cand = chosen.get(ann["f"])
             ann["ball"] = [round(cand.x, 1), round(cand.y, 1)] if cand else None
-            ann["ball_new"] = None
-            if cand is not None and cand.confidence == 0.0:
-                ann["ball_interp"] = True
+            ann["ball_new"] = (
+                True if cand is not None and ann["f"] in solver.track_start_frames
+                else None
+            )
+            ann["ball_interp"] = (
+                True if cand is not None and cand.confidence == 0.0 else None
+            )
         after = sum(1 for a in stats.frame_annotations if a.get("ball"))
 
         stats.ball_detected_frames = after
         log.info(
             f"Trajectory solver: {after} frames with a ball (gate had {before}), "
             f"from {solver.stats['frames_with_candidates']} frames with candidates "
-            f"in {solver.stats['segments']} segments"
+            f"in {solver.stats['segments']} segments / "
+            f"{len(solver.track_start_frames)} physical tracks"
         )
         self._ball_candidates.clear()
         return True

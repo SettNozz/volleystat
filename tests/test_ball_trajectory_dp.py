@@ -94,6 +94,39 @@ def test_interpolation_fills_short_gaps_only():
     assert 10 not in filled, "a 17-frame hole is not interpolated"
 
 
+def test_restart_across_image_is_marked_and_never_interpolated():
+    candidates = {
+        **flight(n=5, x0=50.0, vx=20.0, start=0),
+        **flight(n=5, x0=1000.0, vx=20.0, start=7),
+    }
+    # Zero restart cost guarantees that both internally smooth hypotheses are
+    # retained, exposing the discontinuity this regression targets.
+    solver = BallTrajectoryDP(max_step_px=90.0, restart_penalty=0.0)
+
+    chosen = solver.solve(candidates)
+    filled = interpolate_gaps(
+        chosen, max_gap=4, max_step_px=solver.max_step_px,
+    )
+
+    assert 7 in solver.track_start_frames
+    assert 5 not in filled and 6 not in filled
+
+
+def test_long_detector_gap_starts_new_track_even_at_plausible_average_speed():
+    candidates = {
+        **flight(n=5, x0=50.0, vx=20.0, start=0),
+        **flight(n=5, x0=700.0, vx=20.0, start=14),
+    }
+    solver = BallTrajectoryDP(
+        max_step_px=90.0, restart_penalty=0.0,
+    )
+
+    chosen = solver.solve(candidates)
+
+    assert 14 in chosen
+    assert 14 in solver.track_start_frames
+
+
 def test_empty_input():
     assert BallTrajectoryDP().solve({}) == {}
     assert BallTrajectoryDP().solve({5: []}) == {}

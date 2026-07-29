@@ -217,7 +217,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
         <label class="toggle"><input type="checkbox" id="togState" checked onchange="redraw()"> FSM State</label>
         <label class="toggle"><input type="checkbox" id="togModel" checked onchange="redraw()"> Model</label>
         <label class="toggle"><input type="checkbox" id="togEvents" checked onchange="redraw()"> Events</label>
-        <label class="toggle"><input type="checkbox" id="togAttackHeatmap" onchange="redraw()"> Hit heatmap</label>
+        <label class="toggle"><input type="checkbox" id="togAttackHeatmap" onchange="redraw()"> Attack zones</label>
       </div>
       <div class="divider"></div>
       <details>
@@ -243,8 +243,8 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
       </div>
       <div id="attackHeatmapPanel" style="display:none;">
         <div class="divider"></div>
-        <div class="card-title">Trajectory hit heatmap <span id="attackHeatmapTotal" style="color:var(--primary)"></span></div>
-        <div id="attackHeatmapZones" style="display:grid;grid-template-columns:1fr 1fr;gap:5px;"></div>
+        <div class="card-title">Attack origins <span id="attackHeatmapTotal" style="color:var(--primary)"></span></div>
+        <div id="attackHeatmapZones" style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px;"></div>
       </div>
     </div>
 
@@ -801,20 +801,34 @@ function updateNetX() {
   redraw();
 }
 
+function attackZoneCounts(heatmap) {
+  const counts = {left: 0, center: 0, right: 0};
+  for (const zone of ((heatmap && heatmap.zones) || [])) {
+    const id = String(zone.id || '').toLowerCase();
+    if (id === 'left' || id.endsWith('_left')) counts.left += zone.count || 0;
+    else if (id === 'center' || id === 'middle' || id.endsWith('_middle')) counts.center += zone.count || 0;
+    else if (id === 'right' || id.endsWith('_right')) counts.right += zone.count || 0;
+  }
+  return counts;
+}
+
 function renderAttackHeatmapSummary(heatmap) {
-  if (!heatmap || !heatmap.total_hits) return;
+  if (!heatmap) return;
   document.getElementById('attackHeatmapPanel').style.display = 'block';
-  document.getElementById('attackHeatmapTotal').textContent = heatmap.total_hits;
+  const counts = attackZoneCounts(heatmap);
+  const total = heatmap.total_attacks != null
+    ? heatmap.total_attacks : counts.left + counts.center + counts.right;
+  document.getElementById('attackHeatmapTotal').textContent = total;
   const zones = document.getElementById('attackHeatmapZones');
   zones.innerHTML = '';
-  for (const zone of (heatmap.zones || [])) {
+  for (const id of ['left', 'center', 'right']) {
     const item = document.createElement('div');
     item.style.cssText = 'background:var(--head-bg);border-radius:5px;padding:5px 8px;font-size:11.5px;display:flex;justify-content:space-between;gap:6px;';
     const name = document.createElement('span');
-    name.textContent = zone.id.replaceAll('_', ' ');
+    name.textContent = id;
     name.style.color = 'var(--muted)';
     const count = document.createElement('strong');
-    count.textContent = zone.count;
+    count.textContent = counts[id];
     count.style.color = 'var(--primary)';
     item.append(name, count);
     zones.appendChild(item);
@@ -1107,17 +1121,28 @@ function redraw() {
       }
     }
 
-    const GAP_BREAK = 15;
+    // The offline pipeline interpolates at most four missing frames (a span
+    // of five). Longer reacquisitions are separate hypotheses and drawing a
+    // chord between them creates the full-image jumps seen on 4K footage.
+    const GAP_BREAK = 5;
+    // Same physical speed ceiling as the offline DP (90 px/frame at 1280p).
+    // This display-side guard also protects old annotation files that did not
+    // preserve solver restart markers.
+    const MAX_TRAIL_STEP = 90 * (vw / 1280);
     if (showTrail && trailPos.length > 0 && ann.ball) {
       const pts = [...trailPos].reverse();
-      pts.push({ x: ann.ball[0], y: ann.ball[1], age: 0 });
+      pts.push({ x: ann.ball[0], y: ann.ball[1], age: 0,
+                 newTrack: !!ann.ball_new });
 
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       for (let i = 1; i < pts.length; i++) {
         const p0 = pts[i - 1];
         const p1 = pts[i];
-        if (p0.age - p1.age > GAP_BREAK) continue;
+        const frameGap = p0.age - p1.age;
+        const step = Math.hypot(p1.x - p0.x, p1.y - p0.y) /
+          Math.max(frameGap, 1);
+        if (frameGap > GAP_BREAK || p1.newTrack || step > MAX_TRAIL_STEP) continue;
         const frac  = 1 - p1.age / TRAIL_FRAMES;
         const alpha = Math.pow(frac, 1.1) * 0.9;
         ctx.strokeStyle = `rgba(0, 255, 68, ${alpha})`;
@@ -1152,24 +1177,47 @@ function redraw() {
   }
 
   if (showAttackHeatmap && window._annData && window._annData.attack_heatmap) {
-    const hits = window._annData.attack_heatmap.hits || [];
-    const radius = Math.max(18, 48 * Math.min(sx, sy));
-    for (const hit of hits) {
-      const x = px(hit.x), y = py(hit.y);
-      const strength = Math.max(0.25, hit.confidence || 0.5);
-      const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-      gradient.addColorStop(0, `rgba(255, 70, 0, ${0.58 * strength})`);
-      gradient.addColorStop(0.45, `rgba(255, 180, 0, ${0.24 * strength})`);
-      gradient.addColorStop(1, 'rgba(255, 80, 0, 0)');
-      ctx.fillStyle = gradient;
+    const d = window._annData;
+    const counts = attackZoneCounts(d.attack_heatmap);
+    let floorLeft = d.net_floor_left || [d.net_x_left, d.net_y];
+    let floorRight = d.net_floor_right || [d.net_x_right, d.net_y];
+    if (floorLeft[0] > floorRight[0]) [floorLeft, floorRight] = [floorRight, floorLeft];
+    const topY = d.net_tape_top != null ? d.net_tape_top : d.net_y;
+    const ids = ['left', 'center', 'right'];
+    const maxCount = Math.max(1, ...ids.map(id => counts[id]));
+
+    for (let index = 0; index < 3; index++) {
+      const t0 = index / 3;
+      const t1 = (index + 1) / 3;
+      const x0 = floorLeft[0] + (floorRight[0] - floorLeft[0]) * t0;
+      const x1 = floorLeft[0] + (floorRight[0] - floorLeft[0]) * t1;
+      const floorY0 = floorLeft[1] + (floorRight[1] - floorLeft[1]) * t0;
+      const floorY1 = floorLeft[1] + (floorRight[1] - floorLeft[1]) * t1;
+      const count = counts[ids[index]];
+      const alpha = count ? 0.12 + 0.38 * count / maxCount : 0.035;
+
+      ctx.fillStyle = `rgba(255, 125, 0, ${alpha})`;
+      ctx.strokeStyle = count ? 'rgba(255, 175, 45, 0.9)' : 'rgba(255, 175, 45, 0.22)';
+      ctx.lineWidth = count ? 2 : 1;
       ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.moveTo(px(x0), py(topY));
+      ctx.lineTo(px(x1), py(topY));
+      ctx.lineTo(px(x1), py(floorY1));
+      ctx.lineTo(px(x0), py(floorY0));
+      ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = 'rgba(255,235,140,0.95)';
-      ctx.beginPath();
-      ctx.arc(x, y, 3, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255,245,220,0.95)';
+      ctx.font = '700 11px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(
+        `${ids[index].toUpperCase()} · ${count}`,
+        px((x0 + x1) / 2),
+        py(topY) + 16,
+      );
     }
+    ctx.textAlign = 'left';
   }
 
   if (showPlayers) {

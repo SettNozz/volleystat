@@ -17,6 +17,18 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertIn("57s 4K video takes ~3 min 30s", page)
         self.assertIn("Every frame + batch 8", page)
 
+    def test_results_template_guards_jumps_and_draws_three_attack_zones(self):
+        template = (
+            Path(viewer.app.template_folder) / "viewer.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("step > MAX_TRAIL_STEP", template)
+        self.assertIn("const GAP_BREAK = 5", template)
+        self.assertIn("p1.newTrack", template)
+        self.assertIn("Attack origins", template)
+        self.assertIn("const ids = ['left', 'center', 'right']", template)
+        self.assertNotIn("createRadialGradient", template)
+
     def test_upload_request_queues_full_quality_workflow(self):
         captured = {}
 
