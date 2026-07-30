@@ -89,6 +89,9 @@ class CalibrationData:
     # Homography world (court meters) → image pixels, scaled to current frame.
     # Enables the on-court player filter and court-half team split.
     homography: Optional[List[List[float]]] = None
+    # Full court outline in image pixels:
+    # front-left, front-right, back-right, back-left.
+    court_corners: Optional[List[Tuple[float, float]]] = None
 
 
 @dataclass
@@ -282,12 +285,39 @@ class GameAnalyzer:
             float(sam["net_post_spacing_m"])
             if sam.get("net_post_spacing_m") is not None else None
         )
+        raw_corners = data.get("court_corners")
+        court_corners = (
+            [(float(point[0]), float(point[1])) for point in raw_corners]
+            if raw_corners and len(raw_corners) == 4 else None
+        )
         if net_floor_left and net_floor_right:
             # Calibrations persisted before the floor line was levelled still
             # carry a noise tilt, so re-level on load instead of requiring a
             # fresh detection run.
-            from src.detection.net_detector import level_floor_line
+            from src.detection.net_detector import (
+                anchor_net_top_to_calibration,
+                infer_net_bottom_y_from_floor,
+                level_floor_line,
+            )
             net_floor_left, net_floor_right = level_floor_line(net_floor_left, net_floor_right)
+            if net_tape_top is not None:
+                anchored_top = anchor_net_top_to_calibration(
+                    net_tape_top,
+                    net_y,
+                    net_height_hint=60.0 * sam_sy,
+                )
+                if anchored_top != net_tape_top:
+                    log.warning(
+                        f"Stored SAM net top {net_tape_top:.0f}px is inconsistent "
+                        f"with the calibrated tape {net_y:.0f}px; repairing it"
+                    )
+                net_tape_top = anchored_top
+                floor_y = (net_floor_left[1] + net_floor_right[1]) / 2.0
+                net_tape_bottom = infer_net_bottom_y_from_floor(
+                    net_tape_top,
+                    floor_y,
+                    net_height_m,
+                )
 
         return CalibrationData(
             net_y=net_y,
@@ -309,6 +339,7 @@ class GameAnalyzer:
             net_height_m=net_height_m,
             net_post_spacing_m=net_post_spacing_m,
             homography=data.get("perspective_matrix"),
+            court_corners=court_corners,
         )
 
     def _scale_calibration(self, actual_w: int, actual_h: int) -> "CalibrationData":
@@ -354,6 +385,10 @@ class GameAnalyzer:
                 net_height_m=c.net_height_m,
                 net_post_spacing_m=c.net_post_spacing_m,
                 homography=homography_scaled,
+                court_corners=[
+                    (point[0] * sx, point[1] * sy)
+                    for point in c.court_corners
+                ] if c.court_corners else None,
             )
         if self.net_y_override is not None:
             log.info(f"net_y override: {c.net_y:.1f} -> {self.net_y_override}")
@@ -369,6 +404,7 @@ class GameAnalyzer:
                 net_height_m=c.net_height_m,
                 net_post_spacing_m=c.net_post_spacing_m,
                 homography=c.homography,
+                court_corners=c.court_corners,
             )
         return c
 
@@ -668,7 +704,11 @@ class GameAnalyzer:
 
         log.info("Net tape not in calibration — running SAM net segmentation on first 5 s …")
         try:
-            from src.detection.net_detector import NetDetector, save_sam_net_to_calibration
+            from src.detection.net_detector import (
+                NetDetector,
+                infer_net_bottom_y_from_floor,
+                save_sam_net_to_calibration,
+            )
 
             net_y = c.net_y if c else frame_h * 0.5
             net_x_left = c.net_x_left if c else 0.0
@@ -743,6 +783,19 @@ class GameAnalyzer:
             if floor_spacing_m is not None:
                 log.info(f"Net post spacing: {floor_spacing_m:.2f} m (expected 10-11 m)")
 
+            if floor_720 is not None:
+                floor_y_720 = (floor_720[0][1] + floor_720[1][1]) / 2.0
+                physics_bot = infer_net_bottom_y_from_floor(
+                    top,
+                    floor_y_720,
+                    self.net_height_m,
+                )
+                log.info(
+                    f"Net mesh bottom from physical proportions: {bot:.1f}px -> "
+                    f"{physics_bot:.1f}px (1.00m / {self.net_height_m:.2f}m)"
+                )
+                bot = physics_bot
+
             if c is not None:
                 sam_sy = c.frame_height / 720.0
                 self.calibration = CalibrationData(
@@ -759,6 +812,7 @@ class GameAnalyzer:
                     net_height_m=self.net_height_m,
                     net_post_spacing_m=floor_spacing_m,
                     homography=c.homography,
+                    court_corners=c.court_corners,
                 )
             # Persist original 720p values for future runs
             if self._calibration_path and self._calibration_path.exists():
@@ -1618,6 +1672,9 @@ class GameAnalyzer:
             "net_floor_method": calib.net_floor_method if calib else None,
             "net_height_m": calib.net_height_m if calib else self.net_height_m,
             "net_post_spacing_m": calib.net_post_spacing_m if calib else None,
+            "court_corners": [
+                list(point) for point in calib.court_corners
+            ] if calib and calib.court_corners else None,
             "team_divider_prior_counts": team_prior_counts,
             "pose_feature_names": POSE_FEATURE_NAMES,
             "attack_heatmap": stats.attack_heatmap,

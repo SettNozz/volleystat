@@ -186,6 +186,10 @@ class InteractiveCourtCalibration:
                 if key == 13:  # ENTER - next stage
                     if self._can_proceed_to_next_stage():
                         self._proceed_to_next_stage()
+                        if self.current_stage == CalibrationStage.COMPLETED:
+                            # Leave the GUI loop immediately. Final calculations
+                            # run below after the OpenCV window is cleaned up.
+                            break
                     else:
                         print(f"⚠️  Потрібно відмітити мінімум {self._get_required_points()} точок")
                         
@@ -304,7 +308,7 @@ class InteractiveCourtCalibration:
         
         if self.current_stage == CalibrationStage.COMPLETED:
             print("\n🎉 Всі етапи калібровки завершено!")
-            print("   Розраховую перспективну трансформацію...")
+            print("   Закриваю вікно та розраховую перспективну трансформацію...")
     
     def _show_current_stage_info(self) -> None:
         """Show information about current calibration stage"""
@@ -852,4 +856,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

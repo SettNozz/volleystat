@@ -55,6 +55,45 @@ def infer_floor_y_from_net_bounds(
     return float(net_tape_bottom) + mesh_px * (bottom_height_m / _NET_MESH_HEIGHT_M)
 
 
+def infer_net_bottom_y_from_floor(
+    net_tape_top: float,
+    floor_y: float,
+    net_top_height_m: float = _DEFAULT_NET_TOP_HEIGHT_M,
+) -> float:
+    """Place the lower mesh edge using the known 1 m / net-height ratio.
+
+    ``net_tape_top`` and ``floor_y`` are two points on the same vertical post,
+    so their pixel separation represents the full physical net height.  The
+    visible mesh is exactly 1.00 m high; mixed games use 2.34 m and men's games
+    2.43 m.  The result remains in the input pixel coordinate system.
+    """
+    top = float(net_tape_top)
+    floor = float(floor_y)
+    height_m = float(net_top_height_m)
+    if floor <= top:
+        raise ValueError("floor_y must be below net_tape_top")
+    if height_m <= _NET_MESH_HEIGHT_M:
+        raise ValueError("net_top_height_m must exceed the 1.00 m mesh height")
+    return top + (floor - top) * (_NET_MESH_HEIGHT_M / height_m)
+
+
+def anchor_net_top_to_calibration(
+    detected_top: float,
+    calibrated_top: float,
+    net_height_hint: float = 60.0,
+) -> float:
+    """Reject a SAM top edge that is too far from the calibrated top tape.
+
+    Large bright wall panels can form a wider SAM mask than the white net tape.
+    Manual court calibration explicitly marks that tape, so it is the stronger
+    reference when the two disagree.  Small SAM refinements are retained.
+    """
+    tolerance = max(8.0, float(net_height_hint) * 0.25)
+    detected = float(detected_top)
+    calibrated = float(calibrated_top)
+    return calibrated if abs(detected - calibrated) > tolerance else detected
+
+
 def level_floor_line(
     left: Tuple[float, float],
     right: Tuple[float, float],
@@ -540,9 +579,19 @@ class NetDetector:
             multimask_output=True,
         )
         top_mask = self._pick_widest(masks_t, scores_t, net_width_720)
-        top_y = self._contiguous_top(top_mask, int(top_pt[1]))
-        if top_y is None:
+        detected_top_y = self._contiguous_top(top_mask, int(top_pt[1]))
+        if detected_top_y is None:
             return None, None
+        top_y = anchor_net_top_to_calibration(
+            detected_top_y,
+            net_y_720,
+            net_height_hint,
+        )
+        if top_y != float(detected_top_y):
+            log.debug(
+                f"Rejected SAM top {detected_top_y:.1f}px; "
+                f"using calibrated tape {net_y_720:.1f}px"
+            )
 
         # --- Hough: bottom tape ---
         bot_y = self._hough_net_bottom(frame_bgr, top_y, net_height_hint)

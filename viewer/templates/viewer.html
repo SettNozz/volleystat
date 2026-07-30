@@ -218,6 +218,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
         <label class="toggle"><input type="checkbox" id="togModel" checked onchange="redraw()"> Model</label>
         <label class="toggle"><input type="checkbox" id="togEvents" checked onchange="redraw()"> Events</label>
         <label class="toggle"><input type="checkbox" id="togAttackHeatmap" onchange="redraw()"> Attack zones</label>
+        <label class="toggle"><input type="checkbox" id="togCourt" checked onchange="redraw()"> Court</label>
       </div>
       <div class="divider"></div>
       <details>
@@ -1039,6 +1040,24 @@ function redraw() {
   const showModel   = document.getElementById('togModel').checked;
   const showEvents  = document.getElementById('togEvents').checked;
   const showAttackHeatmap = document.getElementById('togAttackHeatmap').checked;
+  const showCourt   = document.getElementById('togCourt').checked;
+
+  if (showCourt && window._annData) {
+    const corners = window._annData.court_corners;
+    if (Array.isArray(corners) && corners.length === 4) {
+      ctx.strokeStyle = 'rgba(0, 255, 170, 0.95)';
+      ctx.fillStyle = 'rgba(0, 255, 170, 0.035)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(px(corners[0][0]), py(corners[0][1]));
+      for (let i = 1; i < corners.length; i++) {
+        ctx.lineTo(px(corners[i][0]), py(corners[i][1]));
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
 
   if (showNet && window._annData) {
     const d = window._annData;

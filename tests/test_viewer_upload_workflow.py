@@ -27,6 +27,8 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertIn("p1.newTrack", template)
         self.assertIn("Attack origins", template)
         self.assertIn("const ids = ['left', 'center', 'right']", template)
+        self.assertIn('id="togCourt"', template)
+        self.assertIn("window._annData.court_corners", template)
         self.assertNotIn("createRadialGradient", template)
 
     def test_upload_request_queues_full_quality_workflow(self):

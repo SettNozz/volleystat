@@ -3,7 +3,12 @@ import unittest
 import cv2
 import numpy as np
 
-from src.detection.net_detector import NetDetector, infer_floor_y_from_net_bounds
+from src.detection.net_detector import (
+    NetDetector,
+    anchor_net_top_to_calibration,
+    infer_floor_y_from_net_bounds,
+    infer_net_bottom_y_from_floor,
+)
 
 
 class TestNetPostFallback(unittest.TestCase):
@@ -17,6 +22,32 @@ class TestNetPostFallback(unittest.TestCase):
             infer_floor_y_from_net_bounds(279.0, 331.0, net_top_height_m=2.43),
             405.36,
             places=2,
+        )
+
+    def test_mesh_bottom_uses_mixed_net_proportions(self):
+        self.assertAlmostEqual(
+            infer_net_bottom_y_from_floor(276.0, 380.84),
+            320.80,
+            places=2,
+        )
+        self.assertAlmostEqual(
+            infer_net_bottom_y_from_floor(
+                276.0,
+                380.84,
+                net_top_height_m=2.43,
+            ),
+            319.14,
+            places=2,
+        )
+
+    def test_sam_top_is_anchored_when_wall_mask_wins(self):
+        self.assertEqual(
+            anchor_net_top_to_calibration(203.0, 276.0, net_height_hint=60.0),
+            276.0,
+        )
+        self.assertEqual(
+            anchor_net_top_to_calibration(271.0, 276.0, net_height_hint=60.0),
+            271.0,
         )
 
     def test_homography_projects_net_floor_priors_to_720p(self):
