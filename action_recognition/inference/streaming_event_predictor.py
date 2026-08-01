@@ -5,7 +5,8 @@ API (used by GameAnalyzer):
     predictor = StreamingEventPredictor(checkpoint_path)
     label = predictor.add_frame(ball_pos, player_teams, net_y, fps,
                                 fsm_state="rally_active",
-                                pose_features=[...])   # optional, 8 values
+                                pose_features=[...],   # optional, 8 values
+                                frame_size=(width, height))
 
 Keeps the last SEQUENCE_LEN frames of features, runs the model every
 INFER_EVERY frames, smooths by mode over the last SMOOTH_WINDOW predictions,
@@ -27,7 +28,39 @@ if str(_ROOT) not in sys.path:
 from action_recognition.event_clips.config import (
     EVENT_TYPES, NUM_FEATURES, NUM_POSE_FEATURES, NUM_TRAJ_FEATURES, SEQUENCE_LEN,
 )
+from action_recognition.event_clips.feature_schema import (
+    LEGACY_PIXEL_SCHEMA,
+    apply_checkpoint_feature_contract,
+    build_trajectory_features,
+    validate_feature_schema,
+)
 from action_recognition.models.sequence_event_model import load_checkpoint
+
+
+def gate_event_probabilities(
+    probabilities: np.ndarray,
+    event_types: List[str],
+    fsm_state: str,
+) -> np.ndarray:
+    """Condition predictions on the volleyball phase and renormalize them."""
+    probs = np.asarray(probabilities, dtype=np.float32).copy()
+    allowed_by_state = {
+        "serving": {"serve", "reception"},
+        "rally_active": {"pass", "attack"},
+        "serve_prep": set(),
+        "serve_ready": set(),
+        "rally_end": set(),
+    }
+    allowed = allowed_by_state.get(fsm_state)
+    if allowed is None:
+        return probs
+    for index, label in enumerate(event_types):
+        if label not in allowed:
+            probs[index] = 0.0
+    total = float(probs.sum())
+    if total > 0.0:
+        probs /= total
+    return probs
 
 
 class StreamingEventPredictor:
@@ -38,6 +71,8 @@ class StreamingEventPredictor:
     def __init__(self, checkpoint_path):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model, ckpt = load_checkpoint(checkpoint_path, self.device)
+        self.event_types = list(ckpt["event_types"])
+        self.sequence_len = int(ckpt.get("sequence_len", SEQUENCE_LEN))
         if ckpt.get("model_type") == "dual":
             raise ValueError("Dual-stream checkpoints need video features — "
                              "use an lstm/transformer checkpoint for streaming")
@@ -48,18 +83,23 @@ class StreamingEventPredictor:
             if ckpt.get("feature_mean") else None
         self._std = np.asarray(ckpt["feature_std"], dtype=np.float32) \
             if ckpt.get("feature_std") else None
+        self._active_mask = ckpt.get("feature_active_mask")
+        self.feature_schema = validate_feature_schema(
+            ckpt.get("feature_schema", LEGACY_PIXEL_SCHEMA)
+        )
 
-        self._buf: deque = deque(maxlen=SEQUENCE_LEN)
+        self._buf: deque = deque(maxlen=self.sequence_len)
         self._recent: deque = deque(maxlen=self.SMOOTH_WINDOW)
         self._frame_count = 0
         self._prev_ball: Optional[Tuple[float, float]] = None
-        self._last_ball: Optional[Tuple[float, float]] = None
+        self._last_fsm_state = ""
 
     def reset(self):
         self._buf.clear()
         self._recent.clear()
         self._frame_count = 0
-        self._prev_ball = self._last_ball = None
+        self._prev_ball = None
+        self._last_fsm_state = ""
 
     # ------------------------------------------------------------------
 
@@ -71,66 +111,63 @@ class StreamingEventPredictor:
         fps: float,
         fsm_state: str = "",
         pose_features: Optional[List[float]] = None,
+        frame_size: Optional[Tuple[float, float]] = None,
     ) -> Optional[str]:
-        ball = ball_pos or self._last_ball
+        sequence_len = int(
+            getattr(self, "sequence_len", self._buf.maxlen or SEQUENCE_LEN)
+        )
+        ball = ball_pos
         bx, by = ball if ball else (0.0, 0.0)
 
-        if ball and self._prev_ball:
-            dx, dy = bx - self._prev_ball[0], by - self._prev_ball[1]
-            speed = float(np.hypot(dx, dy)) * fps
-            direction = float(np.arctan2(dy, dx))
-            vy = dy * fps
-        else:
-            speed = direction = vy = 0.0
-
         players = (player_teams.get("team_a", []) + player_teams.get("team_b", []))
-        if players and ball:
-            player_dist = min(float(np.hypot(bx - px, by - py)) for px, py in players)
-        else:
-            player_dist = 0.0
 
         feats = np.zeros(NUM_FEATURES, dtype=np.float32)
-        feats[:NUM_TRAJ_FEATURES] = [
-            bx, by, speed, direction,
-            abs(by - net_y) if ball else 0.0,
-            player_dist,
-            0.0 if by < net_y else 1.0,
+        feats[:NUM_TRAJ_FEATURES] = build_trajectory_features(
+            ball,
+            self._prev_ball,
+            players,
+            net_y,
+            fps,
             0.0,                                   # frame_norm — set per window below
-            vy,
-            1.0 if (ball and by < net_y) else 0.0,
-        ]
+            self.feature_schema,
+            frame_size,
+        )
         if pose_features and len(pose_features) == NUM_POSE_FEATURES:
             feats[NUM_TRAJ_FEATURES:] = pose_features
 
         self._buf.append(feats)
         if ball:
             self._prev_ball = (bx, by)
-            self._last_ball = (bx, by)
+        else:
+            self._prev_ball = None
         self._frame_count += 1
 
-        if len(self._buf) < SEQUENCE_LEN // 2:
+        if fsm_state != self._last_fsm_state:
+            self._recent.clear()
+            self._last_fsm_state = fsm_state
+
+        if len(self._buf) < sequence_len // 2:
             return None
         if self._frame_count % self.INFER_EVERY != 0:
             return self._smoothed()
 
         x = np.stack(self._buf)
-        if x.shape[0] < SEQUENCE_LEN:                     # left-pad zeros
-            pad = np.zeros((SEQUENCE_LEN - x.shape[0], NUM_FEATURES), np.float32)
+        if x.shape[0] < sequence_len:                     # left-pad zeros
+            pad = np.zeros((sequence_len - x.shape[0], NUM_FEATURES), np.float32)
             x = np.concatenate([pad, x], axis=0)
-        x[:, 7] = np.linspace(0.0, 1.0, SEQUENCE_LEN)     # frame_norm in window
-        if self._mean is not None:
-            x = (x - self._mean) / self._std
+        x[:, 7] = np.linspace(0.0, 1.0, sequence_len)     # frame_norm in window
+        x = apply_checkpoint_feature_contract(
+            x, self._mean, self._std, self._active_mask,
+        )
 
         with torch.no_grad():
             logits = self.model(torch.from_numpy(x[None]).to(self.device))
             probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
 
-        # Exclude impossible classes given FSM state
-        if fsm_state == "rally_active":
-            probs[EVENT_TYPES.index("serve")] = 0.0
+        probs = gate_event_probabilities(probs, self.event_types, fsm_state)
 
         k = int(np.argmax(probs))
-        label = EVENT_TYPES[k]
+        label = self.event_types[k]
         if probs[k] < self.MIN_CONFIDENCE or label == "other":
             self._recent.append(None)
         else:

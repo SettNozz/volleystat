@@ -154,8 +154,13 @@ class GameAnalyzer:
         stats = analyzer.process_frames("data/frames/", output_dir="results/")
     """
 
-    # Default event model for overlay (LSTM v4 — best macro_f1=0.377, 1211 clips)
-    _DEFAULT_EVENT_CHECKPOINT = "action_recognition/models/checkpoints_lstm_v4/best_event_sequence.pt"
+    # Four-class causal multi-scale production fit over three full-video gold
+    # datasets. Loading stays fail-safe: if the local weight is absent, the
+    # event overlay is disabled.
+    _DEFAULT_EVENT_CHECKPOINT: Optional[str] = (
+        "action_recognition/models/experiments_three_full_gold_multiscale_v2/"
+        "multiscale_final_three_videos_seed42/final_event_sequence.pt"
+    )
 
     def __init__(
         self,
@@ -1132,6 +1137,10 @@ class GameAnalyzer:
                     ball_pos, player_teams, self.calibration.net_y, fps,
                     fsm_state=cur_state or "",   # let predictor exclude impossible classes
                     pose_features=pose_features,  # 8 pose channels (new checkpoints)
+                    frame_size=(
+                        self.calibration.frame_width,
+                        self.calibration.frame_height,
+                    ),
                 )
                 # Gate: only pass prediction through when FSM says ball is in play
                 if raw_display is not None and cur_state in _LSTM_ACTIVE_STATES:

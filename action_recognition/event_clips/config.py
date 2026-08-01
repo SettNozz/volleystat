@@ -28,47 +28,56 @@ if str(_ROOT) not in sys.path:
 
 from src.tracking.pose_feature_extractor import POSE_FEATURE_NAMES  # noqa: E402
 
-# Single-label taxonomy v3 (order defines the class index).
-# What the user cares about: подача / прийом / пас / удар / інше.
-EVENT_TYPES = ["serve", "reception", "pass", "attack", "other"]
+# Core single-label taxonomy v4 (order defines the class index).
+# Raw ``other`` annotations remain available, but are not a model class.
+EVENT_TYPES = ["serve", "reception", "pass", "attack"]
+LEGACY_EVENT_TYPES = EVENT_TYPES + ["other"]
 NUM_CLASSES = len(EVENT_TYPES)
 
-# Legacy (v1 multi-label, 6 classes) -> v3 collapse.
+# Legacy/raw labels -> v4 core-action collapse.
 # dig = defensive first touch in rally -> pass; block = net action -> attack.
-LEGACY_TO_V3 = {
+LEGACY_TO_V4 = {
     "serve": "serve",
     "reception": "reception",
     "pass": "pass",
+    "set": "pass",
     "dig": "pass",
     "attack": "attack",
     "block": "attack",
-    "other": "other",
+    "free_ball": None,
+    "other": None,
 }
+LEGACY_TO_V3 = LEGACY_TO_V4
 
 # When an old multi-label set collapses to several classes, prefer the label
 # of the clip's final contact (fsm hint), else this priority.
-_PRIORITY = ["attack", "serve", "reception", "pass", "other"]
+_PRIORITY = ["attack", "serve", "reception", "pass"]
 
 
-def collapse_labels(event_types, fsm_event_type=None) -> str:
-    """Old multi-label list (+ optional FSM hint) -> single v3 label."""
-    mapped = {LEGACY_TO_V3.get(l) for l in (event_types or []) if LEGACY_TO_V3.get(l)}
+def collapse_labels(event_types, fsm_event_type=None):
+    """Old labels -> one core v4 label, or ``None`` for non-core contacts."""
+    mapped = {LEGACY_TO_V4.get(l) for l in (event_types or []) if LEGACY_TO_V4.get(l)}
     if not mapped:
-        return "other"
+        return None
     if len(mapped) == 1:
         return next(iter(mapped))
-    fsm_mapped = LEGACY_TO_V3.get(fsm_event_type or "")
+    fsm_mapped = LEGACY_TO_V4.get(fsm_event_type or "")
     if fsm_mapped in mapped:
         return fsm_mapped
     for label in _PRIORITY:
         if label in mapped:
             return label
-    return "other"
+    return None
 
 
 def label_index(event_types, fsm_event_type=None) -> int:
     """Class index for training (CrossEntropy target)."""
-    return EVENT_TYPES.index(collapse_labels(event_types, fsm_event_type))
+    label = collapse_labels(event_types, fsm_event_type)
+    if label is None:
+        raise ValueError(
+            "No core action label (serve/reception/pass/attack) for this clip"
+        )
+    return EVENT_TYPES.index(label)
 
 TRAJ_FEATURE_NAMES = [
     "ball_x", "ball_y", "ball_speed", "ball_dir", "ball_net_dist",
@@ -89,7 +98,9 @@ VIDEO_FEATURE_FRAMES = 16
 VIDEO_FEATURE_DIM = 576
 
 def labels_to_vector(event_types, fsm_event_type=None):
-    """One-hot vector (NUM_CLASSES,) of the collapsed single label."""
+    """One-hot core-action vector; non-core contacts produce all zeros."""
     vec = [0.0] * NUM_CLASSES
-    vec[label_index(event_types, fsm_event_type)] = 1.0
+    label = collapse_labels(event_types, fsm_event_type)
+    if label is not None:
+        vec[EVENT_TYPES.index(label)] = 1.0
     return vec
