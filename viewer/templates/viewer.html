@@ -1317,6 +1317,21 @@ function redraw() {
     stateY += 28;
   }
 
+  if (showModel && ann.spotting_model) {
+    ctx.font = `bold ${Math.max(13, Math.round(20 * sx))}px system-ui`;
+    ctx.fillStyle = ann.spotting_peak ? '#ff4dd2' : '#f58adf';
+    ctx.shadowColor = '#000';
+    ctx.shadowBlur = 6;
+    const spottingScore = Number(ann.spotting_confidence || 0).toFixed(2);
+    ctx.fillText(
+      'Spotting: ' + String(ann.spotting_model).replace(/_/g, ' ') +
+      ' (' + spottingScore + ')',
+      px(20), py(stateY),
+    );
+    ctx.shadowBlur = 0;
+    stateY += 28;
+  }
+
   if (showEvents) {
     const FADE_SEC = 2.5;
     const t = vid.currentTime;
