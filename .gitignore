@@ -108,3 +108,25 @@ mlflow.db
 mlflow.db-journal
 mlartifacts/
 models/_registry_cache/
+
+# ---------------------------------------------------------------------------
+# Vendored, generated and scratch trees. None of these are sources: they are
+# either downloaded, rebuilt from the code, or one-off review material, and
+# together they are ~220 MB that would otherwise live in the history forever.
+# ---------------------------------------------------------------------------
+
+# Vendored SAM3 checkout (133 MB). Clone it next to the repo instead:
+#   git clone https://github.com/facebookresearch/sam3 third_party/sam3
+third_party/
+
+# Knowledge graph output — rebuilt from the code with `graphify update .`
+graphify-out/
+
+# Scratch and run-time state
+.runtime/
+.runs/
+temp_review/
+screenshots/
+*.zip
+Volleystat_Showcase.html
+.graphify_python
