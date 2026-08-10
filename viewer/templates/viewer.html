@@ -58,6 +58,7 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 .video-shell { position: relative; border-radius: 14px; overflow: hidden; background: oklch(20% 0.02 260); aspect-ratio: 16/9; flex-shrink: 0; }
 video { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 canvas#overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+canvas#overlay.court-editing { pointer-events: auto; cursor: crosshair; }
 .video-badge { position: absolute; bottom: 14px; left: 14px; padding: 5px 10px; border-radius: 6px; background: oklch(0% 0 0 / 0.55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
 
 .controls { padding: 14px 16px; }
@@ -109,12 +110,23 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 /* ── Charts page ─────────────────────────────────────── */
 #page-charts { flex-direction: column; gap: 18px; padding: 20px 28px; overflow: auto; }
 .charts-filterbar { padding: 16px 18px; display: flex; flex-wrap: wrap; gap: 22px; align-items: center; }
-.charts-grid { display: grid; grid-template-columns: 300px 1fr 300px; gap: 18px; flex: 1; min-height: 0; }
+.charts-grid { display: grid; grid-template-columns: 300px minmax(360px, 1fr) 300px; gap: 18px; flex: 1; min-height: 0; }
+/* Below this the attack court is squeezed to a strip and its arrows stop
+   being readable, so the columns stack instead. Stacked, the columns are no
+   longer stretched by the grid row, so they need their own height. */
+@media (max-width: 1180px) {
+  .charts-grid { grid-template-columns: 1fr; }
+  .charts-grid .chart-col { min-height: 520px; }
+}
 .chart-col { display: flex; flex-direction: column; gap: 18px; min-height: 0; }
 .chart-card { padding: 14px; flex: 1; display: flex; flex-direction: column; min-height: 220px; }
 .court-panel { position: relative; flex: 1; min-height: 180px; border-radius: 8px; background: var(--court); overflow: hidden; }
 .court-netline { position: absolute; left: 0; right: 0; height: 1px; background: var(--court-line); }
 .court-dot { position: absolute; width: 9px; height: 9px; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 0 2px #fff; }
+/* A full court is 9 m by 18 m, so the drawing is twice as tall as it is
+   wide; a short panel would shrink it to a strip in the middle. */
+.attack-map { min-height: 560px; background: linear-gradient(180deg, #f8fbff, #edf3ff); }
+.court-edit-hint { margin-top: 7px; font-size: 11px; line-height: 1.35; color: var(--muted); }
 .mini-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .mini-table thead td { padding: 6px 0; font-weight: 700; color: var(--muted); }
 .mini-table tbody td { padding: 7px 0; border-top: 1px solid var(--border-soft); font-weight: 600; }
@@ -159,7 +171,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
     <div class="nav-item" data-page="charts" onclick="showPage('charts')">Visual Stats</div>
     <div class="nav-item" data-page="table" onclick="showPage('table')">Match Stats</div>
   </div>
-  <div class="top-meta">{{ job.video_stem }} · {{ stats.total_rallies }} rallies · {{ (stats.ball_detection_rate * 100) | round(0) | int }}% ball</div>
+  <div class="top-meta">{{ job.video_stem }} · {{ stats.viewer_lifecycle.playable_rallies }} {% if stats.viewer_lifecycle.available %}playable {% endif %}rallies · {{ (stats.ball_detection_rate * 100) | round(0) | int }}% ball</div>
   <a class="upload-btn" href="/">Upload</a>
 </div>
 
@@ -169,9 +181,9 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
     <div class="video-shell">
       <video id="vid" preload="auto">
         {% if job.original_video_path_url %}
-        <source src="/api/original_video?path={{ job.original_video_path_url }}" type="video/mp4">
+        <source src="/api/original_video?path={{ job.original_video_path_url }}">
         {% else %}
-        <source src="/api/video/{{ job.job_id }}" type="video/mp4">
+        <source src="/api/video/{{ job.job_id }}">
         {% endif %}
       </video>
       <canvas id="overlay"></canvas>
@@ -220,12 +232,38 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
         <label class="toggle"><input type="checkbox" id="togAttackHeatmap" onchange="redraw()"> Attack zones</label>
         <label class="toggle"><input type="checkbox" id="togCourt" checked onchange="redraw()"> Court</label>
       </div>
+      <div class="cal-row" style="margin-top:8px">ball path
+        <select id="ballPathMode" class="ctrl" style="padding:3px 6px;max-width:160px" onchange="redraw()">
+          <option value="active">Active output</option>
+          <option value="raw">Raw detector/DP</option>
+          <option value="conservative">Conservative</option>
+          <option value="contact_aware">Contact-aware</option>
+        </select>
+      </div>
       <div class="divider"></div>
       <details>
         <summary style="font-size:12.5px;font-weight:700;color:var(--muted2);cursor:pointer;">Calibration &amp; sync</summary>
         <div class="cal-row">net_y <input type="range" id="netYSlider" min="50" max="900" step="1" oninput="updateNetY(this.value)"> <span class="cal-val" id="netYVal"></span></div>
         <div class="cal-row">xL <input type="range" id="netXLSlider" min="0" max="1920" step="1" oninput="updateNetX()"> <span class="cal-val" id="netXLVal"></span></div>
         <div class="cal-row">xR <input type="range" id="netXRSlider" min="0" max="1920" step="1" oninput="updateNetX()"> <span class="cal-val" id="netXRVal"></span></div>
+        <div class="cal-row">setup
+          <select id="courtSetupSelect" class="ctrl" style="padding:2px 6px;max-width:150px" onchange="applyCourtSetup(this.value)">
+            <option value="">— this game only —</option>
+          </select>
+        </div>
+        <div class="cal-row">
+          <button class="ctrl" style="padding:2px 9px" onclick="toggleCourtEdit()" id="courtEditBtn">Edit court</button>
+          <button class="ctrl" style="padding:2px 9px" onclick="toggleCourtEditMode()" id="courtModeBtn" disabled>Editing: lines</button>
+        </div>
+        <div class="cal-row">
+          <button class="ctrl" style="padding:2px 9px" onclick="saveCourtCorrection()" id="courtSaveBtn" disabled>Save</button>
+          <button class="ctrl" style="padding:2px 9px" onclick="resetCourtCorrection()" id="courtResetBtn" disabled>Reset</button>
+        </div>
+        <div class="cal-row">
+          <button class="ctrl" style="padding:2px 9px" onclick="saveCourtSetup()" id="courtSetupSaveBtn" disabled>Save as setup…</button>
+          <button class="ctrl" style="padding:2px 9px" onclick="deleteCourtSetup()" id="courtSetupDeleteBtn" disabled>Delete setup</button>
+        </div>
+        <div class="court-edit-hint" id="courtEditHint">Drag the four corners onto the court. Dashed guides show the centre line and both 3 m attack lines — align those, the far baseline is usually hidden.</div>
         <div class="cal-row">sync
           <button class="ctrl" style="padding:2px 9px" onclick="changeSyncOffset(-1)">−</button>
           <span class="cal-val" id="syncOffsetVal">0</span>
@@ -237,11 +275,23 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
     <div class="card side-card">
       <div class="card-title">Statistics</div>
       <div class="stat-grid">
-        <div class="stat-box"><div class="val">{{ stats.total_rallies }}</div><div class="lbl">Rallies</div></div>
+        <div class="stat-box"><div class="val">{{ stats.viewer_lifecycle.playable_rallies }}</div><div class="lbl">{% if stats.viewer_lifecycle.available %}Playable rallies{% else %}Rallies (legacy){% endif %}</div></div>
         <div class="stat-box"><div class="val">{{ (stats.ball_detection_rate * 100) | round(0) | int }}%</div><div class="lbl">Ball detected</div></div>
         <div class="stat-box"><div class="val">{{ stats.all_events | length }}</div><div class="lbl">Contact events</div></div>
         <div class="stat-box"><div class="val">{{ stats.processing_time_sec | round(0) | int }}s</div><div class="lbl">Proc. time</div></div>
       </div>
+      {% if stats.viewer_lifecycle.available %}
+      <div class="divider"></div>
+      <div class="card-title">Serve lifecycle</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="val">{{ stats.viewer_lifecycle.service_attempts }}</div><div class="lbl">Service attempts</div></div>
+        <div class="stat-box"><div class="val">{{ stats.viewer_lifecycle.confirmed_serves }}</div><div class="lbl">Confirmed serves</div></div>
+        <div class="stat-box"><div class="val">{{ stats.viewer_lifecycle.aces_no_reception }}</div><div class="lbl">Aces / no reception</div></div>
+        <div class="stat-box"><div class="val">{{ stats.viewer_lifecycle.reception_failed }}</div><div class="lbl">Reception failed</div></div>
+        <div class="stat-box"><div class="val">{{ stats.viewer_lifecycle.serve_faults }}</div><div class="lbl">Serve faults</div></div>
+        <div class="stat-box"><div class="val">{{ stats.viewer_lifecycle.playable_rallies }}</div><div class="lbl">Playable rallies</div></div>
+      </div>
+      {% endif %}
       <div id="attackHeatmapPanel" style="display:none;">
         <div class="divider"></div>
         <div class="card-title">Attack origins <span id="attackHeatmapTotal" style="color:var(--primary)"></span></div>
@@ -284,9 +334,9 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
       </div>
     </div>
 
-    <div class="card chart-card" style="min-height:420px;">
-      <div class="card-title">Attacking</div>
-      <div class="court-panel" id="attackMap"></div>
+    <div class="card chart-card" style="min-height:600px;">
+      <div class="card-title">Attacking — origin and direction</div>
+      <div class="court-panel attack-map" id="attackMap"></div>
     </div>
 
     <div class="chart-col">
@@ -298,7 +348,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
         </table>
       </div>
       <div class="card" style="padding:16px;">
-        <div class="card-title">Serve → Reception</div>
+        <div class="card-title">{% if stats.viewer_lifecycle.available %}Serve lifecycle{% else %}Serve → Reception{% endif %}</div>
         <table class="mini-table">
           <thead><tr><td>Outcome</td><td class="num">Count</td><td class="num">%</td></tr></thead>
           <tbody id="srTable"></tbody>
@@ -327,6 +377,9 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 
   <div class="tab-row">
     <div class="tab on" id="tabStats" onclick="setTableTab('stats')">Rallies</div>
+    {% if stats.viewer_lifecycle.available %}
+    <div class="tab" id="tabAttempts" onclick="setTableTab('attempts')">Service attempts</div>
+    {% endif %}
     <div class="tab" id="tabScoring" onclick="setTableTab('scoring')">Contact log</div>
   </div>
 
@@ -350,6 +403,20 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
     </table>
   </div>
 
+  {% if stats.viewer_lifecycle.available %}
+  <div class="card big-table-wrap" id="attemptsTabPanel" style="display:none;">
+    <table class="big-table" style="width:100%;">
+      <thead>
+        <tr>
+          <td>#</td><td>Serve</td><td>Serving team</td><td>Status</td>
+          <td>Confirmed</td><td>Net crossing</td><td>Reception</td><td>Follow-up</td>
+        </tr>
+      </thead>
+      <tbody id="attemptsTableBody"></tbody>
+    </table>
+  </div>
+  {% endif %}
+
   <div class="card big-table-wrap" id="scoringTabPanel" style="display:none;">
     <table class="big-table" style="width:100%;">
       <thead>
@@ -367,7 +434,37 @@ const JOB_ID = "{{ job.job_id }}";
 const FPS = {{ stats.fps | default(30) }};
 const TOTAL_FRAMES = {{ stats.total_frames }};
 const EVENTS = {{ stats.all_events | tojson }};
-const RALLIES = {{ stats.rallies | tojson }};
+const RAW_RALLIES = {{ stats.rallies | tojson }};
+const SERVICE_ATTEMPTS = {{ stats.service_attempts | tojson }};
+const LIFECYCLE = {{ stats.viewer_lifecycle | tojson }};
+
+function isPlayableRally(r) {
+  const lc = r && r.lifecycle;
+  if (!lc) return !LIFECYCLE.available;
+  return lc.status === 'playable_rally' && lc.is_playable === true;
+}
+
+function lifecycleFrame(item, key, fallback = null) {
+  const lc = (item && item.lifecycle) || {};
+  const value = lc[key];
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function rallyStartFrame(r) {
+  return lifecycleFrame(r, 'start_frame', r.start_frame);
+}
+
+function isSuccessfulOutcome(outcome) {
+  return outcome === 'success' || outcome === 'playable_rally';
+}
+
+function isFailedOutcome(outcome) {
+  return outcome === 'failed' || outcome === 'reception_failed' || outcome === 'serve_fault';
+}
+
+// Canonical results are metadata-gated. Legacy results retain their original
+// behaviour because they have no lifecycle classification to consume.
+const RALLIES = RAW_RALLIES.filter(isPlayableRally);
 
 const EV_COLORS = {
   serve: '#eab308', attack: '#ef4444', block: '#f97316',
@@ -380,6 +477,13 @@ const GREEN = 'oklch(62% 0.15 150)', RED = 'oklch(60% 0.18 25)', INK = 'oklch(30
 const vid = document.getElementById('vid');
 const canvas = document.getElementById('overlay');
 const ctx = canvas.getContext('2d');
+const courtEditor = {
+  active: false, dragIndex: null, originalCorners: null,
+  setups: [], setupId: null,
+  // Lines, not corners, is the default: on a wide lens the corners are often
+  // off-frame while every line is visible.
+  mode: 'lines', anchors: null, drag: null,
+};
 
 let annotations = null;
 let currentFrameIdx = 0;
@@ -462,10 +566,10 @@ function renderRallyClips() {
   RALLIES.forEach((r, i) => {
     const sr = r.serve_reception || {};
     const outcome = sr.outcome || '—';
-    const outColor = outcome === 'success' ? GREEN : (outcome === 'failed' ? RED : 'var(--muted)');
+    const outColor = isSuccessfulOutcome(outcome) ? GREEN : (isFailedOutcome(outcome) ? RED : 'var(--muted)');
     const el = document.createElement('div');
     el.className = 'clip-card';
-    el.onclick = () => seekAndPlay(r.start_frame);
+    el.onclick = () => seekAndPlay(rallyStartFrame(r));
     const widthPct = Math.min(100, (r.duration_sec / 15) * 100);
     el.innerHTML =
       `<div class="clip-thumb"><div class="bar" style="width:${widthPct}%"></div></div>` +
@@ -594,9 +698,149 @@ function renderCharts(force) {
   const vis = EVENTS.filter(chartEvVisible);
   renderCourtMap('serveMap', vis.filter(e => e.type === 'serve'), { colorByOutcome: true });
   renderCourtMap('receptionMap', vis.filter(e => ['reception', 'reception_pass', 'dig'].includes(e.type)), { colorByOutcome: true });
-  renderCourtMap('attackMap', vis.filter(e => ['attack', 'block'].includes(e.type)), { colorByTeam: true, approachLines: true });
+  renderAttackVectorMap('attackMap', vis.filter(e => e.type === 'attack'));
   renderContactsTable(vis);
   renderSRTable();
+}
+
+/* Attack map geometry: the attacking half is mirrored ABOVE the net, so the
+   three orange origin zones sit at the top and every shot arrow crosses the
+   net downwards into the defending half. */
+const MAP = {
+  left: 12, right: 88, netY: 50, topY: 8, bottomY: 92,
+  get width() { return this.right - this.left; },
+  x(courtX) {
+    const clamped = Math.max(-COURT_HALF_W, Math.min(COURT_HALF_W, Number(courtX) || 0));
+    return 50 + clamped / COURT_HALF_W * (this.width / 2);
+  },
+  y(depth) {
+    const value = Number(depth) || 0;
+    const span = value >= 0 ? this.netY - this.topY : this.bottomY - this.netY;
+    const clamped = Math.max(-COURT_HALF_L, Math.min(COURT_HALF_L, value));
+    return this.netY - clamped / COURT_HALF_L * span;
+  },
+};
+
+function renderAttackVectorMap(panelId, attackEvents) {
+  const panel = document.getElementById(panelId);
+  panel.innerHTML = '';
+  const heatmap = (window._annData && window._annData.attack_heatmap) || {};
+  const allowedFrames = new Set(attackEvents.map(e => e.frame));
+  const hits = (heatmap.hits || []).filter(h => allowedFrames.has(h.frame));
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 100 100');
+  // Angles carry the meaning here — a stretched court would turn a line shot
+  // into something that reads as a diagonal.
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  svg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%';
+  const add = (tag, attrs = {}, parent = svg) => {
+    const node = document.createElementNS(NS, tag);
+    Object.entries(attrs).forEach(([key, value]) => node.setAttribute(key, value));
+    parent.appendChild(node);
+    return node;
+  };
+  const label = (text, x, y, fill, size = 3, anchor = 'middle') => {
+    const t = add('text', {x, y, fill, 'font-size': size, 'font-family': 'Inter, sans-serif', 'font-weight': 700, 'text-anchor': anchor});
+    t.textContent = text;
+    return t;
+  };
+
+  const attackLineY = MAP.y(COURT_ATTACK_LINE);
+  add('rect', {x: MAP.left, y: MAP.topY, width: MAP.width, height: MAP.bottomY - MAP.topY, rx: 2, fill: '#f7fbff', stroke: '#94a3b8', 'stroke-width': .55});
+  for (let i = 0; i < 3; i++) {
+    const x = MAP.left + i * (MAP.width / 3);
+    add('rect', {x, y: MAP.topY, width: MAP.width / 3, height: MAP.netY - MAP.topY, fill: 'rgba(245, 158, 11, 0.13)', stroke: 'rgba(245, 158, 11, 0.55)', 'stroke-width': .35});
+    label(['LEFT', 'CENTER', 'RIGHT'][i], x + MAP.width / 6, MAP.topY + 4, '#a16207', 2.7);
+  }
+  // Front row is between the net and this line; anything behind it is a
+  // back-row attack.
+  add('line', {x1: MAP.left, y1: attackLineY, x2: MAP.right, y2: attackLineY, stroke: 'rgba(245, 158, 11, 0.75)', 'stroke-width': .5, 'stroke-dasharray': '2 1.5'});
+  label('3 m', MAP.left + 2.5, attackLineY - 1, '#a16207', 2.3, 'start');
+  add('line', {x1: MAP.left, y1: MAP.y(-COURT_ATTACK_LINE), x2: MAP.right, y2: MAP.y(-COURT_ATTACK_LINE), stroke: '#cbd5e1', 'stroke-width': .45, 'stroke-dasharray': '2 1.5'});
+  add('line', {x1: MAP.left, y1: MAP.netY, x2: MAP.right, y2: MAP.netY, stroke: '#f59e0b', 'stroke-width': 1.2});
+  label('NET', 94, MAP.netY + 1, '#a16207', 2.8);
+  label('ATTACKING SIDE (mirrored above the net)', 50, MAP.topY - 2.5, '#a16207', 2.6);
+  label('WHERE THE BALL WENT', 50, MAP.netY + 6, 'rgba(100, 116, 139, 0.65)', 2.6);
+
+  const defs = add('defs');
+  for (const [id, color] of [['attackArrowA', '#4f46e5'], ['attackArrowB', '#dc2626']]) {
+    const marker = add('marker', {
+      id, viewBox: '0 0 10 10', refX: 9, refY: 5,
+      markerWidth: 3.4, markerHeight: 3.4, orient: 'auto-start-reverse',
+    }, defs);
+    add('path', {d: 'M 0 0 L 10 5 L 0 10 z', fill: color}, marker);
+  }
+
+  let noTarget = 0;
+  for (const hit of hits) {
+    const origin = hit.origin_court;
+    if (!origin) continue;
+    const x = MAP.x(origin[0]);
+    const y = MAP.y(Math.abs(Number(origin[1]) || 0));
+    const color = hit.team === 'team_a' ? '#4f46e5' : '#dc2626';
+    const target = hit.target;
+    const direction = hit.direction;
+    const openAttack = () => { showPage('video'); seekAndPlay(hit.frame); };
+
+    if (target && target.court) {
+      const estimate = target.source === 'net_crossing_estimate';
+      const line = add('line', {
+        x1: x, y1: y, x2: MAP.x(target.court[0]), y2: MAP.y(target.court[1]),
+        stroke: color, 'stroke-width': estimate ? .8 : 1.15,
+        'stroke-dasharray': estimate ? '2 1.6' : 'none',
+        'marker-end': `url(#${hit.team === 'team_a' ? 'attackArrowA' : 'attackArrowB'})`,
+        opacity: estimate ? .6 : .92,
+      });
+      line.style.cursor = 'pointer';
+      line.addEventListener('click', openAttack);
+    } else {
+      noTarget += 1;
+    }
+
+    // Front-row attacks are solid, back-row attacks are rings: the row is as
+    // much a part of the shot as the zone.
+    const back = hit.row === 'back';
+    const point = add('circle', {
+      cx: x, cy: y, r: back ? 1.9 : 1.7,
+      fill: back ? '#fff' : color, stroke: color, 'stroke-width': back ? .9 : .5,
+    });
+    const title = document.createElementNS(NS, 'title');
+    title.textContent = [
+      `${hit.zone || 'zone'} · ${back ? 'back row' : 'front row'}`,
+      direction ? `${direction.kind} (${direction.angle_deg}° off the net normal)` : 'direction not measured',
+      target ? (target.source === 'defender_contact'
+        ? `target: ${target.event_type || 'contact'} by the defence`
+        : 'target: net crossing (estimate)') : 'no target found',
+      `${Number(hit.time || 0).toFixed(1)}s`,
+    ].join(' · ');
+    point.appendChild(title);
+    point.style.cursor = 'pointer';
+    point.addEventListener('click', openAttack);
+  }
+
+  panel.appendChild(svg);
+
+  const directions = heatmap.directions || {};
+  const legend = document.createElement('div');
+  legend.style.cssText = 'position:absolute;right:8px;bottom:6px;max-width:calc(100% - 16px);text-align:right;font-size:10.5px;line-height:1.5;color:var(--muted);background:rgba(255,255,255,.82);border-radius:5px;padding:3px 6px';
+  legend.innerHTML = hits.length
+    ? `<span style="color:#dc2626">●</span> team B &nbsp; <span style="color:#4f46e5">●</span> team A &nbsp; ○ back row<br>`
+      + `${directions.line || 0} line · ${directions.diagonal || 0} diagonal`
+      + (noTarget ? ` · ${noTarget} without a measured target` : '')
+      + `<br><span style="opacity:.75">dashed arrow = net crossing estimate, no defender touch</span>`
+    : '';
+  panel.appendChild(legend);
+
+  if (!hits.length) {
+    const empty = document.createElement('div');
+    empty.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:0 18px;font-size:12px;color:var(--muted)';
+    empty.textContent = !annotations ? 'Loading annotations…'
+      : ((heatmap.hits || []).length
+        ? 'Attacks exist but are hidden by the event/team filter'
+        : 'No attack origins. If the court outline on the video is wrong, fix it under Calibration & sync — the map is rebuilt from it.');
+    panel.appendChild(empty);
+  }
 }
 
 function renderContactsTable(vis) {
@@ -618,6 +862,25 @@ function renderContactsTable(vis) {
 }
 
 function renderSRTable() {
+  if (LIFECYCLE.available) {
+    const body = document.getElementById('srTable');
+    body.innerHTML = '';
+    const total = LIFECYCLE.service_attempts || 1;
+    const rows = [
+      ['Service attempts', LIFECYCLE.service_attempts, INK],
+      ['Confirmed serves', LIFECYCLE.confirmed_serves, '#eab308'],
+      ['Playable rallies', LIFECYCLE.playable_rallies, GREEN],
+      ['Aces / no reception', LIFECYCLE.aces_no_reception, '#facc15'],
+      ['Reception failed', LIFECYCLE.reception_failed, RED],
+      ['Serve faults', LIFECYCLE.serve_faults, 'var(--muted)'],
+    ];
+    for (const [label, value, color] of rows) {
+      body.insertAdjacentHTML('beforeend',
+        `<tr><td style="color:${color};font-weight:700">${label}</td>` +
+        `<td class="num">${value}</td><td class="num">${(value / total * 100).toFixed(0)}%</td></tr>`);
+    }
+    return;
+  }
   const counts = { success: 0, failed: 0, no_reception: 0 };
   for (const r of RALLIES) {
     const o = r.serve_reception && r.serve_reception.outcome;
@@ -669,6 +932,10 @@ function resetTableFilters() {
 function setTableTab(t) {
   tableState.tab = t;
   document.getElementById('tabStats').classList.toggle('on', t === 'stats');
+  const attemptsTab = document.getElementById('tabAttempts');
+  const attemptsPanel = document.getElementById('attemptsTabPanel');
+  if (attemptsTab) attemptsTab.classList.toggle('on', t === 'attempts');
+  if (attemptsPanel) attemptsPanel.style.display = t === 'attempts' ? '' : 'none';
   document.getElementById('tabScoring').classList.toggle('on', t === 'scoring');
   document.getElementById('statsTabPanel').style.display = t === 'stats' ? '' : 'none';
   document.getElementById('scoringTabPanel').style.display = t === 'scoring' ? '' : 'none';
@@ -683,7 +950,7 @@ function renderRallyPresets() {
     const el = document.createElement('div');
     el.className = 'preset' + (tableState.rally === String(i) ? ' on' : '');
     el.innerHTML = `<div class="p-label">Rally ${i + 1}</div>` +
-      `<div class="p-score" style="color:${outcome === 'success' ? GREEN : outcome === 'failed' ? RED : 'var(--muted)'}">${r.duration_sec}s · ${outcome}</div>`;
+      `<div class="p-score" style="color:${isSuccessfulOutcome(outcome) ? GREEN : isFailedOutcome(outcome) ? RED : 'var(--muted)'}">${r.duration_sec}s · ${outcome}</div>`;
     el.onclick = () => {
       tableState.rally = tableState.rally === String(i) ? 'all' : String(i);
       box.querySelectorAll('.preset').forEach((p, j) => p.classList.toggle('on', tableState.rally === String(j)));
@@ -702,6 +969,7 @@ function rallyRowVisible(r, i) {
 
 function renderTables() {
   renderRallyPresets();
+  renderServiceAttempts();
   // Rally table
   const body = document.getElementById('rallyTableBody');
   body.innerHTML = '';
@@ -714,10 +982,11 @@ function renderTables() {
     const serveTeam = sr.serve ? (sr.serve.team === 'team_a' ? 'A' : 'B') : '—';
     const recTeam = sr.reception ? (sr.reception.team === 'team_a' ? 'A' : 'B') : '—';
     const outcome = sr.outcome || '—';
-    const oColor = outcome === 'success' ? 'c-green' : (outcome === 'failed' ? 'c-red' : 'c-muted');
+    const oColor = isSuccessfulOutcome(outcome) ? 'c-green' : (isFailedOutcome(outcome) ? 'c-red' : 'c-muted');
+    const startFrame = rallyStartFrame(r);
     body.insertAdjacentHTML('beforeend',
-      `<tr class="clickable" onclick="showPage('video');seekAndPlay(${r.start_frame})">` +
-      `<td class="strong">${i + 1}</td><td>${formatTime(r.start_frame / FPS)}</td><td class="num">${r.duration_sec}s</td>` +
+      `<tr class="clickable" onclick="showPage('video');seekAndPlay(${startFrame})">` +
+      `<td class="strong">${i + 1}</td><td>${formatTime(startFrame / FPS)}</td><td class="num">${r.duration_sec}s</td>` +
       `<td class="num bl">${r.contacts_team_a}</td><td class="num">${r.contacts_team_b}</td>` +
       `<td class="bl">${serveTeam}</td><td>${recTeam}</td><td class="${oColor}" style="font-weight:700">${outcome.replace(/_/g, ' ')}</td>` +
       `<td class="num bl">${(r.events || []).length}</td></tr>`);
@@ -748,6 +1017,36 @@ function renderTables() {
   });
 }
 
+function renderServiceAttempts() {
+  const body = document.getElementById('attemptsTableBody');
+  if (!body) return;
+  body.innerHTML = '';
+  if (!SERVICE_ATTEMPTS.length) {
+    body.innerHTML = '<tr><td colspan="8" class="c-muted">No service attempts recorded</td></tr>';
+    return;
+  }
+  SERVICE_ATTEMPTS.forEach((attempt, i) => {
+    const lc = attempt.lifecycle || {};
+    const serveFrame = lifecycleFrame(attempt, 'serve_frame',
+      lifecycleFrame(attempt, 'start_frame', attempt.start_frame));
+    const status = lc.status || 'unconfirmed';
+    const statusClass = status === 'playable_rally' ? 'c-green'
+      : (status === 'reception_failed' || status === 'serve_fault' ? 'c-red' : 'c-muted');
+    const frameCell = value => Number.isFinite(value) ? formatTime(value / FPS) : '—';
+    const servingTeam = lc.serving_team === 'team_a' ? 'Team A'
+      : (lc.serving_team === 'team_b' ? 'Team B' : '—');
+    body.insertAdjacentHTML('beforeend',
+      `<tr class="${Number.isFinite(serveFrame) ? 'clickable' : ''}"` +
+      `${Number.isFinite(serveFrame) ? ` onclick="showPage('video');seekAndPlay(${serveFrame})"` : ''}>` +
+      `<td class="strong">${i + 1}</td><td>${frameCell(serveFrame)}</td><td>${servingTeam}</td>` +
+      `<td class="${statusClass}" style="font-weight:700">${status.replace(/_/g, ' ')}</td>` +
+      `<td>${lc.serve_confirmed === true ? 'Yes' : 'No'}</td>` +
+      `<td>${frameCell(lifecycleFrame(attempt, 'net_cross_frame'))}</td>` +
+      `<td>${frameCell(lifecycleFrame(attempt, 'reception_frame'))}</td>` +
+      `<td>${frameCell(lifecycleFrame(attempt, 'followup_frame'))}</td></tr>`);
+  });
+}
+
 /* ── Annotations load ────────────────────────────────── */
 fetch('/api/annotations/' + JOB_ID)
   .then(r => r.json())
@@ -755,6 +1054,8 @@ fetch('/api/annotations/' + JOB_ID)
     annotations = {};
     for (const f of data.frames) annotations[f.f] = f;
     window._annData = data;
+    courtEditor.originalCorners = Array.isArray(data.court_corners)
+      ? JSON.parse(JSON.stringify(data.court_corners)) : null;
     const slider = document.getElementById('netYSlider');
     const fw = data.frame_width || 1280;
     const fh = data.frame_height || 720;
@@ -774,6 +1075,7 @@ fetch('/api/annotations/' + JOB_ID)
     startRenderLoop();
     redraw();
     if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
+    loadCourtState();
   });
 
 function updateNetY(val) {
@@ -787,6 +1089,7 @@ function updateNetY(val) {
   d.net_tape_bottom = newY + tapeH;
   document.getElementById('netYVal').textContent = Math.round(newY);
   redraw();
+  if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
 }
 
 function updateNetX() {
@@ -800,7 +1103,461 @@ function updateNetX() {
   document.getElementById('netXLVal').textContent = Math.round(l);
   document.getElementById('netXRVal').textContent = Math.round(r);
   redraw();
+  if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
 }
+
+function defaultCourtCorners() {
+  const d = window._annData || {};
+  const w = Number(d.frame_width || 1280), h = Number(d.frame_height || 720);
+  return [[w * .20, h * .40], [w * .80, h * .40], [w * .97, h * .94], [w * .03, h * .94]];
+}
+
+/* ── Court geometry (mirrors src/tracking/court_setups.py) ──────────
+   Solved in the browser so the guide lines follow the drag without a
+   round-trip; the server recomputes the same matrix when saving. */
+const COURT_HALF_W = 4.5, COURT_HALF_L = 9, COURT_ATTACK_LINE = 3;
+const COURT_WORLD_CORNERS = [
+  [-COURT_HALF_W, -COURT_HALF_L], [COURT_HALF_W, -COURT_HALF_L],
+  [COURT_HALF_W, COURT_HALF_L], [-COURT_HALF_W, COURT_HALF_L],
+];
+
+function solveLinearSystem(matrix, rhs) {
+  const n = rhs.length;
+  const a = matrix.map((row, i) => row.concat([rhs[i]]));
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row++) {
+      if (Math.abs(a[row][col]) > Math.abs(a[pivot][col])) pivot = row;
+    }
+    if (Math.abs(a[pivot][col]) < 1e-12) return null;
+    [a[col], a[pivot]] = [a[pivot], a[col]];
+    for (let row = 0; row < n; row++) {
+      if (row === col) continue;
+      const factor = a[row][col] / a[col][col];
+      for (let k = col; k <= n; k++) a[row][k] -= factor * a[col][k];
+    }
+  }
+  return a.map((row, i) => row[n] / row[i]);
+}
+
+function courtHomography(corners) {
+  if (!Array.isArray(corners) || corners.length !== 4) return null;
+  const rows = [], rhs = [];
+  for (let i = 0; i < 4; i++) {
+    const [wx, wy] = COURT_WORLD_CORNERS[i];
+    const ix = Number(corners[i][0]), iy = Number(corners[i][1]);
+    if (!Number.isFinite(ix) || !Number.isFinite(iy)) return null;
+    rows.push([wx, wy, 1, 0, 0, 0, -ix * wx, -ix * wy]); rhs.push(ix);
+    rows.push([0, 0, 0, wx, wy, 1, -iy * wx, -iy * wy]); rhs.push(iy);
+  }
+  const solution = solveLinearSystem(rows, rhs);
+  if (!solution) return null;
+  const h = solution.concat([1]);
+  return [[h[0], h[1], h[2]], [h[3], h[4], h[5]], [h[6], h[7], h[8]]];
+}
+
+function courtGuideLines(corners) {
+  const H = courtHomography(corners);
+  if (!H) return null;
+  const project = (wx, wy) => {
+    const w = H[2][0] * wx + H[2][1] * wy + H[2][2];
+    if (Math.abs(w) < 1e-9) return null;
+    return [
+      (H[0][0] * wx + H[0][1] * wy + H[0][2]) / w,
+      (H[1][0] * wx + H[1][1] * wy + H[1][2]) / w,
+    ];
+  };
+  const segments = {
+    center_line: [project(-COURT_HALF_W, 0), project(COURT_HALF_W, 0)],
+    attack_line_near: [project(-COURT_HALF_W, -COURT_ATTACK_LINE), project(COURT_HALF_W, -COURT_ATTACK_LINE)],
+    attack_line_far: [project(-COURT_HALF_W, COURT_ATTACK_LINE), project(COURT_HALF_W, COURT_ATTACK_LINE)],
+  };
+  for (const segment of Object.values(segments)) {
+    if (!segment[0] || !segment[1]) return null;
+  }
+  return segments;
+}
+
+function courtCornersAreConvex(corners) {
+  if (!Array.isArray(corners) || corners.length !== 4) return false;
+  const signs = [];
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = corners[i], [bx, by] = corners[(i + 1) % 4], [cx, cy] = corners[(i + 2) % 4];
+    signs.push((bx - ax) * (cy - by) - (by - ay) * (cx - bx));
+  }
+  return signs.every(s => s > 0) || signs.every(s => s < 0);
+}
+
+function toggleCourtEdit() {
+  if (!window._annData) return;
+  const d = window._annData;
+  if (!Array.isArray(d.court_corners) || d.court_corners.length !== 4) {
+    d.court_corners = defaultCourtCorners();
+    if (!courtEditor.originalCorners) courtEditor.originalCorners = JSON.parse(JSON.stringify(d.court_corners));
+  }
+  courtEditor.active = !courtEditor.active;
+  courtEditor.dragIndex = null;
+  courtEditor.drag = null;
+  canvas.classList.toggle('court-editing', courtEditor.active);
+  document.getElementById('courtEditBtn').textContent = courtEditor.active ? 'Done editing' : 'Edit court';
+  document.getElementById('courtSaveBtn').disabled = !courtEditor.active;
+  document.getElementById('courtResetBtn').disabled = !courtEditor.active;
+  document.getElementById('courtSetupSaveBtn').disabled = !courtEditor.active;
+  document.getElementById('courtModeBtn').disabled = !courtEditor.active;
+  if (courtEditor.active) {
+    setCourtEditMode(courtEditor.mode);
+    return;
+  }
+  setCourtHint('Drag the court lines into place. Dashed guides show the centre line and both 3 m attack lines — align those, the far baseline is usually hidden.');
+  redraw();
+}
+
+function setCourtHint(text) {
+  document.getElementById('courtEditHint').textContent = text;
+}
+
+function resetCourtCorrection() {
+  if (!window._annData || !courtEditor.originalCorners) return;
+  window._annData.court_corners = JSON.parse(JSON.stringify(courtEditor.originalCorners));
+  syncEdgeAnchors();
+  redraw();
+}
+
+async function saveCourtCorrection(setupName) {
+  const d = window._annData;
+  if (!d || !Array.isArray(d.court_corners) || d.court_corners.length !== 4) return;
+  if (!courtCornersAreConvex(d.court_corners)) {
+    setCourtHint('Those four points cross over each other. Order them A, B (near baseline) then C, D (far baseline).');
+    return;
+  }
+  const button = document.getElementById('courtSaveBtn');
+  button.disabled = true;
+  button.textContent = 'Saving…';
+  setCourtHint('Saving and rebuilding the attack map…');
+  try {
+    const response = await fetch('/api/court/' + JOB_ID, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        court_corners: d.court_corners,
+        net_y: d.net_y,
+        net_x_left: d.net_x_left,
+        net_x_right: d.net_x_right,
+        save_as_setup: setupName || undefined,
+        court_setup_id: setupName ? (courtEditor.setupId || undefined) : undefined,
+      }),
+    });
+    const saved = await response.json();
+    if (!response.ok) throw new Error(saved.error || 'Could not save court correction');
+    d.court_corners = saved.court_corners;
+    if (saved.attack_heatmap) d.attack_heatmap = saved.attack_heatmap;
+    courtEditor.originalCorners = JSON.parse(JSON.stringify(saved.court_corners));
+    courtEditor.setupId = saved.court_setup_id || null;
+    renderCourtSetups(saved.setups || [], courtEditor.setupId);
+    renderAttackHeatmapSummary(d.attack_heatmap);
+    if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
+    const total = (d.attack_heatmap || {}).total_attacks;
+    setCourtHint(`Saved${saved.court_setup_name ? ' as “' + saved.court_setup_name + '”' : ''}. Attack map rebuilt from ${total} attacks.`);
+  } catch (error) {
+    setCourtHint('Save failed: ' + error.message);
+  } finally {
+    button.textContent = 'Save';
+    button.disabled = !courtEditor.active;
+  }
+}
+
+/* ── Court setups (one camera placement, reusable across games) ───── */
+function renderCourtSetups(setups, selectedId) {
+  courtEditor.setups = setups || [];
+  const select = document.getElementById('courtSetupSelect');
+  select.innerHTML = '<option value="">— this game only —</option>';
+  for (const setup of courtEditor.setups) {
+    const option = document.createElement('option');
+    option.value = setup.id;
+    option.textContent = setup.name;
+    select.appendChild(option);
+  }
+  select.value = selectedId || '';
+  courtEditor.setupId = selectedId || null;
+  document.getElementById('courtSetupDeleteBtn').disabled = !select.value;
+}
+
+function applyCourtSetup(setupId) {
+  const d = window._annData;
+  document.getElementById('courtSetupDeleteBtn').disabled = !setupId;
+  courtEditor.setupId = setupId || null;
+  if (!setupId || !d) return;
+  const setup = (courtEditor.setups || []).find(item => item.id === setupId);
+  if (!setup) return;
+  // A setup is stored in the pixels of the game it was drawn on; this result
+  // may be a different resolution.
+  const sx = Number(d.frame_width || 1280) / Number(setup.frame_width || 1280);
+  const sy = Number(d.frame_height || 720) / Number(setup.frame_height || 720);
+  d.court_corners = setup.court_corners.map(([x, y]) => [x * sx, y * sy]);
+  syncEdgeAnchors();
+  setCourtHint(`Loaded “${setup.name}”. Check it against the lines, then Save to rebuild the attack map.`);
+  redraw();
+}
+
+async function saveCourtSetup() {
+  const suggested = (courtEditor.setups || []).find(
+    item => item.id === courtEditor.setupId,
+  );
+  const name = prompt(
+    'Name this camera setup (reusable for other games shot from the same spot):',
+    suggested ? suggested.name : '',
+  );
+  if (!name) return;
+  await saveCourtCorrection(name.trim());
+}
+
+async function deleteCourtSetup() {
+  const setupId = document.getElementById('courtSetupSelect').value;
+  if (!setupId) return;
+  const setup = (courtEditor.setups || []).find(item => item.id === setupId);
+  if (!confirm(`Delete court setup “${setup ? setup.name : setupId}”? Results already saved with it keep their corners.`)) return;
+  const response = await fetch('/api/court_setups/' + setupId, {method: 'DELETE'});
+  if (!response.ok) {
+    setCourtHint('Could not delete that setup.');
+    return;
+  }
+  const list = await (await fetch('/api/court_setups')).json();
+  renderCourtSetups(list.setups || [], null);
+}
+
+async function loadCourtState() {
+  try {
+    const state = await (await fetch('/api/court/' + JOB_ID)).json();
+    if (state.error) return;
+    renderCourtSetups(state.setups || [], state.court_setup_id || null);
+    const d = window._annData;
+    if (d && !Array.isArray(d.court_corners) && Array.isArray(state.court_corners)) {
+      // Results analysed before corners were stored fall back to the shared
+      // calibration, so the editor starts from the geometry actually used.
+      d.court_corners = state.court_corners;
+      redraw();
+    }
+    if (state.heatmap_version !== state.current_heatmap_version) {
+      await recomputeAttackMap(state.heatmap_version);
+    }
+  } catch (error) {
+    /* the court panel is optional; the rest of the viewer still works */
+  }
+}
+
+async function recomputeAttackMap(oldVersion) {
+  setCourtHint(oldVersion
+    ? 'This result predates measured shot directions — rebuilding the attack map…'
+    : 'Rebuilding the attack map…');
+  try {
+    const response = await fetch('/api/court/' + JOB_ID + '/recompute', {method: 'POST'});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'recompute failed');
+    window._annData.attack_heatmap = data.attack_heatmap;
+    renderAttackHeatmapSummary(data.attack_heatmap);
+    if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
+    setCourtHint(`Attack map rebuilt: ${data.attack_heatmap.total_attacks} attacks. Correct the court if the zones look wrong.`);
+  } catch (error) {
+    setCourtHint('Attack map could not be rebuilt: ' + error.message);
+  }
+}
+
+function eventImagePoint(event) {
+  const rect = canvas.getBoundingClientRect();
+  const d = window._annData || {};
+  const w = Number(d.frame_width || vid.videoWidth || 1280);
+  const h = Number(d.frame_height || vid.videoHeight || 720);
+  return [
+    (event.clientX - rect.left) * w / Math.max(rect.width, 1),
+    (event.clientY - rect.top) * h / Math.max(rect.height, 1),
+  ];
+}
+
+/* ── Line editing ───────────────────────────────────────────────────
+   A wide lens puts court corners outside the frame — the near baseline of
+   this footage meets the left sideline at a point the camera never saw. The
+   lines themselves are always visible, so the court is edited as four lines
+   and the corners are read off as their intersections. */
+const EDGE_NAMES = ['near baseline', 'right sideline', 'far baseline', 'left sideline'];
+
+function clipSegmentToFrame(p, q, width, height, margin = 24) {
+  // Liang–Barsky against the frame inset by a margin, so a handle always
+  // stays grabbable inside the picture.
+  const minX = margin, maxX = width - margin;
+  const minY = margin, maxY = height - margin;
+  let t0 = 0, t1 = 1;
+  const dx = q[0] - p[0], dy = q[1] - p[1];
+  const tests = [[-dx, p[0] - minX], [dx, maxX - p[0]], [-dy, p[1] - minY], [dy, maxY - p[1]]];
+  for (const [pk, qk] of tests) {
+    if (Math.abs(pk) < 1e-9) {
+      if (qk < 0) return null;
+      continue;
+    }
+    const r = qk / pk;
+    if (pk < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
+    else { if (r < t0) return null; if (r < t1) t1 = r; }
+  }
+  return [
+    [p[0] + t0 * dx, p[1] + t0 * dy],
+    [p[0] + t1 * dx, p[1] + t1 * dy],
+  ];
+}
+
+function courtEdgeAnchors(corners, width, height) {
+  // Two handles per edge, placed where that edge is actually on screen.
+  return corners.map((corner, index) => {
+    const next = corners[(index + 1) % 4];
+    const visible = clipSegmentToFrame(corner, next, width, height) || [corner, next];
+    const lerp = t => [
+      visible[0][0] + (visible[1][0] - visible[0][0]) * t,
+      visible[0][1] + (visible[1][1] - visible[0][1]) * t,
+    ];
+    return [lerp(0.25), lerp(0.75)];
+  });
+}
+
+function lineIntersection(a1, a2, b1, b2) {
+  const d1x = a2[0] - a1[0], d1y = a2[1] - a1[1];
+  const d2x = b2[0] - b1[0], d2y = b2[1] - b1[1];
+  const denominator = d1x * d2y - d1y * d2x;
+  if (Math.abs(denominator) < 1e-9) return null;  // parallel edges
+  const t = ((b1[0] - a1[0]) * d2y - (b1[1] - a1[1]) * d2x) / denominator;
+  return [a1[0] + t * d1x, a1[1] + t * d1y];
+}
+
+function cornersFromEdgeAnchors(anchors, fallback) {
+  return fallback.map((corner, index) => {
+    const previous = anchors[(index + 3) % 4];
+    const current = anchors[index];
+    const point = lineIntersection(previous[0], previous[1], current[0], current[1]);
+    return point && point.every(Number.isFinite) ? point : corner;
+  });
+}
+
+function syncEdgeAnchors() {
+  const d = window._annData;
+  if (!d || !Array.isArray(d.court_corners)) return;
+  courtEditor.anchors = courtEdgeAnchors(
+    d.court_corners,
+    Number(d.frame_width || 1280),
+    Number(d.frame_height || 720),
+  );
+}
+
+function applyEdgeAnchors() {
+  const d = window._annData;
+  if (!d || !courtEditor.anchors) return;
+  d.court_corners = cornersFromEdgeAnchors(courtEditor.anchors, d.court_corners);
+}
+
+function setCourtEditMode(mode) {
+  courtEditor.mode = mode;
+  courtEditor.drag = null;
+  if (mode === 'lines') syncEdgeAnchors();
+  document.getElementById('courtModeBtn').textContent =
+    mode === 'lines' ? 'Editing: lines' : 'Editing: corners';
+  setCourtHint(mode === 'lines'
+    ? 'Drag a line to slide it, or its round handles to pivot it. Corners are the intersections — they may sit outside the frame.'
+    : 'Drag A/B/C/D. Only works for corners the camera actually sees; switch to line mode for the rest.');
+  redraw();
+}
+
+function toggleCourtEditMode() {
+  setCourtEditMode(courtEditor.mode === 'lines' ? 'corners' : 'lines');
+}
+
+function distanceToSegment(point, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared < 1e-9) return Math.hypot(point[0] - a[0], point[1] - a[1]);
+  let t = ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSquared;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy));
+}
+
+canvas.addEventListener('pointerdown', event => {
+  if (!courtEditor.active || !window._annData) return;
+  const point = eventImagePoint(event);
+  const scale = Number(window._annData.frame_width || 1280) / 1280;
+  const grab = 26 * Math.max(1, scale);
+
+  if (courtEditor.mode === 'lines') {
+    if (!courtEditor.anchors) syncEdgeAnchors();
+    let best = grab, found = null;
+    courtEditor.anchors.forEach((anchor, edge) => {
+      anchor.forEach((handle, index) => {
+        const distance = Math.hypot(handle[0] - point[0], handle[1] - point[1]);
+        if (distance <= best) { best = distance; found = {edge, handle: index}; }
+      });
+    });
+    if (!found) {
+      let bestLine = grab * 0.8;
+      courtEditor.anchors.forEach((anchor, edge) => {
+        const distance = distanceToSegment(point, anchor[0], anchor[1]);
+        if (distance <= bestLine) { bestLine = distance; found = {edge, handle: null}; }
+      });
+    }
+    if (found) {
+      courtEditor.drag = {...found, last: point};
+      canvas.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    }
+    return;
+  }
+
+  const corners = window._annData.court_corners || [];
+  let selected = -1, best = grab;
+  corners.forEach((corner, index) => {
+    const distance = Math.hypot(corner[0] - point[0], corner[1] - point[1]);
+    if (distance <= best) { best = distance; selected = index; }
+  });
+  if (selected >= 0) {
+    courtEditor.dragIndex = selected;
+    canvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+});
+
+canvas.addEventListener('pointermove', event => {
+  if (!courtEditor.active || !window._annData) return;
+  const [x, y] = eventImagePoint(event);
+  const d = window._annData;
+
+  if (courtEditor.mode === 'lines') {
+    const drag = courtEditor.drag;
+    if (!drag) return;
+    const anchor = courtEditor.anchors[drag.edge];
+    if (drag.handle === null) {
+      const dx = x - drag.last[0], dy = y - drag.last[1];
+      anchor[0] = [anchor[0][0] + dx, anchor[0][1] + dy];
+      anchor[1] = [anchor[1][0] + dx, anchor[1][1] + dy];
+      drag.last = [x, y];
+    } else {
+      anchor[drag.handle] = [x, y];
+    }
+    applyEdgeAnchors();
+    redraw();
+    return;
+  }
+
+  if (courtEditor.dragIndex === null) return;
+  // Corner mode stays inside the frame; a corner you cannot see is a corner
+  // you cannot aim, and line mode is the tool for those.
+  d.court_corners[courtEditor.dragIndex] = [
+    Math.max(0, Math.min(d.frame_width, x)),
+    Math.max(0, Math.min(d.frame_height, y)),
+  ];
+  redraw();
+});
+
+canvas.addEventListener('pointerup', event => {
+  if ((courtEditor.dragIndex !== null || courtEditor.drag) && canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId);
+  }
+  courtEditor.dragIndex = null;
+  courtEditor.drag = null;
+  if (courtEditor.mode === 'lines' && courtEditor.active) syncEdgeAnchors();
+});
 
 function attackZoneCounts(heatmap) {
   const counts = {left: 0, center: 0, right: 0};
@@ -820,19 +1577,45 @@ function renderAttackHeatmapSummary(heatmap) {
   const total = heatmap.total_attacks != null
     ? heatmap.total_attacks : counts.left + counts.center + counts.right;
   document.getElementById('attackHeatmapTotal').textContent = total;
+  const rows = {};
+  for (const zone of (heatmap.zones || [])) {
+    rows[String(zone.id || '').toLowerCase()] = zone;
+  }
   const zones = document.getElementById('attackHeatmapZones');
   zones.innerHTML = '';
   for (const id of ['left', 'center', 'right']) {
+    const zone = rows[id] || {};
     const item = document.createElement('div');
-    item.style.cssText = 'background:var(--head-bg);border-radius:5px;padding:5px 8px;font-size:11.5px;display:flex;justify-content:space-between;gap:6px;';
+    item.style.cssText = 'background:var(--head-bg);border-radius:5px;padding:5px 8px;font-size:11.5px;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;justify-content:space-between;gap:6px;';
     const name = document.createElement('span');
     name.textContent = id;
     name.style.color = 'var(--muted)';
     const count = document.createElement('strong');
     count.textContent = counts[id];
     count.style.color = 'var(--primary)';
-    item.append(name, count);
+    head.append(name, count);
+    item.appendChild(head);
+    if (zone.front != null || zone.back != null) {
+      const split = document.createElement('div');
+      split.style.cssText = 'font-size:10px;color:var(--muted);margin-top:2px';
+      split.textContent = `${zone.front || 0} front · ${zone.back || 0} back`;
+      item.appendChild(split);
+    }
     zones.appendChild(item);
+  }
+  const directions = heatmap.directions;
+  let note = document.getElementById('attackHeatmapDirections');
+  if (directions) {
+    if (!note) {
+      note = document.createElement('div');
+      note.id = 'attackHeatmapDirections';
+      note.style.cssText = 'font-size:11px;color:var(--muted);margin-top:6px';
+      zones.parentElement.appendChild(note);
+    }
+    note.textContent = `${directions.line || 0} down the line · ${directions.diagonal || 0} diagonal`
+      + (directions.unknown ? ` · ${directions.unknown} not measured` : '');
   }
 }
 
@@ -977,11 +1760,14 @@ function setupEventMarkers() {
     bar.appendChild(m);
   }
   for (const r of RALLIES) {
-    const pct = (r.start_frame / TOTAL_FRAMES * 100);
+    const startFrame = rallyStartFrame(r);
+    if (!Number.isFinite(startFrame)) continue;
+    const pct = (startFrame / TOTAL_FRAMES * 100);
     const m = document.createElement('div');
     m.className = 'event-marker rally_start';
     m.style.left = pct + '%';
-    m.title = 'Rally start @f' + r.start_frame;
+    m.title = (LIFECYCLE.available ? 'Confirmed playable rally' : 'Rally start') + ' @f' + startFrame;
+    m.onclick = (e) => { e.stopPropagation(); seekAndPlay(startFrame); };
     bar.appendChild(m);
   }
 }
@@ -1015,6 +1801,44 @@ const BALL_COLOR = '#00ff44';
 
 let _lastAnn = null;
 
+function ballView(annotation) {
+  const selector = document.getElementById('ballPathMode');
+  const mode = selector ? selector.value : 'active';
+  if (!annotation) return {point: null, source: 'missing', confidence: 0, mode};
+  if (mode === 'raw') {
+    return {
+      point: annotation.ball_raw || null,
+      source: annotation.ball_raw ? 'detected' : 'missing',
+      confidence: Number(annotation.ball_raw_confidence || 0),
+      mode,
+    };
+  }
+  if (mode === 'conservative' || mode === 'contact_aware') {
+    const key = 'ball_' + mode;
+    return {
+      point: annotation[key] || null,
+      source: annotation[key + '_source'] || 'missing',
+      confidence: Number(annotation[key + '_confidence'] || 0),
+      mode,
+    };
+  }
+  return {
+    point: annotation.ball || null,
+    source: annotation.ball_source || (annotation.ball_interp ? 'interpolated_short' : annotation.ball ? 'detected' : 'missing'),
+    confidence: Number(annotation.ball_confidence || 0),
+    mode,
+  };
+}
+
+function ballStyle(source) {
+  if (source === 'detected') return {color: '#00ff44', rgb: '0,255,68'};
+  if (source === 'interpolated_short') return {color: '#ffc800', rgb: '255,200,0'};
+  if (source === 'reconstructed_conservative') return {color: '#00d4ff', rgb: '0,212,255'};
+  if (source === 'reconstructed_contact_aware') return {color: '#ff4fd8', rgb: '255,79,216'};
+  if (source === 'reconstructed_occlusion') return {color: '#a78bfa', rgb: '167,139,250'};
+  return {color: BALL_COLOR, rgb: '0,255,68'};
+}
+
 function redraw() {
   if (!canvas.width) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1041,8 +1865,9 @@ function redraw() {
   const showEvents  = document.getElementById('togEvents').checked;
   const showAttackHeatmap = document.getElementById('togAttackHeatmap').checked;
   const showCourt   = document.getElementById('togCourt').checked;
+  const currentBall = ballView(ann);
 
-  if (showCourt && window._annData) {
+  if ((showCourt || courtEditor.active) && window._annData) {
     const corners = window._annData.court_corners;
     if (Array.isArray(corners) && corners.length === 4) {
       ctx.strokeStyle = 'rgba(0, 255, 170, 0.95)';
@@ -1056,6 +1881,87 @@ function redraw() {
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+      // The far baseline hides behind the net and the players, so the corners
+      // alone give the user nothing to check the depth scale against. These
+      // are the lines painted on every court.
+      if (courtEditor.active) {
+        const guides = courtGuideLines(corners);
+        if (guides) {
+          ctx.setLineDash([9, 6]);
+          ctx.lineWidth = 2;
+          for (const [name, segment] of Object.entries(guides)) {
+            ctx.strokeStyle = name === 'center_line'
+              ? 'rgba(255, 210, 0, 0.95)' : 'rgba(56, 189, 248, 0.8)';
+            ctx.beginPath();
+            ctx.moveTo(px(segment[0][0]), py(segment[0][1]));
+            ctx.lineTo(px(segment[1][0]), py(segment[1][1]));
+            ctx.stroke();
+          }
+          ctx.setLineDash([]);
+        }
+      }
+      if (courtEditor.active && courtEditor.mode === 'lines' && courtEditor.anchors) {
+        courtEditor.anchors.forEach((anchor, edge) => {
+          const dragging = courtEditor.drag && courtEditor.drag.edge === edge;
+          ctx.strokeStyle = dragging ? '#f97316' : 'rgba(0, 255, 170, 0.95)';
+          ctx.lineWidth = dragging ? 5 : 4;
+          ctx.beginPath();
+          ctx.moveTo(px(anchor[0][0]), py(anchor[0][1]));
+          ctx.lineTo(px(anchor[1][0]), py(anchor[1][1]));
+          ctx.stroke();
+          anchor.forEach((handle, index) => {
+            const active = dragging && courtEditor.drag.handle === index;
+            ctx.fillStyle = active ? '#f97316' : '#00ffae';
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(px(handle[0]), py(handle[1]), 8, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          });
+          const midX = (anchor[0][0] + anchor[1][0]) / 2;
+          const midY = (anchor[0][1] + anchor[1][1]) / 2;
+          ctx.fillStyle = '#0f172a';
+          ctx.strokeStyle = 'rgba(0, 255, 170, 0.95)';
+          ctx.lineWidth = 3;
+          ctx.font = `bold ${Math.max(11, Math.round(12 * sx))}px system-ui`;
+          ctx.strokeText(EDGE_NAMES[edge], px(midX) + 10, py(midY) - 8);
+          ctx.fillText(EDGE_NAMES[edge], px(midX) + 10, py(midY) - 8);
+        });
+        // A corner outside the picture still has to be findable, so it is
+        // pinned to the frame edge with its true offset spelled out.
+        corners.forEach((point, index) => {
+          const outside = point[0] < 0 || point[1] < 0
+            || point[0] > window._annData.frame_width
+            || point[1] > window._annData.frame_height;
+          if (!outside) return;
+          const cx = Math.max(14, Math.min(canvas.width - 14, px(point[0])));
+          const cy = Math.max(14, Math.min(canvas.height - 14, py(point[1])));
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.9)';
+          ctx.beginPath();
+          ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.font = `bold ${Math.max(10, Math.round(11 * sx))}px system-ui`;
+          ctx.fillText(
+            `${['A', 'B', 'C', 'D'][index]} off-frame`,
+            cx + 9, cy + 4,
+          );
+        });
+      } else if (courtEditor.active) {
+        const names = ['A', 'B', 'C', 'D'];
+        corners.forEach((point, index) => {
+          ctx.fillStyle = index === courtEditor.dragIndex ? '#f97316' : '#00ffae';
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(px(point[0]), py(point[1]), 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = '#0f172a';
+          ctx.font = `bold ${Math.max(11, Math.round(13 * sx))}px system-ui`;
+          ctx.fillText(names[index], px(point[0]) + 11, py(point[1]) - 10);
+        });
+      }
     }
   }
 
@@ -1131,9 +2037,10 @@ function redraw() {
          fi >= Math.max(0, currentFrameIdx - TRAIL_FRAMES) && trailPos.length < MAX_TRAIL;
          fi--) {
       const a = annotations[fi];
-      if (a && a.ball) {
-        trailPos.push({ x: a.ball[0], y: a.ball[1], age: currentFrameIdx - fi,
-                        newTrack: !!a.ball_new });
+      const viewed = ballView(a);
+      if (a && viewed.point) {
+        trailPos.push({ x: viewed.point[0], y: viewed.point[1], age: currentFrameIdx - fi,
+                        newTrack: !!a.ball_new, source: viewed.source });
         // The tracker re-acquired the ball here; anything older belongs to a
         // different hypothesis and must not be joined to this one.
         if (a.ball_new) break;
@@ -1148,10 +2055,10 @@ function redraw() {
     // This display-side guard also protects old annotation files that did not
     // preserve solver restart markers.
     const MAX_TRAIL_STEP = 90 * (vw / 1280);
-    if (showTrail && trailPos.length > 0 && ann.ball) {
+    if (showTrail && trailPos.length > 0 && currentBall.point) {
       const pts = [...trailPos].reverse();
-      pts.push({ x: ann.ball[0], y: ann.ball[1], age: 0,
-                 newTrack: !!ann.ball_new });
+      pts.push({ x: currentBall.point[0], y: currentBall.point[1], age: 0,
+                 newTrack: !!ann.ball_new, source: currentBall.source });
 
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -1164,7 +2071,8 @@ function redraw() {
         if (frameGap > GAP_BREAK || p1.newTrack || step > MAX_TRAIL_STEP) continue;
         const frac  = 1 - p1.age / TRAIL_FRAMES;
         const alpha = Math.pow(frac, 1.1) * 0.9;
-        ctx.strokeStyle = `rgba(0, 255, 68, ${alpha})`;
+        const trailStyle = ballStyle(p1.source);
+        ctx.strokeStyle = `rgba(${trailStyle.rgb}, ${alpha})`;
         ctx.lineWidth   = 1 + frac * 2.5;
         ctx.beginPath();
         ctx.moveTo(px(p0.x), py(p0.y));
@@ -1173,10 +2081,11 @@ function redraw() {
       }
     }
 
-    if (ann.ball) {
-      const [bx, by] = ann.ball;
-      if (ann.ball_interp) {
-        ctx.strokeStyle = 'rgba(255,200,0,0.7)';
+    if (currentBall.point) {
+      const [bx, by] = currentBall.point;
+      const style = ballStyle(currentBall.source);
+      if (currentBall.source !== 'detected') {
+        ctx.strokeStyle = style.color;
         ctx.lineWidth = 1.5;
         ctx.setLineDash([3, 3]);
         ctx.beginPath();
@@ -1184,14 +2093,26 @@ function redraw() {
         ctx.stroke();
         ctx.setLineDash([]);
       } else {
-        ctx.shadowColor = BALL_COLOR;
+        ctx.shadowColor = style.color;
         ctx.shadowBlur  = 5;
-        ctx.fillStyle   = BALL_COLOR;
+        ctx.fillStyle   = style.color;
         ctx.beginPath();
         ctx.arc(px(bx), py(by), 2.5, 0, Math.PI * 2);
         ctx.fill();
         ctx.shadowBlur  = 0;
       }
+      if (currentBall.source !== 'detected') {
+        ctx.fillStyle = style.color;
+        ctx.font = `bold ${Math.max(10, Math.round(11 * sx))}px system-ui`;
+        ctx.fillText(
+          `${currentBall.source.replace(/^reconstructed_/, '')} ${currentBall.confidence.toFixed(2)}`,
+          px(bx) + 8, py(by) - 8,
+        );
+      }
+    } else if (ann.ball_out_of_frame && currentBall.mode === 'active') {
+      ctx.fillStyle = '#f59e0b';
+      ctx.font = `bold ${Math.max(12, Math.round(15 * sx))}px system-ui`;
+      ctx.fillText('BALL OUT OF FRAME', 20, canvas.height - 24);
     }
   }
 
@@ -1221,8 +2142,12 @@ function redraw() {
       ctx.beginPath();
       ctx.moveTo(px(x0), py(topY));
       ctx.lineTo(px(x1), py(topY));
-      ctx.lineTo(px(x1), py(floorY1));
-      ctx.lineTo(px(x0), py(floorY0));
+      // Mirror the near-side floor line across the net. Attack zones belong
+      // above the net in the visual overlay, not on the camera-side floor.
+      const mirroredY1 = 2 * topY - floorY1;
+      const mirroredY0 = 2 * topY - floorY0;
+      ctx.lineTo(px(x1), py(mirroredY1));
+      ctx.lineTo(px(x0), py(mirroredY0));
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
@@ -1233,7 +2158,7 @@ function redraw() {
       ctx.fillText(
         `${ids[index].toUpperCase()} · ${count}`,
         px((x0 + x1) / 2),
-        py(topY) + 16,
+        py(topY) - 8,
       );
     }
     ctx.textAlign = 'left';
@@ -1288,19 +2213,47 @@ function redraw() {
 
   let stateY = 70;
   if (showState) {
-    const stateColor = {
+    const lc = ann.lifecycle;
+    const lifecycleLabels = {
+      unconfirmed: 'WAITING FOR SERVE',
+      serve_candidate: 'SERVE CANDIDATE',
+      serve_confirmed: 'SERVE CONFIRMED',
+      reception_pending: 'RECEPTION CONFIRMED',
+      playable_rally: 'PLAYABLE RALLY',
+      ace_no_reception: 'ACE / NO RECEPTION',
+      reception_failed: 'RECEPTION FAILED',
+      serve_fault: 'SERVE FAULT',
+    };
+    const stateColor = lc ? ({
+      unconfirmed: '#00eeff',
+      serve_candidate: '#ffaa00',
+      serve_confirmed: '#eab308',
+      reception_pending: '#10b981',
+      playable_rally: '#00ff88',
+      ace_no_reception: '#facc15',
+      reception_failed: '#ff6666',
+      serve_fault: '#ff6666',
+    }[lc.status] || '#00eeff') : ({
       'serve_prep':   '#ffaa00',
       'serve_ready':  '#00eeff',
       'serving':      '#00eeff',
       'rally_active': '#00ff88',
       'rally_end':    '#ff6666',
-    }[ann.state] || '#00eeff';
+    }[ann.state] || '#00eeff');
     ctx.font = `bold ${Math.max(14, Math.round(22 * sx))}px system-ui`;
     ctx.fillStyle = stateColor;
     ctx.shadowColor = '#000';
     ctx.shadowBlur = 6;
-    let line1 = (ann.state || '').replace(/_/g, ' ').toUpperCase();
-    if (ann.phase) line1 += ' · ' + (ann.phase || '').replace(/_/g, ' ');
+    let line1;
+    if (lc) {
+      line1 = lifecycleLabels[lc.status] || String(lc.status || '').replace(/_/g, ' ').toUpperCase();
+      if (['reception_pending', 'playable_rally'].includes(lc.status) && ann.current_team) {
+        line1 += ` · ${ann.current_team} [${ann.contacts || 0}]`;
+      }
+    } else {
+      line1 = (ann.state || '').replace(/_/g, ' ').toUpperCase();
+      if (ann.phase) line1 += ' · ' + (ann.phase || '').replace(/_/g, ' ');
+    }
     if (showModel && ann.event_model != null && ann.event_model !== '-') {
       line1 += '  |  Model: ' + (ann.event_model || '').replace(/_/g, ' ');
     }
@@ -1313,6 +2266,21 @@ function redraw() {
     ctx.shadowColor = '#000';
     ctx.shadowBlur = 6;
     ctx.fillText('Model: ' + (ann.event_model || '').replace(/_/g, ' '), px(20), py(stateY));
+    ctx.shadowBlur = 0;
+    stateY += 28;
+  }
+
+  if (showModel && ann.spotting_model) {
+    ctx.font = `bold ${Math.max(13, Math.round(20 * sx))}px system-ui`;
+    ctx.fillStyle = ann.spotting_peak ? '#ff4dd2' : '#f58adf';
+    ctx.shadowColor = '#000';
+    ctx.shadowBlur = 6;
+    const spottingScore = Number(ann.spotting_confidence || 0).toFixed(2);
+    ctx.fillText(
+      'Spotting: ' + String(ann.spotting_model).replace(/_/g, ' ') +
+      ' (' + spottingScore + ')',
+      px(20), py(stateY),
+    );
     ctx.shadowBlur = 0;
     stateY += 28;
   }
