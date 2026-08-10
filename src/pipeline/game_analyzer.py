@@ -12,7 +12,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -41,8 +41,18 @@ from src.tracking.ball_trajectory_smoother import (
     resolve_window as resolve_ball_smooth_window,
     smooth_ball_annotations,
 )
+from src.tracking.ball_gap_reconstructor import (
+    BallGapReconstructor,
+    ContactHint,
+)
 from src.tracking.pose_feature_extractor import POSE_FEATURE_NAMES, PoseFeatureExtractor
 from src.tracking.serve_reception import annotate_rallies
+from src.tracking.match_analytics import (
+    annotate_match_phases,
+    annotate_score_timeline,
+    enrich_match_analytics,
+    filter_non_game_records,
+)
 from src.utils.logger import get_logger
 from src.utils.path_utils import local_path_from_uri
 
@@ -123,12 +133,18 @@ class GameStats:
     processed_frames: int = 0
     ball_detected_frames: int = 0
     fps: float = 30.0
+    # Confirmed playable rallies only. Service attempts that end before a
+    # controlled follow-up are kept separately instead of inflating this list.
     rallies: List[Dict] = field(default_factory=list)
+    service_attempts: List[Dict] = field(default_factory=list)
+    rally_lifecycle: Dict[str, int] = field(default_factory=dict)
+    match_analytics: Dict[str, Any] = field(default_factory=dict)
     all_events: List[Dict] = field(default_factory=list)
     # Per-frame data for HTML viewer overlay (ball pos, players, FSM state)
     frame_annotations: List[Dict] = field(default_factory=list)
     # Trajectory-only contact/attack candidates aggregated into court zones.
     attack_heatmap: Dict[str, Any] = field(default_factory=dict)
+    ball_reconstruction: Dict[str, Any] = field(default_factory=dict)
     # Window used, points moved, and the jitter measured before/after.
     ball_smoothing: Dict[str, Any] = field(default_factory=dict)
     # Fixed objects the detector fired on, and what was dropped because of it.
@@ -150,8 +166,12 @@ class GameStats:
             "ball_detection_rate": round(self.ball_detection_rate, 3),
             "total_rallies": len(self.rallies),
             "rallies": self.rallies,
+            "service_attempts": self.service_attempts,
+            "rally_lifecycle": self.rally_lifecycle,
+            "match_analytics": self.match_analytics,
             "all_events": self.all_events,
             "attack_heatmap": self.attack_heatmap,
+            "ball_reconstruction": self.ball_reconstruction,
             "ball_smoothing": self.ball_smoothing,
             "ball_static_suppression": self.ball_static_suppression,
             "models": self.models,
@@ -175,9 +195,8 @@ class GameAnalyzer:
         stats = analyzer.process_frames("data/frames/", output_dir="results/")
     """
 
-    # Four-class causal multi-scale production fit over three full-video gold
-    # datasets. Loading stays fail-safe: if the local weight is absent, the
-    # event overlay is disabled.
+    # Four-class causal production fit over both full-video gold datasets.
+    # Loading stays fail-safe: if this local weight is absent, overlay disables.
     _DEFAULT_EVENT_CHECKPOINT: Optional[str] = (
         "action_recognition/models/experiments_three_full_gold_multiscale_v2/"
         "multiscale_final_three_videos_seed42/final_event_sequence.pt"
@@ -197,10 +216,19 @@ class GameAnalyzer:
         refresh_net_floor: bool = False,
         ball_ensemble: bool = False,
         ball_trajectory_dp: bool = True,
-        ball_smooth_window: Any = BALL_SMOOTH_DEFAULT_WINDOW,
-        suppress_static_ball_sources: bool = True,
         ball_batch_size: int = 1,
         net_height_m: float = 2.34,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        enable_pose: bool = True,
+        enable_net_detection: bool = True,
+        match_segments: Optional[List[Dict[str, Any]]] = None,
+        team_identity_map: Optional[Dict[str, str]] = None,
+        ball_reconstruction_mode: str = "off",
+        reconstruction_affects_fsm: bool = False,
+        reconstruction_contact_hints: Optional[List[Dict[str, Any]]] = None,
+        ball_smooth_window: Any = BALL_SMOOTH_DEFAULT_WINDOW,
+        suppress_static_ball_sources: bool = True,
+        use_model_registry: bool = True,
     ):
         """
         Args:
@@ -209,7 +237,7 @@ class GameAnalyzer:
             pose_model_path:  Override pose model
             output_video:     Produce annotated video / frame outputs
             skip_frames:      Process every (skip_frames+1)-th frame for speed
-            event_checkpoint_path: Optional path to event sequence model (Transformer v3) for overlay.
+            event_checkpoint_path: Optional event-sequence checkpoint override.
             ball_ensemble: Also collect candidates from a second, tiled detector.
             ball_trajectory_dp: Re-pick the ball trajectory globally once the whole
                        video has been read (see BallTrajectoryDP). The live gate
@@ -219,12 +247,38 @@ class GameAnalyzer:
                        tracking remains sequential so ByteTrack IDs stay valid.
             net_height_m: Physical net-top height. Mixed games default to
                        2.34 m; men's games use 2.43 m.
+            progress_callback: Optional observer receiving phase, real frame
+                       counts, throughput and ETA during analysis.
+            enable_pose: Disable pose inference for ball-only dataset refreshes.
+            enable_net_detection: Disable SAM net calibration for ball-only
+                       pre-label jobs where court geometry is intentionally absent.
+            ball_reconstruction_mode: ``off``, ``conservative``,
+                       ``contact_aware`` or ``compare``. Compare stores both
+                       alternatives and uses conservative as active output.
+            reconstruction_affects_fsm: Let only high-confidence reconstructed
+                       positions enter the clean FSM pass. Disabled while the
+                       two policies are under visual evaluation.
+            ball_smooth_window: Odd frame count (or a preset name: light /
+                       moderate / strong / off) for the local quadratic fit
+                       that removes per-frame detector wobble from the chosen
+                       trajectory. 0 disables it. Contacts are detected first
+                       and the fit never crosses one, so hits stay angular.
+            suppress_static_ball_sources: Drop detections that belong to a
+                       fixed object (a spare ball on the floor, a bag, a lamp).
+                       They are confident on every frame, and a confident
+                       candidate is *cheap* for the solver, so a stationary run
+                       can outscore a real flight. See ball_static_sources.
         """
-        self.output_video = output_video
-        self.skip_frames = skip_frames
-        self.net_y_override = net_y_override
-        self.ball_ensemble = ball_ensemble
-        self.ball_trajectory_dp = ball_trajectory_dp
+        self.progress_callback = progress_callback
+        self.enable_pose = bool(enable_pose)
+        self.enable_net_detection = bool(enable_net_detection)
+        self.match_segments = list(match_segments or [])
+        self.team_identity_map = dict(team_identity_map or {})
+        mode = str(ball_reconstruction_mode).replace("-", "_")
+        if mode not in {"off", "conservative", "contact_aware", "compare"}:
+            raise ValueError(f"unknown ball_reconstruction_mode: {mode}")
+        self.ball_reconstruction_mode = mode
+        self.reconstruction_affects_fsm = bool(reconstruction_affects_fsm)
         self.ball_smooth_window = resolve_ball_smooth_window(ball_smooth_window)
         self.suppress_static_ball_sources = bool(suppress_static_ball_sources)
         self.use_model_registry = bool(use_model_registry)
@@ -232,6 +286,21 @@ class GameAnalyzer:
         self.model_provenance: Dict[str, Dict[str, Any]] = {}
         self._static_source_report: Dict[str, Any] = {}
         self._current_fps = 30.0
+        self.reconstruction_contact_hints = [
+            ContactHint(int(item["frame"]), str(item.get("label") or item.get("type") or "other"))
+            for item in (reconstruction_contact_hints or [])
+            if item.get("frame") is not None
+        ]
+        self._emit_progress(
+            phase="initializing",
+            progress=0.0,
+            message="Loading detection models...",
+        )
+        self.output_video = output_video
+        self.skip_frames = skip_frames
+        self.net_y_override = net_y_override
+        self.ball_ensemble = ball_ensemble
+        self.ball_trajectory_dp = ball_trajectory_dp
         self.ball_batch_size = max(1, int(ball_batch_size))
         self.net_height_m = float(net_height_m)
         if not 2.0 <= self.net_height_m <= 2.6:
@@ -255,9 +324,25 @@ class GameAnalyzer:
 
         self.calibration = self._load_calibration(calibration_path)
         self._init_ball_detector(ball_model_path)
-        self._init_pose_model(pose_model_path or str(_ROOT / _POSE_MODEL))
+        self.pose_model = None
+        if self.enable_pose:
+            self._init_pose_model(pose_model_path)
         self._event_predictor = self._init_event_predictor(event_checkpoint_path)
         self._warmup()
+        self._emit_progress(
+            phase="initializing",
+            progress=0.0,
+            message="Models ready; opening video...",
+        )
+
+    def _emit_progress(self, **payload: Any) -> None:
+        """Report progress without letting a UI observer break analysis."""
+        if self.progress_callback is None:
+            return
+        try:
+            self.progress_callback(dict(payload))
+        except Exception as exc:
+            log.warning(f"Progress callback failed: {exc}")
 
     # ------------------------------------------------------------------
     # Initialisation helpers
@@ -510,8 +595,12 @@ class GameAnalyzer:
             }
 
     def _init_event_predictor(self, event_checkpoint_path: Optional[str]):
-        """Load sliding-window event predictor (Transformer v3) for overlay; None if disabled or file missing."""
-        if event_checkpoint_path == "":
+        """Load an explicitly selected event predictor, or disable the overlay."""
+        if not event_checkpoint_path and not self._DEFAULT_EVENT_CHECKPOINT:
+            log.info(
+                "Event overlay disabled by default; pass --event-checkpoint "
+                "with a validated checkpoint to enable it"
+            )
             return None
         # The registry decides which of the twenty-odd checkpoint directories is
         # the production event model; an explicit --event-checkpoint still wins.
@@ -543,9 +632,10 @@ class GameAnalyzer:
         t0 = time.time()
         self.ball_detector.detect_ball(dummy)
         log.info(f"  Ball model warmed up in {time.time()-t0:.1f}s")
-        t0 = time.time()
-        self.pose_model(dummy, verbose=False, device="cuda", half=True)
-        log.info(f"  Pose model warmed up in {time.time()-t0:.1f}s")
+        if self.pose_model is not None:
+            t0 = time.time()
+            self.pose_model(dummy, verbose=False, device="cuda", half=True)
+            log.info(f"  Pose model warmed up in {time.time()-t0:.1f}s")
 
     # Frames without ball detection before forcing rally end.
     # At 30fps, 150 frames = 5 seconds. Ball can be temporarily occluded by players
@@ -579,7 +669,22 @@ class GameAnalyzer:
 
         # 4K GoPro: player bbox center is ~300px from hands/feet.
         # Default 40px radius misses every contact — increase substantially.
-        fsm.event_tracker.contact_radius = 300.0
+        # Scale legacy pixel thresholds from their 1280px tuning space. The
+        # physical motion/contact geometry must not change when input switches
+        # between 720p, 1080p and 4K.
+        frame_width = float(self.calibration.frame_width) if self.calibration else 3840.0
+        px_scale = frame_width / self._BALL_TUNING_WIDTH
+        fsm.event_tracker.contact_radius = 100.0 * px_scale
+        fsm.event_tracker.min_speed_px_per_sec = 120.0 * px_scale
+        # Keep candidate recall high: net crossing + reception/follow-up now
+        # provide the precision, so the initial velocity gate can be permissive.
+        fsm.min_serve_speed = 200.0 * px_scale
+        fsm.ROLLING_SPEED_PX_PER_FRAME = 6.0 * px_scale
+        fsm.CARRIED_SPEED_PX_PER_FRAME = 20.0 * px_scale
+        fsm.FLOOR_MARGIN_PX = 70.0 * px_scale
+        fsm.SERVE_OUT_MARGIN_PX = 30.0 * px_scale
+        fsm.RALLY_OUT_MARGIN_PX = 50.0 * px_scale
+        fsm.BLOCK_NET_MARGIN = 80.0 * px_scale
 
         return fsm
 
@@ -656,6 +761,9 @@ class GameAnalyzer:
                    for FSM / StreamingEventPredictor (team_a = far side, y < net_y)
             poses: List[PlayerPose] — full 17-keypoint skeletons with track IDs
         """
+        if self.pose_model is None:
+            return {"team_a": [], "team_b": []}, []
+
         import torch
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -750,6 +858,10 @@ class GameAnalyzer:
         runs once per camera setup; in-memory calibration gets the values in
         native calibration resolution.
         """
+        if not self.enable_net_detection:
+            log.info("Net detection disabled for this analysis")
+            return
+
         c = self.calibration
         if (c is not None and c.net_tape_top is not None
                 and c.net_floor_left is not None and c.net_floor_right is not None
@@ -905,6 +1017,8 @@ class GameAnalyzer:
         fsm_status: Dict,
         event_display: Optional[str] = None,
         player_poses: Optional[List[PlayerPose]] = None,
+        ball_source: str = "detected",
+        ball_confidence: Optional[float] = None,
     ) -> np.ndarray:
         out = frame.copy()
 
@@ -957,8 +1071,24 @@ class GameAnalyzer:
         # Ball
         if ball_pos:
             cx, cy = int(ball_pos[0]), int(ball_pos[1])
-            cv2.circle(out, (cx, cy), 18, (0, 255, 0), 3)
-            cv2.circle(out, (cx, cy), 5, (0, 255, 0), -1)
+            ball_colors = {
+                "detected": (0, 255, 0),
+                "interpolated_short": (0, 200, 255),
+                "reconstructed_conservative": (255, 212, 0),
+                "reconstructed_contact_aware": (216, 79, 255),
+                "reconstructed_occlusion": (250, 139, 167),
+            }
+            color = ball_colors.get(ball_source, (0, 255, 0))
+            cv2.circle(out, (cx, cy), 18, color, 3)
+            cv2.circle(out, (cx, cy), 5, color, -1)
+            if ball_source != "detected":
+                label = ball_source.replace("reconstructed_", "")
+                if ball_confidence is not None:
+                    label += f" {float(ball_confidence):.2f}"
+                cv2.putText(
+                    out, label, (cx + 22, max(24, cy - 16)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, color, 2,
+                )
 
         # Players — skeletons when keypoints are available, dots as fallback
         if player_poses:
@@ -979,12 +1109,26 @@ class GameAnalyzer:
                 for px, py in pts:
                     cv2.circle(out, (int(px), int(py)), 10, colors[team], -1)
 
-        # FSM state overlay (line 1)
-        state = fsm_status.get("game_state", "?")
-        phase = fsm_status.get("rally_phase") or ""
+        # Confirmed lifecycle overlay (line 1). The old raw FSM tuple often
+        # displayed internally valid but user-meaningless combinations such as
+        # ``serving | | team_b [0]``.
+        lifecycle = fsm_status.get("lifecycle") or {}
+        lifecycle_status = lifecycle.get("status", "unconfirmed")
+        lifecycle_labels = {
+            "unconfirmed": "Waiting for serve",
+            "serve_candidate": "Serve candidate",
+            "serve_confirmed": "Serve confirmed",
+            "reception_pending": "Reception confirmed",
+            "playable_rally": "Playable rally",
+            "ace_no_reception": "Ace / no reception",
+            "reception_failed": "Reception failed",
+            "serve_fault": "Serve fault",
+        }
         team  = fsm_status.get("current_team", "?")
         contacts = fsm_status.get("team_contacts", 0)
-        text = f"{state} | {phase} | {team} [{contacts}]"
+        text = lifecycle_labels.get(lifecycle_status, lifecycle_status)
+        if lifecycle_status in {"reception_pending", "playable_rally"}:
+            text += f" | {team} [{contacts}]"
         cv2.putText(out, text, (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 255, 255), 4)
 
         # Event model overlay (line 2): sliding-window Transformer v3 prediction
@@ -1038,6 +1182,35 @@ class GameAnalyzer:
         _last_rally_display_frame: int = -_STICKY_FRAMES
 
         t0 = time.time()
+        progress_interval = max(1, int(fps / 2))
+
+        def report_frame_progress(frame_idx: int, force: bool = False) -> None:
+            if not force and frame_idx % progress_interval:
+                return
+            elapsed = time.time() - t0
+            frame_current = min(frame_idx + 1, total)
+            frame_progress = frame_current / max(total, 1)
+            source_fps = frame_current / max(elapsed, 0.01)
+            eta_sec = (
+                (total - frame_current) / source_fps
+                if source_fps > 0 and frame_current < total
+                else 0.0
+            )
+            self._emit_progress(
+                phase="analyzing",
+                progress=round(frame_progress * 97.0, 2),
+                frame_current=frame_current,
+                frame_total=total,
+                video_percent=round(frame_progress * 100.0, 2),
+                processing_fps=round(source_fps, 2),
+                eta_sec=round(eta_sec, 1),
+                elapsed_sec=round(elapsed, 1),
+                message=(
+                    f"Analyzing frame {frame_current:,} of {total:,} "
+                    f"({frame_progress * 100.0:.1f}%)"
+                ),
+            )
+
         batch_enabled = self.ball_batch_size > 1 and self.ball_detector_2 is None
         if batch_enabled:
             log.info(f"Ball YOLO batch size: {self.ball_batch_size}")
@@ -1089,6 +1262,7 @@ class GameAnalyzer:
             if self.skip_frames > 0 and frame_idx % (self.skip_frames + 1) != 0:
                 if out_writer:
                     out_writer.write(frame)
+                report_frame_progress(frame_idx)
                 continue
 
             stats.processed_frames += 1
@@ -1152,6 +1326,7 @@ class GameAnalyzer:
                     "rally_phase": str(ev.rally_phase.value) if ev.rally_phase else None,
                     "team": ev.team_controlling,
                     "contact_seq": ev.contacts_count,
+                    "lifecycle": dict(ev.lifecycle) if ev.lifecycle else None,
                 }
                 stats.all_events.append(ev_dict)
                 current_rally_events.append(ev_dict)
@@ -1230,6 +1405,7 @@ class GameAnalyzer:
                 "f": frame_idx,
                 "t": round(timestamp, 3),
                 "ball": [round(ball_pos[0], 1), round(ball_pos[1], 1)] if ball_pos else None,
+                "ball_confidence": round(float(ball_conf), 4) if ball_pos else 0.0,
                 # The gate started a new track here: the step from the previous
                 # position is a change of hypothesis, not the ball moving.
                 "ball_new": True if (ball_pos and self.ball_gate.acquired_this_frame) else None,
@@ -1237,6 +1413,9 @@ class GameAnalyzer:
                       for x, y in player_teams.get("team_a", []) + player_teams.get("team_b", [])],
                 "state": cur_state,
                 "phase": fsm_status.get("rally_phase"),
+                "lifecycle": fsm_status.get("lifecycle"),
+                "current_team": fsm_status.get("current_team"),
+                "contacts": fsm_status.get("team_contacts", 0),
                 "ev": [e["type"] for e in frame_events_this],
                 # Full skeletons: id, team (a/b), bbox, 17×[x,y,conf]
                 "poses": [
@@ -1281,11 +1460,25 @@ class GameAnalyzer:
                 ball_pct = stats.ball_detected_frames / max(stats.processed_frames, 1) * 100
                 log.info(f"[{pct:5.1f}%] f{frame_idx}/{total} | {fps_proc:.1f} fps | "
                          f"state={cur_state} | ball={ball_pct:.0f}%")
+            report_frame_progress(frame_idx, force=(frame_idx + 1 >= total))
 
         stats.rallies = completed_rallies
         stats.processing_time_sec = time.time() - t0
         # Written last: SAM net detection may add its own entry mid-run.
         stats.models = dict(self.model_provenance)
+        self._emit_progress(
+            phase="trajectory",
+            progress=98.0,
+            frame_current=min(stats.total_frames, total),
+            frame_total=total,
+            video_percent=100.0,
+            processing_fps=round(
+                stats.total_frames / max(stats.processing_time_sec, 0.01), 2,
+            ),
+            eta_sec=None,
+            elapsed_sec=round(stats.processing_time_sec, 1),
+            message="Optimizing the complete ball trajectory...",
+        )
 
         # Post-process: re-pick the whole trajectory from the candidate cloud.
         # The gate above had to choose with only the past in hand; now the
@@ -1348,27 +1541,75 @@ class GameAnalyzer:
         # known, and every false detection the filter removes had already been
         # fed to the FSM as a contact. Re-run it over the cleaned trajectory so
         # the saved events and rallies come from the same data the heatmap uses.
-        stats.all_events, stats.rallies = self._recompute_events_on_clean_trajectory(
+        (
+            stats.all_events,
+            stats.rallies,
+            stats.service_attempts,
+        ) = self._recompute_events_on_clean_trajectory(
             stats.frame_annotations, fps,
         )
-        completed_rallies = stats.rallies
-
-        # Serve-centric derivation: serve → reception (+outcome) from rally
-        # structure. Adds "serve_reception" to each rally dict.
-        sr_counts = annotate_rallies(completed_rallies, fps)
-        if sr_counts["serves"]:
-            log.info(f"Serve/reception: {sr_counts['serves']} serves, "
-                     f"{sr_counts['success']} received OK, "
-                     f"{sr_counts['failed']} failed, "
-                     f"{sr_counts['no_reception']} no reception (ace/fault)")
+        if self.match_segments:
+            stats.all_events = filter_non_game_records(
+                stats.all_events, self.match_segments
+            )
+            stats.service_attempts = filter_non_game_records(
+                stats.service_attempts,
+                self.match_segments,
+                frame_field="start_frame",
+            )
+            stats.rallies = [
+                attempt for attempt in stats.rallies
+                if not attempt.get("excluded_from_match_stats")
+                and attempt in stats.service_attempts
+            ]
+        # Serve-centric derivation adds exact lifecycle analytics to every
+        # service attempt and returns the canonical counters used by the viewer.
+        stats.rally_lifecycle = annotate_rallies(stats.service_attempts, fps)
+        # Context enrichment is deliberately a post-processing pass.  A point
+        # is confirmed by the *next* serve, and stable team IDs / possession
+        # numbers also require the complete ordered attempt list.
+        stats.match_analytics = enrich_match_analytics(
+            stats.service_attempts,
+            team_identity_map=self.team_identity_map,
+            match_segments=self.match_segments,
+        )
+        annotate_match_phases(stats.frame_annotations, self.match_segments)
+        annotate_score_timeline(stats.frame_annotations, stats.match_analytics)
+        if stats.rally_lifecycle.get("service_attempts"):
+            lc = stats.rally_lifecycle
+            log.info(
+                "Rally lifecycle: "
+                f"{lc['service_attempts']} attempts, "
+                f"{lc['confirmed_serves']} crossed net, "
+                f"{lc['playable_rallies']} playable, "
+                f"{lc['aces_no_reception']} ace/no reception, "
+                f"{lc['reception_failed']} failed receptions, "
+                f"{lc['serve_faults']} serve faults"
+            )
 
         # Count only confirmed attacks. Generic trajectory turns also include
         # passes, digs and detector restarts, which create a noisy "heatmap"
         # unrelated to the requested attack-origin statistic.
+        # Already scaled to the actual frame size by ``process_video``; the
+        # projector on the next line reads the same object.
+        calib = self.calibration
         stats.attack_heatmap = AttackHeatmap(fps).analyze(
             stats.frame_annotations,
             projector=self._get_projector(),
             events=stats.all_events,
+            # Needed only when a rally ends on the attack and no defender
+            # ever touches the ball; then the net crossing is the target.
+            net_y=calib.net_y if calib else None,
+            # Post bases mark the physical ends of the net; the calibration
+            # net_x clicks can sit well inside them.
+            net_x_left=(
+                calib.net_floor_left[0] if calib and calib.net_floor_left
+                else (calib.net_x_left if calib else None)
+            ),
+            net_x_right=(
+                calib.net_floor_right[0] if calib and calib.net_floor_right
+                else (calib.net_x_right if calib else None)
+            ),
         )
         log.info(
             f"Attack zones: {stats.attack_heatmap['total_attacks']} "
@@ -1422,14 +1663,17 @@ class GameAnalyzer:
 
         solver = BallTrajectoryDP(px_scale=self._ball_px_scale)
         solved = solver.solve(self._ball_candidates)
-        chosen = interpolate_gaps(
-            solved, max_gap=4, max_step_px=solver.max_step_px,
+        chosen = (
+            interpolate_gaps(solved, max_gap=4, max_step_px=solver.max_step_px)
+            if self.ball_reconstruction_mode == "off"
+            else solved
         )
 
         before = sum(1 for a in stats.frame_annotations if a.get("ball"))
         for ann in stats.frame_annotations:
             cand = chosen.get(ann["f"])
             ann["ball"] = [round(cand.x, 1), round(cand.y, 1)] if cand else None
+            ann["ball_confidence"] = round(float(cand.confidence), 4) if cand else 0.0
             ann["ball_new"] = (
                 True if cand is not None and ann["f"] in solver.track_start_frames
                 else None
@@ -1437,6 +1681,36 @@ class GameAnalyzer:
             ann["ball_interp"] = (
                 True if cand is not None and cand.confidence == 0.0 else None
             )
+
+        if self.ball_reconstruction_mode != "off":
+            active_mode = (
+                "conservative"
+                if self.ball_reconstruction_mode == "compare"
+                else self.ball_reconstruction_mode
+            )
+            calibration = self.calibration
+            reconstructor = BallGapReconstructor(
+                int(calibration.frame_width if calibration else 1280),
+                int(calibration.frame_height if calibration else 720),
+                net_tape_top=calibration.net_tape_top if calibration else None,
+                net_tape_bottom=calibration.net_tape_bottom if calibration else None,
+                net_floor_left=calibration.net_floor_left if calibration else None,
+                net_floor_right=calibration.net_floor_right if calibration else None,
+            )
+            summaries = reconstructor.apply(
+                stats.frame_annotations,
+                active_mode=active_mode,
+                contact_hints=self.reconstruction_contact_hints,
+                keep_variants=True,
+            )
+            stats.ball_reconstruction = {
+                "requested_mode": self.ball_reconstruction_mode,
+                "active_mode": active_mode,
+                "affects_fsm": self.reconstruction_affects_fsm,
+                "variants": {
+                    name: vars(summary) for name, summary in summaries.items()
+                },
+            }
         after = sum(1 for a in stats.frame_annotations if a.get("ball"))
 
         stats.ball_detected_frames = after
@@ -1481,23 +1755,91 @@ class GameAnalyzer:
 
     def _recompute_events_on_clean_trajectory(
         self, annotations: List[Dict], fps: float,
-    ) -> Tuple[List[Dict], List[Dict]]:
-        """Re-run the FSM over the cleaned trajectory; return (events, rallies).
+    ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+        """Re-run the FSM over the cleaned trajectory.
 
         Per-frame ``state``/``phase``/``ev`` fields are rewritten in place so the
-        viewer overlay agrees with the saved rally list.
+        viewer overlay agrees with the saved rally list. Returns all events,
+        confirmed playable rallies, and every terminal service attempt.
         """
         fsm = self._make_fsm(fps)
         events: List[Dict] = []
         rallies: List[Dict] = []
+        service_attempts: List[Dict] = []
         cur_events: List[Dict] = []
-        cur_start: Optional[int] = None
         prev_state: Optional[str] = None
         frames_since_ball = 0
+        last_frame_idx = 0
+        reconstruction_mode = getattr(self, "ball_reconstruction_mode", "off")
+        reconstruction_affects_fsm = bool(
+            getattr(self, "reconstruction_affects_fsm", False)
+        )
+
+        def event_dict(ev) -> Dict:
+            return {
+                "frame": ev.frame_idx,
+                "time": round(ev.timestamp, 2),
+                "type": ev.event_type,
+                "game_state": str(ev.game_state.value),
+                "rally_phase": (
+                    str(ev.rally_phase.value) if ev.rally_phase else None
+                ),
+                "team": ev.team_controlling,
+                "contact_seq": ev.contacts_count,
+                "lifecycle": dict(ev.lifecycle) if ev.lifecycle else None,
+            }
+
+        def finish_attempt(end_frame: int, lifecycle: Dict) -> None:
+            nonlocal cur_events
+            if lifecycle.get("status") not in {
+                "playable_rally",
+                "ace_no_reception",
+                "reception_failed",
+                "serve_fault",
+            }:
+                cur_events = []
+                return
+
+            cur_events.sort(key=lambda e: e["frame"])
+            start_frame = lifecycle.get("start_frame")
+            if start_frame is None:
+                start_frame = lifecycle.get("serve_frame")
+            if start_frame is None and cur_events:
+                start_frame = cur_events[0]["frame"]
+            if start_frame is None:
+                cur_events = []
+                return
+
+            duration = max(0, int(end_frame) - int(start_frame))
+            attempt = {
+                "start_frame": int(start_frame),
+                "end_frame": int(end_frame),
+                "duration_frames": duration,
+                "duration_sec": round(duration / fps, 2),
+                "events": list(cur_events),
+                "contacts_team_a": sum(
+                    1 for e in cur_events if e["team"] == "team_a"
+                ),
+                "contacts_team_b": sum(
+                    1 for e in cur_events if e["team"] == "team_b"
+                ),
+                "lifecycle": dict(lifecycle),
+            }
+            service_attempts.append(attempt)
+            if lifecycle.get("is_playable"):
+                rallies.append(attempt)
+            cur_events = []
 
         for ann in annotations:
             frame_idx = int(ann["f"])
+            last_frame_idx = frame_idx
             ball = ann.get("ball")
+            if reconstruction_mode != "off":
+                if not reconstruction_affects_fsm:
+                    ball = ann.get("ball_raw")
+                elif ann.get("ball_source") != "detected" \
+                        and float(ann.get("ball_confidence") or 0.0) < 0.8:
+                    ball = None
             ball_pos = (float(ball[0]), float(ball[1])) if ball else None
             frames_since_ball = 0 if ball_pos else frames_since_ball + 1
 
@@ -1521,7 +1863,17 @@ class GameAnalyzer:
                 timestamp=frame_idx / fps,
                 # Both an interpolated fill and a track restart make the local
                 # trajectory unusable for measuring a turn.
-                ball_interp=bool(ann.get("ball_interp") or ann.get("ball_new")),
+                ball_interp=bool(
+                    ann.get("ball_new")
+                    or (
+                        ann.get("ball_interp")
+                        and not (
+                            reconstruction_affects_fsm
+                            and ann.get("ball_contact_reconstructed")
+                            and float(ann.get("ball_confidence") or 0.0) >= 0.8
+                        )
+                    )
+                ),
             )
             status = fsm.get_current_status()
             state = status.get("game_state")
@@ -1529,48 +1881,48 @@ class GameAnalyzer:
             ann["state"] = state
             ann["phase"] = status.get("rally_phase")
             ann["ev"] = [e.event_type for e in fsm_events]
-
-            if state == "rally_active" and cur_start is None:
-                cur_start = frame_idx
+            ann["lifecycle"] = status.get("lifecycle")
+            ann["current_team"] = status.get("current_team")
+            ann["contacts"] = status.get("team_contacts", 0)
 
             for ev in fsm_events:
-                d = {
-                    "frame": ev.frame_idx,
-                    "time": round(ev.timestamp, 2),
-                    "type": ev.event_type,
-                    "game_state": str(ev.game_state.value),
-                    "rally_phase": str(ev.rally_phase.value) if ev.rally_phase else None,
-                    "team": ev.team_controlling,
-                    "contact_seq": ev.contacts_count,
-                }
+                d = event_dict(ev)
                 events.append(d)
                 cur_events.append(d)
 
             if state == "rally_end" and prev_state != "rally_end":
-                if cur_events:
-                    # The serve is published on the net crossing but carries the
-                    # earlier frame of its own contact, so emission order is not
-                    # frame order. serve_reception reads events positionally.
-                    cur_events.sort(key=lambda e: e["frame"])
-                    # A rally spans serve → ball dead; cur_start (first
-                    # RALLY_ACTIVE frame) would clip the serve off the front.
-                    r_start = min(cur_events[0]["frame"],
-                                  cur_start if cur_start is not None else cur_events[0]["frame"])
-                    rallies.append({
-                        "start_frame": r_start,
-                        "end_frame": frame_idx,
-                        "duration_frames": frame_idx - r_start,
-                        "duration_sec": round((frame_idx - r_start) / fps, 2),
-                        "events": list(cur_events),
-                        "contacts_team_a": sum(1 for e in cur_events if e["team"] == "team_a"),
-                        "contacts_team_b": sum(1 for e in cur_events if e["team"] == "team_b"),
-                    })
-                cur_start, cur_events = None, []
+                finish_attempt(frame_idx, status.get("lifecycle") or {})
             prev_state = state
 
+        # Preserve an attempt cut off by the end of the source video.
+        tail_status = fsm.get_current_status()
+        tail_lifecycle = tail_status.get("lifecycle") or {}
+        if (
+            tail_status.get("game_state") in ("serving", "rally_active")
+            and tail_lifecycle.get("serve_frame") is not None
+        ):
+            fsm._end_rally(last_frame_idx, "video_end")
+            for ev in fsm.update(
+                frame_idx=last_frame_idx + 1,
+                ball_pos=None,
+                player_positions={"team_a": [], "team_b": []},
+                timestamp=(last_frame_idx + 1) / fps,
+            ):
+                d = event_dict(ev)
+                events.append(d)
+                cur_events.append(d)
+            finish_attempt(
+                last_frame_idx,
+                fsm.get_current_status().get("lifecycle") or {},
+            )
+
         events.sort(key=lambda e: e["frame"])
-        log.info(f"Clean-trajectory pass: {len(rallies)} rallies, {len(events)} events")
-        return events, rallies
+        log.info(
+            "Clean-trajectory pass: "
+            f"{len(service_attempts)} service attempts, "
+            f"{len(rallies)} playable rallies, {len(events)} events"
+        )
+        return events, rallies, service_attempts
 
     def _filter_ball_outliers(
         self,
@@ -1666,6 +2018,116 @@ class GameAnalyzer:
 
         return filled
 
+    def _render_final_video(
+        self,
+        video_path: Path,
+        output_path: Path,
+        annotations: List[Dict],
+        fps: float,
+        frame_width: int,
+        frame_height: int,
+        max_frames: int,
+    ) -> bool:
+        """Second pass rendering so post-DP/reconstructed balls reach video."""
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            log.warning(f"Final render cannot open source video: {video_path}")
+            return False
+
+        writer = None
+        for codec in ("mp4v", "avc1", "H264"):
+            candidate = cv2.VideoWriter(
+                str(output_path), cv2.VideoWriter_fourcc(*codec), fps,
+                (frame_width, frame_height),
+            )
+            if candidate.isOpened():
+                writer = candidate
+                log.info(f"Final VideoWriter codec: {codec}")
+                break
+            candidate.release()
+        if writer is None:
+            cap.release()
+            log.warning("Final VideoWriter failed — reconstructed video not saved")
+            return False
+
+        by_frame = {int(ann["f"]): ann for ann in annotations}
+        rendered = 0
+        try:
+            while rendered < max_frames:
+                ok, frame = cap.read()
+                if not ok:
+                    break
+                ann = by_frame.get(rendered)
+                if ann is None:
+                    writer.write(frame)
+                    rendered += 1
+                    continue
+
+                player_poses: List[PlayerPose] = []
+                teams: Dict[str, List[Tuple[float, float]]] = {
+                    "team_a": [], "team_b": [],
+                }
+                for saved in ann.get("poses") or []:
+                    bbox = tuple(float(value) for value in saved.get("bb", (0, 0, 0, 0)))
+                    if len(bbox) != 4:
+                        continue
+                    team = "team_a" if saved.get("team") in ("a", "team_a") else "team_b"
+                    center = ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
+                    teams[team].append(center)
+                    keypoints = np.asarray(saved.get("kp") or [], dtype=np.float32)
+                    if keypoints.shape != (17, 3):
+                        continue
+                    player_poses.append(PlayerPose(
+                        team=team,
+                        center=center,
+                        bbox=bbox,
+                        keypoints=keypoints,
+                        track_id=saved.get("id"),
+                        back_facing_score=saved.get("back"),
+                        team_prior=saved.get("team_prior"),
+                    ))
+
+                ball = ann.get("ball")
+                ball_pos = (float(ball[0]), float(ball[1])) if ball else None
+                status = {
+                    "game_state": ann.get("state"),
+                    "rally_phase": ann.get("phase"),
+                    "lifecycle": ann.get("lifecycle"),
+                    "current_team": ann.get("current_team"),
+                    "team_contacts": ann.get("contacts", 0),
+                }
+                drawn = self._draw_frame(
+                    frame,
+                    ball_pos,
+                    teams,
+                    status,
+                    event_display=ann.get("event_model"),
+                    player_poses=player_poses,
+                    ball_source=str(ann.get("ball_source") or "detected"),
+                    ball_confidence=float(ann.get("ball_confidence") or 0.0),
+                )
+                if not ball_pos and ann.get("ball_out_of_frame"):
+                    cv2.putText(
+                        drawn, "BALL OUT OF FRAME", (20, frame_height - 35),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 165, 255), 3,
+                    )
+                writer.write(drawn)
+                rendered += 1
+                if rendered % max(1, int(fps * 2)) == 0:
+                    self._emit_progress(
+                        phase="rendering",
+                        progress=98.0 + rendered / max(max_frames, 1),
+                        frame_current=rendered,
+                        frame_total=max_frames,
+                        video_percent=round(100.0 * rendered / max(max_frames, 1), 2),
+                        message=f"Rendering reconstructed video {rendered:,}/{max_frames:,}",
+                    )
+        finally:
+            cap.release()
+            writer.release()
+        log.info(f"Final reconstructed video: {output_path} ({rendered:,} frames)")
+        return rendered > 0
+
     # ------------------------------------------------------------------
     # Public entry points
     # ------------------------------------------------------------------
@@ -1690,9 +2152,18 @@ class GameAnalyzer:
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         max_frames = int(max_duration_sec * fps) if max_duration_sec else total
+        max_frames = min(max_frames, total) if total > 0 else max_frames
 
         log.section(f"Video: {vp.name}")
         log.info(f"Resolution={w}x{h}  fps={fps:.1f}  frames={total}  skip={self.skip_frames}")
+        self._emit_progress(
+            phase="calibration",
+            progress=0.0,
+            frame_current=0,
+            frame_total=max_frames,
+            video_percent=0.0,
+            message=f"Preparing {w}x{h} video ({max_frames:,} frames)...",
+        )
 
         # Auto-detect net tape with SAM if not already in calibration
         self._maybe_run_sam_net_detection(
@@ -1705,8 +2176,11 @@ class GameAnalyzer:
         self._configure_ball_selection_for(w)
 
         out_writer = None
-        if self.output_video:
-            out_path = od / f"{vp.stem}_analyzed.mp4"
+        out_path = od / f"{vp.stem}_analyzed.mp4"
+        defer_final_render = (
+            self.output_video and self.ball_reconstruction_mode != "off"
+        )
+        if self.output_video and not defer_final_render:
             # Prefer mp4v first to avoid OpenH264 DLL warning on Windows (avc1/H264 need it)
             for codec in ("mp4v", "avc1", "H264"):
                 fourcc = cv2.VideoWriter_fourcc(*codec)
@@ -1734,15 +2208,37 @@ class GameAnalyzer:
                 frame_iter(), fps, max_frames, stats,
                 out_writer=out_writer,
             )
+            if defer_final_render:
+                self._render_final_video(
+                    vp, out_path, stats.frame_annotations, fps, w, h, max_frames,
+                )
         finally:
             cap.release()
             if out_writer:
                 out_writer.release()
             self.calibration = saved_calib  # restore original
 
+        self._emit_progress(
+            phase="saving",
+            progress=99.0,
+            frame_current=max_frames,
+            frame_total=max_frames,
+            video_percent=100.0,
+            eta_sec=0.0,
+            message="Saving statistics and frame annotations...",
+        )
         self._save_and_print(stats, od, vp.stem,
                              original_video_path=str(vp.resolve()),
                              calibration_override=scaled_calib)
+        self._emit_progress(
+            phase="done",
+            progress=100.0,
+            frame_current=max_frames,
+            frame_total=max_frames,
+            video_percent=100.0,
+            eta_sec=0.0,
+            message="Analysis complete",
+        )
         return stats
 
     def process_frames(
@@ -1832,6 +2328,7 @@ class GameAnalyzer:
             "team_divider_prior_counts": team_prior_counts,
             "pose_feature_names": POSE_FEATURE_NAMES,
             "attack_heatmap": stats.attack_heatmap,
+            "ball_reconstruction": stats.ball_reconstruction,
             "frames": stats.frame_annotations,
         }
         with open(ann_path, "w") as f:

@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -22,6 +23,45 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.pipeline.game_analyzer import GameAnalyzer
 from src.utils.path_utils import local_path_from_uri
+
+
+def _load_reconstruction_contacts(path: str, source_stem: str):
+    """Load contact hints from full-video labels, a manifest, or a plain list."""
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        records = payload
+    else:
+        records = (
+            payload.get("events")
+            or payload.get("annotations")
+            or payload.get("clips")
+            or []
+        )
+    hints = []
+    seen = set()
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        record_stem = str(record.get("source_stem") or "")
+        if record_stem and record_stem != source_stem:
+            continue
+        frame = record.get("frame", record.get("contact_frame"))
+        if frame is None:
+            continue
+        frame = int(frame)
+        if frame in seen:
+            continue
+        seen.add(frame)
+        hints.append({
+            "frame": frame,
+            "label": str(
+                record.get("type")
+                or record.get("primary_event_type")
+                or record.get("event_type")
+                or "other"
+            ),
+        })
+    return hints
 
 
 def main():
@@ -58,6 +98,11 @@ def main():
         metavar="M",
         help="Explicit net height in meters; overrides --net-profile",
     )
+    parser.add_argument(
+        "--no-net-detection",
+        action="store_true",
+        help="Reuse saved calibration without SAM/Hough net refresh",
+    )
 
     # Processing options
     parser.add_argument("--duration", type=float, default=None, metavar="SEC",
@@ -80,6 +125,26 @@ def main():
     parser.add_argument("--no-ball-dp", action="store_true",
                         help="Keep the live per-frame gate instead of re-picking the "
                              "ball trajectory globally after the video is read")
+    parser.add_argument(
+        "--ball-reconstruction",
+        choices=("off", "conservative", "contact-aware", "compare"),
+        default="off",
+        help=(
+            "Offline detector-gap reconstruction. compare stores both variants "
+            "and uses conservative as active output (default: off)"
+        ),
+    )
+    parser.add_argument(
+        "--reconstruction-contacts",
+        default=None,
+        metavar="JSON",
+        help="Optional human contact labels/manifest used as contact-aware hints",
+    )
+    parser.add_argument(
+        "--reconstruction-affects-fsm",
+        action="store_true",
+        help="Allow only >=0.8-confidence reconstructed points into clean FSM pass",
+    )
     parser.add_argument(
         "--ball-smooth",
         default="moderate",
@@ -112,9 +177,16 @@ def main():
     parser.add_argument("--no-video", action="store_true",
                         help="Skip annotated output (faster, stats only)")
     parser.add_argument("--event-checkpoint", default=None, metavar="PATH",
-                        help="Path to event sequence model for overlay (default: Transformer v3)")
+                        help="Validated event model override (default: four-class "
+                             "Transformer trained on both full-video gold datasets)")
     parser.add_argument("--no-event-overlay", action="store_true",
                         help="Disable event model overlay on video")
+    parser.add_argument(
+        "--match-config",
+        default=None,
+        metavar="PATH",
+        help="Optional JSON with manual phase/set segments and team_identity_map",
+    )
 
     args = parser.parse_args()
     if args.video:
@@ -141,6 +213,16 @@ def main():
     print("=" * 45)
 
     event_ckpt = None if args.no_event_overlay else args.event_checkpoint
+    match_config = {}
+    if args.match_config:
+        match_config = json.loads(Path(args.match_config).read_text(encoding="utf-8"))
+    contact_hints = []
+    if args.reconstruction_contacts:
+        source_stem = Path(args.video).stem if args.video else Path(args.frames).name
+        contact_hints = _load_reconstruction_contacts(
+            args.reconstruction_contacts, source_stem,
+        )
+        print(f"Contact hints : {len(contact_hints)}")
     analyzer = GameAnalyzer(
         calibration_path=args.calibration,
         ball_model_path=args.ball_model,
@@ -152,10 +234,16 @@ def main():
         ball_ensemble=args.ball_ensemble,
         ball_trajectory_dp=not args.no_ball_dp,
         ball_batch_size=args.ball_batch_size,
+        net_height_m=net_height_m,
+        match_segments=match_config.get("segments", []),
+        team_identity_map=match_config.get("team_identity_map", {}),
+        ball_reconstruction_mode=args.ball_reconstruction,
+        reconstruction_affects_fsm=args.reconstruction_affects_fsm,
+        reconstruction_contact_hints=contact_hints,
+        enable_net_detection=not args.no_net_detection,
         ball_smooth_window=args.ball_smooth,
         suppress_static_ball_sources=not args.no_static_suppression,
         use_model_registry=not args.no_model_registry,
-        net_height_m=net_height_m,
     )
 
     if args.video:

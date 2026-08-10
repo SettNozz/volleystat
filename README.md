@@ -232,11 +232,12 @@ if label:
 
 ## Event Clip Annotator
 
-Streamlit UI for labelling clips and correcting pre-labels.
+Fast Flask UI for labelling clips and correcting model or VLM pre-labels.
 
 ```bash
-streamlit run action_recognition/annotator/event_clip_annotator.py
-# Or: action_recognition/annotator/run_event_clip_annotator.bat
+python -m action_recognition.annotator.event_clip_annotator \
+  --manifest data/event_clips_part2/manifest_predicted.json
+# Open: http://localhost:5056
 ```
 
 **Workflow:**
@@ -244,6 +245,26 @@ streamlit run action_recognition/annotator/event_clip_annotator.py
 2. Annotator shows the clip video + current label
 3. Correct labels → **Save & Next**
 4. After labelling, merge into the main dataset and retrain
+
+---
+
+### Remote Ollama VLM pre-labels
+
+A MacBook running Ollama can pre-label clips without moving the videos off the
+Windows workstation. Start with `qwen3-vl:8b-instruct`:
+
+```powershell
+$env:OLLAMA_BASE_URL = "http://<mac-ip>:11434"
+python -m action_recognition.vlm.prelabel_events --check
+python -m action_recognition.vlm.prelabel_events `
+  --manifest data/event_clips_part2/manifest.json `
+  --limit 10
+```
+
+The source manifest is untouched; progress is saved after every clip to
+`manifest_vlm_predicted.json`. See
+[docs/OLLAMA_VLM_MAC.md](docs/OLLAMA_VLM_MAC.md) for Mac setup, benchmarking,
+resuming, and troubleshooting.
 
 ---
 
