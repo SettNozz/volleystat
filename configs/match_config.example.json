@@ -1,0 +1,31 @@
+{
+  "team_identity_map": {
+    "team_a": "opponent_team",
+    "team_b": "observed_team"
+  },
+  "segments": [
+    {
+      "start_frame": 0,
+      "end_frame": 899,
+      "match_phase": "non_game"
+    },
+    {
+      "start_frame": 900,
+      "end_frame": 54000,
+      "set_id": "set_1",
+      "team_identity_map": {
+        "team_a": "opponent_team",
+        "team_b": "observed_team"
+      }
+    },
+    {
+      "start_frame": 54001,
+      "end_frame": 108000,
+      "set_id": "set_2",
+      "team_identity_map": {
+        "team_a": "observed_team",
+        "team_b": "opponent_team"
+      }
+    }
+  ]
+}

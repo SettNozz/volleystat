@@ -93,7 +93,8 @@ def process_videos_for_labelstudio(
     skip_frames: int = 0,
     max_duration_seconds: Optional[int] = None,
     save_visualization_frames: bool = True,
-    force_reprocess: bool = False
+    force_reprocess: bool = False,
+    max_videos: Optional[int] = None,
 ) -> None:
     """
     Process multiple videos and create Label Studio annotations.
@@ -115,8 +116,12 @@ def process_videos_for_labelstudio(
     
     output_dir = Path(output_base_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
-    print(f"🎯 Processing {len(video_paths)} videos for Label Studio")
+
+    if max_videos is not None:
+        video_paths = video_paths[:max_videos]
+        print(f"🎯 Processing first {len(video_paths)} video(s) (max_videos={max_videos})")
+    else:
+        print(f"🎯 Processing {len(video_paths)} videos for Label Studio")
     print(f"📂 Output directory: {output_dir}")
     print(f"🎯 Model: {model_path}")
     print(f"⚡ Confidence threshold: {confidence_threshold}")
@@ -239,6 +244,13 @@ def main():
         type=str,
         help="Directory containing videos (alternative to --videos)"
     )
+
+    parser.add_argument(
+        "--max-videos",
+        type=int,
+        default=None,
+        help="Process only first N videos (default: all)"
+    )
     
     parser.add_argument(
         "--output-dir",
@@ -337,7 +349,8 @@ def main():
             skip_frames=args.skip_frames,
             max_duration_seconds=max_duration,
             save_visualization_frames=not args.no_visualization,
-            force_reprocess=args.force
+            force_reprocess=args.force,
+            max_videos=args.max_videos,
         )
     except Exception as e:
         print(f"❌ Error: {e}")

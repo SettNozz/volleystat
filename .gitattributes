@@ -1,0 +1,29 @@
+# Line endings are a property of the checkout, not of the content.
+#
+# Without this, an editor that saves CRLF rewrites every line of a file and git
+# reports a 500-line diff where nothing changed: 69 files were in that state,
+# which is what made "git status" useless for seeing actual work.
+#
+# text=auto stores LF in the repository and checks out whatever the platform
+# wants, so the same file can be edited on Windows and on Linux without churn.
+* text=auto
+
+# Files whose format cares about the exact bytes.
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+*.sh   text eol=lf
+
+# Never touched, and never worth diffing.
+*.pt      binary
+*.pth     binary
+*.onnx    binary
+*.mp4     binary
+*.webm    binary
+*.mkv     binary
+*.png     binary
+*.jpg     binary
+*.jpeg    binary
+*.gif     binary
+*.zip     binary
+*.parquet binary
+*.db      binary

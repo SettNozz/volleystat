@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CourtSense — Volleyball Analytics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: oklch(98% 0.004 250);
+  --ink: oklch(20% 0.02 260);
+  --muted: oklch(55% 0.015 260);
+  --border: oklch(91% 0.006 255);
+  --primary: oklch(58% 0.19 265);
+  --primary-dark: oklch(48% 0.19 265);
+  --primary-soft: oklch(94% 0.03 265);
+  --card: #fff;
+  --green: oklch(62% 0.15 150);
+  --red: oklch(60% 0.18 25);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--ink); min-height: 100vh; display: flex; flex-direction: column; }
+
+.topbar { height: 60px; display: flex; align-items: center; gap: 28px; padding: 0 28px; background: var(--card); border-bottom: 1px solid var(--border); }
+.logo { display: flex; align-items: center; gap: 10px; }
+.logo-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--primary); display: flex; align-items: center; justify-content: center; }
+.logo-mark div { width: 11px; height: 11px; border-radius: 50%; background: #fff; }
+.logo-name { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; }
+
+.hero { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; }
+h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 6px; }
+.subtitle { color: var(--muted); font-size: 14px; font-weight: 500; margin-bottom: 32px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 28px; width: 100%; max-width: 560px; }
+label { display: block; font-size: 12.5px; font-weight: 700; color: var(--muted); margin-bottom: 6px; margin-top: 18px; }
+label:first-of-type { margin-top: 0; }
+input[type=text], select {
+  width: 100%; padding: 10px 14px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; color: var(--ink); font-size: 13.5px; font-family: inherit; font-weight: 500;
+}
+input[type=text]:focus, select:focus { outline: none; border-color: var(--primary); }
+.check-label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink); margin-top: 18px; }
+.check-label input { accent-color: var(--primary); }
+button {
+  margin-top: 24px; width: 100%; padding: 12px; background: var(--primary); color: #fff;
+  border: none; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer;
+  font-family: inherit; transition: background 0.15s;
+}
+button:hover { background: var(--primary-dark); }
+button:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+.status { margin-top: 18px; padding: 13px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; display: none; }
+.status.running { background: oklch(95% 0.04 150); border: 1px solid oklch(88% 0.06 150); color: var(--green); display: block; }
+.status.error   { background: oklch(95% 0.03 25); border: 1px solid oklch(88% 0.05 25); color: var(--red); display: block; }
+.spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--green); border-top-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+.progress-wrap { display: none; margin-top: 11px; }
+.status.running .progress-wrap { display: block; }
+.progress-track { height: 9px; overflow: hidden; border-radius: 999px; background: oklch(88% 0.035 150); }
+.progress-fill { width: 0%; height: 100%; border-radius: inherit; background: var(--green); transition: width .35s ease; }
+.progress-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 7px; color: var(--muted); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.hint { margin-top: 12px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-mark"><div></div></div>
+    <div class="logo-name">CourtSense</div>
+  </div>
+</div>
+
+<div class="hero">
+  <h1>Volleyball Analytics</h1>
+  <p class="subtitle">Upload match footage — ball tracking, poses, rallies &amp; contact events</p>
+  <div class="card">
+    <label>Video file path</label>
+    <input type="text" id="videoPath" placeholder="C:/path/to/game.mp4" value="data/processed/ball_extraction_results/original_images_video.mp4">
+
+    <label>Processing speed</label>
+    <select id="skipFrames">
+      <option value="0" selected>Every frame (recommended: skeletons + heatmap)</option>
+      <option value="1">Every 2nd frame (faster)</option>
+      <option value="2">Every 3rd frame (fast)</option>
+      <option value="4">Every 5th frame (fastest)</option>
+    </select>
+
+    <label>GPU ball batch</label>
+    <select id="ballBatchSize">
+      <option value="4">4 frames (low VRAM)</option>
+      <option value="8" selected>8 frames (recommended for 10 GB)</option>
+      <option value="12">12 frames (maximum throughput)</option>
+    </select>
+
+    <label>Net profile</label>
+    <select id="netProfile">
+      <option value="mixed" selected>Mixed — 2.34 m</option>
+      <option value="men">Men — 2.43 m</option>
+    </select>
+
+    <label class="check-label">
+      <input type="checkbox" id="refreshNetFloor" checked>
+      Refresh SAM3 net-post bases (enable for a new camera angle)
+    </label>
+
+    <button id="analyzeBtn" onclick="startAnalysis()">Analyze Video</button>
+
+    <div class="status" id="statusBox">
+      <span class="spinner" id="spinner"></span>
+      <span id="statusText">Starting...</span>
+      <div class="progress-wrap">
+        <div class="progress-track">
+          <div class="progress-fill" id="analysisProgressFill"></div>
+        </div>
+        <div class="progress-meta">
+          <span id="analysisProgressFrames">Waiting for frames...</span>
+          <span id="analysisProgressEta"></span>
+        </div>
+      </div>
+    </div>
+    <p class="hint">
+      Measured on an RTX 3080 (10 GB): a 57s 4K video takes ~3 min 30s
+      with Every frame + batch 8. Fresh net calibration adds setup time;
+      other GPUs may vary.
+    </p>
+  </div>
+</div>
+
+<script>
+let pollInterval = null;
+
+function startAnalysis() {
+  const path = document.getElementById('videoPath').value.trim();
+  const skip = document.getElementById('skipFrames').value;
+  const ballBatchSize = document.getElementById('ballBatchSize').value;
+  const netProfile = document.getElementById('netProfile').value;
+  const refreshNetFloor = document.getElementById('refreshNetFloor').checked;
+  if (!path) return;
+
+  document.getElementById('analyzeBtn').disabled = true;
+  showStatus('running', 'Initializing models...');
+
+  fetch('/analyze', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      video_path: path,
+      skip_frames: parseInt(skip),
+      ball_batch_size: parseInt(ballBatchSize),
+      net_profile: netProfile,
+      refresh_net_floor: refreshNetFloor,
+    })
+  })
+  .then(async r => {
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.error || `Server returned HTTP ${r.status}`);
+    return data;
+  })
+  .then(data => {
+    if (data.error) { showStatus('error', data.error); return; }
+    pollStatus(data.job_id);
+  })
+  .catch(e => {
+    const offline = window.location.protocol === 'file:' ||
+      e instanceof TypeError;
+    const hint = offline
+      ? 'Viewer server is unavailable. Start `python viewer.py` and open http://localhost:5050.'
+      : e.toString();
+    showStatus('error', hint);
+    document.getElementById('analyzeBtn').disabled = false;
+  });
+}
+
+function pollStatus(jobId) {
+  clearInterval(pollInterval);
+  const pollOnce = () => {
+    fetch('/status/' + jobId)
+      .then(r => r.json())
+      .then(job => {
+        if (job.status === 'running') {
+          showStatus('running', job.message || 'Processing...', job);
+        } else if (job.status === 'done') {
+          clearInterval(pollInterval);
+          showStatus('running', 'Done! Redirecting...', {progress: 100});
+          setTimeout(() => { window.location = '/results/' + jobId; }, 800);
+        } else if (job.status === 'error') {
+          clearInterval(pollInterval);
+          showStatus('error', 'Error: ' + job.message);
+          document.getElementById('analyzeBtn').disabled = false;
+        }
+      })
+      .catch(e => {
+        clearInterval(pollInterval);
+        showStatus('error', 'Status request failed: ' + e);
+        document.getElementById('analyzeBtn').disabled = false;
+      });
+  };
+  pollOnce();
+  pollInterval = setInterval(pollOnce, 1000);
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '';
+  const rounded = Math.round(seconds);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const secs = rounded % 60;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+}
+
+function updateAnalysisProgress(job = {}) {
+  const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
+  document.getElementById('analysisProgressFill').style.width = progress + '%';
+
+  const current = Number(job.frame_current);
+  const total = Number(job.frame_total);
+  const videoPercent = Number(job.video_percent);
+  let frames = `${progress.toFixed(1)}%`;
+  if (Number.isFinite(current) && Number.isFinite(total) && total > 0) {
+    const percentText = Number.isFinite(videoPercent)
+      ? ` · ${videoPercent.toFixed(1)}% of video`
+      : '';
+    frames = `${current.toLocaleString()} / ${total.toLocaleString()} frames${percentText}`;
+  }
+  document.getElementById('analysisProgressFrames').textContent = frames;
+
+  const fps = Number(job.processing_fps);
+  const eta = Number(job.eta_sec);
+  const details = [];
+  if (Number.isFinite(fps) && fps > 0) details.push(`${fps.toFixed(1)} fps`);
+  if (Number.isFinite(eta) && eta > 0) details.push(`ETA ${formatDuration(eta)}`);
+  document.getElementById('analysisProgressEta').textContent = details.join(' · ');
+}
+
+function showStatus(type, msg, job = null) {
+  const box = document.getElementById('statusBox');
+  box.className = 'status ' + type;
+  document.getElementById('statusText').textContent = msg;
+  document.getElementById('spinner').style.display = type === 'running' ? 'inline-block' : 'none';
+  if (type === 'running') updateAnalysisProgress(job || {});
+}
+</script>
+</body>
+</html>
