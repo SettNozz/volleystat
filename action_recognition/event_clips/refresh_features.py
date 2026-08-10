@@ -32,6 +32,7 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from action_recognition.event_clips.compute_features import compute_clip_features
+from action_recognition.event_clips.feature_schema import RESOLUTION_NORMALIZED_SCHEMA
 
 
 def find_annotations(results_root: Path):
@@ -47,7 +48,15 @@ def main():
     ap = argparse.ArgumentParser(description="Refresh clip features from new annotations")
     ap.add_argument("--manifest", required=True)
     ap.add_argument("--results-root", required=True,
-                    help="Root dir containing <stem>_annotations.json (searched recursively)")
+                    help="Root containing the base annotations (poses/events are preserved)")
+    ap.add_argument(
+        "--ball-results-root",
+        default=None,
+        help=(
+            "Optional root containing fresh ball-only annotations. Ball fields "
+            "are overlaid by frame while pose_f and labels stay from --results-root."
+        ),
+    )
     ap.add_argument("--output-features-dir", required=True)
     args = ap.parse_args()
 
@@ -56,6 +65,12 @@ def main():
 
     ann_paths = find_annotations(Path(args.results_root))
     print(f"Found annotations for stems: {sorted(ann_paths)}")
+    ball_ann_paths = (
+        find_annotations(Path(args.ball_results_root))
+        if args.ball_results_root else {}
+    )
+    if ball_ann_paths:
+        print(f"Fresh ball annotations for stems: {sorted(ball_ann_paths)}")
 
     out_dir = Path(args.output_features_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -72,15 +87,51 @@ def main():
         if stem not in cache:
             with open(ann_paths[stem]) as f:
                 ann = json.load(f)
+            fresh_ball_by_idx = {}
+            if stem in ball_ann_paths:
+                with open(ball_ann_paths[stem]) as f:
+                    ball_ann = json.load(f)
+                fresh_ball_by_idx = {
+                    int(fr["f"]): fr for fr in ball_ann.get("frames", [])
+                }
             cache[stem] = {
                 "by_idx": {fr["f"]: fr for fr in ann["frames"]},
+                "fresh_ball_by_idx": fresh_ball_by_idx,
                 "net_y": float(ann.get("net_tape_top") or ann.get("net_y", 0.0)),
                 "fps": float(ann.get("fps", 30.0)),
+                "frame_width": int(ann.get("frame_width") or 0),
+                "frame_height": int(ann.get("frame_height") or 0),
             }
         c = cache[stem]
-        frames = [c["by_idx"][fi]
-                  for fi in range(clip["start_frame"], clip["end_frame"] + 1)
-                  if fi in c["by_idx"]]
+        if c["frame_width"] <= 0 or c["frame_height"] <= 0:
+            raise SystemExit(
+                f"{ann_paths[stem]} has no valid frame_width/frame_height; "
+                "cannot generate resolution_normalized_v2 features"
+            )
+        frames = []
+        for fi in range(clip["start_frame"], clip["end_frame"] + 1):
+            if fi not in c["by_idx"]:
+                continue
+            frame = c["by_idx"][fi]
+            fresh = c["fresh_ball_by_idx"].get(fi)
+            if fresh is not None:
+                frame = dict(frame)
+                ball_fields = (
+                    "ball", "ball_raw", "ball_raw_confidence",
+                    "ball_source", "ball_confidence", "ball_interp",
+                    "ball_new", "ball_out_of_frame",
+                    "ball_contact_reconstructed",
+                    "ball_conservative", "ball_conservative_source",
+                    "ball_conservative_confidence", "ball_contact_aware",
+                    "ball_contact_aware_source",
+                    "ball_contact_aware_confidence",
+                )
+                for key in ball_fields:
+                    if key in fresh:
+                        frame[key] = fresh.get(key)
+                    else:
+                        frame.pop(key, None)
+            frames.append(frame)
         if len(frames) < 5:
             missing_frames += 1
             continue
@@ -88,9 +139,26 @@ def main():
         total_frames += len(frames)
         pose_frames += sum(1 for fr in frames if fr.get("pose_f"))
 
-        df = compute_clip_features(frames, net_y=c["net_y"], fps=c["fps"])
+        df = compute_clip_features(
+            frames,
+            net_y=c["net_y"],
+            fps=c["fps"],
+            frame_width=c["frame_width"],
+            frame_height=c["frame_height"],
+            feature_schema=RESOLUTION_NORMALIZED_SCHEMA,
+        )
         df.to_parquet(out_dir / f"{clip['clip_id']}.parquet", index=False)
         refreshed += 1
+
+    with open(out_dir / "feature_schema.json", "w") as f:
+        json.dump(
+            {
+                "feature_schema": RESOLUTION_NORMALIZED_SCHEMA,
+                "feature_files": refreshed,
+            },
+            f,
+            indent=2,
+        )
 
     print(f"\nRefreshed {refreshed}/{len(clips)} clips -> {out_dir}")
     if total_frames:

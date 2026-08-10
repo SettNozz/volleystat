@@ -15,12 +15,21 @@ import pandas as pd
 from action_recognition.event_clips.config import (
     ALL_FEATURE_NAMES, NUM_POSE_FEATURES, TRAJ_FEATURE_NAMES,
 )
+from action_recognition.event_clips.feature_schema import (
+    LEGACY_PIXEL_SCHEMA,
+    build_trajectory_features,
+    validate_feature_schema,
+)
 
 
 def compute_clip_features(
     frames: List[Dict],
     net_y: float,
     fps: float,
+    *,
+    frame_width: Optional[float] = None,
+    frame_height: Optional[float] = None,
+    feature_schema: str = LEGACY_PIXEL_SCHEMA,
 ) -> pd.DataFrame:
     """
     Build the (T, 18) feature table for one clip segment.
@@ -29,8 +38,17 @@ def compute_clip_features(
         frames: annotation dicts for the clip's frames, chronological
                 (keys: "ball", "p", optionally "pose_f")
         net_y:  net reference in the same pixel space as the annotations
-        fps:    source video fps (speeds are px/second)
+        fps:    source video fps
+        frame_width/frame_height: required for resolution-normalized features
+        feature_schema: versioned geometry semantics. The legacy default keeps
+                        old callers and datasets compatible.
     """
+    schema = validate_feature_schema(feature_schema)
+    frame_size = (
+        (frame_width, frame_height)
+        if frame_width is not None and frame_height is not None
+        else None
+    )
     T = len(frames)
     out = np.zeros((T, len(ALL_FEATURE_NAMES)), dtype=np.float32)
 
@@ -42,31 +60,16 @@ def compute_clip_features(
         players = ann.get("p") or []
 
         bx, by = (ball[0], ball[1]) if ball else (0.0, 0.0)
-        if ball and prev_ball:
-            dx, dy = bx - prev_ball[0], by - prev_ball[1]
-            speed = float(np.hypot(dx, dy)) * fps
-            direction = float(np.arctan2(dy, dx))
-            vy = dy * fps
-        else:
-            speed = direction = vy = 0.0
-
-        if players and ball:
-            player_dist = min(float(np.hypot(bx - px, by - py)) for px, py in players)
-        else:
-            player_dist = 0.0
-
-        traj = [
-            bx,                                          # ball_x
-            by,                                          # ball_y
-            speed,                                       # ball_speed
-            direction,                                   # ball_dir
-            abs(by - net_y) if ball else 0.0,            # ball_net_dist
-            player_dist,                                 # player_dist
-            0.0 if by < net_y else 1.0,                  # team_side
-            i / max(T - 1, 1),                           # frame_norm
-            vy,                                          # ball_vy
-            1.0 if (ball and by < net_y) else 0.0,       # ball_above_net
-        ]
+        traj = build_trajectory_features(
+            ball=ball,
+            previous_ball=prev_ball,
+            players=players,
+            net_y=net_y,
+            fps=fps,
+            frame_norm=i / max(T - 1, 1),
+            feature_schema=schema,
+            frame_size=frame_size,
+        )
 
         pose = ann.get("pose_f")
         if not pose or len(pose) != NUM_POSE_FEATURES:
@@ -79,4 +82,9 @@ def compute_clip_features(
             prev_ball = [bx, by]
             last_ball = [bx, by]
 
-    return pd.DataFrame(out, columns=ALL_FEATURE_NAMES)
+    result = pd.DataFrame(out, columns=ALL_FEATURE_NAMES)
+    result.attrs["feature_schema"] = schema
+    if frame_size is not None:
+        result.attrs["frame_width"] = float(frame_size[0])
+        result.attrs["frame_height"] = float(frame_size[1])
+    return result
