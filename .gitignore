@@ -95,9 +95,6 @@ assets/temp_palette.png
 .claude/
 .cursor/
 
-# Internal working notes
-CLAUDE.md
-
 # graphify
 graphify-out/cache/
 
