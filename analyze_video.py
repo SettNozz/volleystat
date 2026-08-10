@@ -80,6 +80,24 @@ def main():
     parser.add_argument("--no-ball-dp", action="store_true",
                         help="Keep the live per-frame gate instead of re-picking the "
                              "ball trajectory globally after the video is read")
+    parser.add_argument(
+        "--ball-smooth",
+        default="moderate",
+        metavar="N|PRESET",
+        help=(
+            "Smooth the chosen ball trajectory with a local quadratic fit: a "
+            "frame count (odd) or light/moderate/strong/off. The fit never "
+            "crosses a detected contact, so hits stay angular "
+            "(default: moderate = 7 frames)"
+        ),
+    )
+    parser.add_argument(
+        "--no-static-suppression",
+        action="store_true",
+        help="Keep detections that sit motionless for seconds (a spare ball on "
+             "the floor, a bag, a lamp). On by default: those are what drag the "
+             "trajectory into a scribble",
+    )
     parser.add_argument("--ball-batch-size", type=int, default=8, metavar="N",
                         help="Ball YOLO GPU batch size (default: 8; use 4 on low VRAM)")
 
@@ -127,6 +145,8 @@ def main():
         ball_ensemble=args.ball_ensemble,
         ball_trajectory_dp=not args.no_ball_dp,
         ball_batch_size=args.ball_batch_size,
+        ball_smooth_window=args.ball_smooth,
+        suppress_static_ball_sources=not args.no_static_suppression,
         net_height_m=net_height_m,
     )
 

@@ -29,6 +29,17 @@ from src.tracking.integrated_volleyball_fsm import CourtBounds, IntegratedVolley
 from src.tracking.attack_heatmap import AttackHeatmap
 from src.tracking.ball_track_gate import BallCandidate, BallTrackGate
 from src.tracking.ball_trajectory_dp import BallTrajectoryDP, interpolate_gaps
+from src.tracking.ball_static_sources import (
+    clean_ball_annotations,
+    find_static_sources_in_candidates,
+    suppress_static_candidates,
+)
+from src.tracking.ball_trajectory_smoother import (
+    DEFAULT_WINDOW as BALL_SMOOTH_DEFAULT_WINDOW,
+    jitter_metric,
+    resolve_window as resolve_ball_smooth_window,
+    smooth_ball_annotations,
+)
 from src.tracking.pose_feature_extractor import POSE_FEATURE_NAMES, PoseFeatureExtractor
 from src.tracking.serve_reception import annotate_rallies
 from src.utils.logger import get_logger
@@ -117,6 +128,10 @@ class GameStats:
     frame_annotations: List[Dict] = field(default_factory=list)
     # Trajectory-only contact/attack candidates aggregated into court zones.
     attack_heatmap: Dict[str, Any] = field(default_factory=dict)
+    # Window used, points moved, and the jitter measured before/after.
+    ball_smoothing: Dict[str, Any] = field(default_factory=dict)
+    # Fixed objects the detector fired on, and what was dropped because of it.
+    ball_static_suppression: Dict[str, Any] = field(default_factory=dict)
     processing_time_sec: float = 0.0
 
     @property
@@ -134,6 +149,8 @@ class GameStats:
             "rallies": self.rallies,
             "all_events": self.all_events,
             "attack_heatmap": self.attack_heatmap,
+            "ball_smoothing": self.ball_smoothing,
+            "ball_static_suppression": self.ball_static_suppression,
             "processing_time_sec": round(self.processing_time_sec, 1),
         }
 
@@ -176,6 +193,8 @@ class GameAnalyzer:
         refresh_net_floor: bool = False,
         ball_ensemble: bool = False,
         ball_trajectory_dp: bool = True,
+        ball_smooth_window: Any = BALL_SMOOTH_DEFAULT_WINDOW,
+        suppress_static_ball_sources: bool = True,
         ball_batch_size: int = 1,
         net_height_m: float = 2.34,
     ):
@@ -202,6 +221,10 @@ class GameAnalyzer:
         self.net_y_override = net_y_override
         self.ball_ensemble = ball_ensemble
         self.ball_trajectory_dp = ball_trajectory_dp
+        self.ball_smooth_window = resolve_ball_smooth_window(ball_smooth_window)
+        self.suppress_static_ball_sources = bool(suppress_static_ball_sources)
+        self._static_source_report: Dict[str, Any] = {}
+        self._current_fps = 30.0
         self.ball_batch_size = max(1, int(ball_batch_size))
         self.net_height_m = float(net_height_m)
         if not 2.0 <= self.net_height_m <= 2.6:
@@ -1233,6 +1256,7 @@ class GameAnalyzer:
         # The gate above had to choose with only the past in hand; now the
         # frames after each decision are available too, and they are what
         # identifies the ball on frames where a distractor scored higher.
+        self._current_fps = float(fps or 30.0)
         solved = self._apply_trajectory_dp(stats) if self.ball_trajectory_dp else False
 
         # These two clean up after the greedy gate and must not run after the
@@ -1253,6 +1277,35 @@ class GameAnalyzer:
             n_filled = self._interpolate_ball_positions(stats.frame_annotations)
             if n_filled:
                 log.info(f"Ball interpolation: filled {n_filled} missing frames")
+
+        # Safety net over the final trajectory, after the legacy gate clean-up so
+        # nothing can re-fill a removed island. The candidate-level pass above
+        # only runs when the solver does; the live gate, `--no-ball-dp`, and any
+        # result loaded from an older run still need the same two physical
+        # rules applied to the points that were actually chosen.
+        if self.suppress_static_ball_sources:
+            report = clean_ball_annotations(
+                stats.frame_annotations,
+                fps=self._current_fps,
+                px_scale=self._ball_px_scale,
+            )
+            report.update(getattr(self, "_static_source_report", {}))
+            stats.ball_static_suppression = report
+            if report["removed_points"]:
+                log.info(
+                    f"Static/jump suppression: {report['removed_points']} trajectory "
+                    f"points cleared "
+                    f"({report['static_sources']['removed_points']} fixed object, "
+                    f"{report['jump_islands']['removed_points']} jump islands)"
+                )
+
+        # Which candidate is the ball is settled above; where the ball is is
+        # not. The chosen point is a detector box centre and it breathes a few
+        # pixels every frame, which is the zig-zag visible in the drawn trail.
+        # Fit it out *before* the FSM re-run so events are measured on the same
+        # trajectory the viewer shows — and so contact detection sees a clean
+        # incoming leg instead of noise it has to be tolerant of.
+        self._smooth_ball_trajectory(stats)
 
         # The inline FSM above has to run on raw per-frame detections, because
         # the annotated video needs a state to draw while the frame is in hand.
@@ -1306,6 +1359,32 @@ class GameAnalyzer:
         if not self._ball_candidates:
             return False
 
+        # A fixed object in the gym — a spare ball on the floor, a bag, a lamp —
+        # is detected confidently on every frame, and a confident candidate has
+        # *negative* cost in the solver. A long stationary run therefore beats a
+        # short correct flight on total cost, which is how the chosen path ends
+        # up alternating between the real ball and a piece of furniture. Take
+        # the bait off the table before the solver ever sees it.
+        if self.suppress_static_ball_sources:
+            sources = find_static_sources_in_candidates(
+                self._ball_candidates,
+                fps=float(getattr(self, "_current_fps", 30.0) or 30.0),
+                px_scale=self._ball_px_scale,
+            )
+            removed = suppress_static_candidates(
+                self._ball_candidates, sources, px_scale=self._ball_px_scale,
+            )
+            if sources:
+                log.info(
+                    f"Static ball sources: {len(sources)} fixed object(s), "
+                    f"{removed} candidates dropped "
+                    f"(longest {max(s.seconds for s in sources):.1f} s)"
+                )
+            self._static_source_report = {
+                "candidate_sources": [s.as_dict() for s in sources],
+                "candidates_removed": removed,
+            }
+
         solver = BallTrajectoryDP(px_scale=self._ball_px_scale)
         solved = solver.solve(self._ball_candidates)
         chosen = interpolate_gaps(
@@ -1334,6 +1413,36 @@ class GameAnalyzer:
         )
         self._ball_candidates.clear()
         return True
+
+    def _smooth_ball_trajectory(self, stats: "GameStats") -> None:
+        """Fit per-frame detector wobble out of the chosen trajectory.
+
+        Records the jitter (mean absolute second difference of the path) either
+        side of the pass, because "looks smoother" is not a measurement and the
+        window is a tuning knob that has to be judged on numbers as well as on
+        the video.
+        """
+        window = getattr(self, "ball_smooth_window", 0)
+        if not window:
+            stats.ball_smoothing = {"window": 0}
+            return
+
+        before = jitter_metric(stats.frame_annotations)
+        summary = smooth_ball_annotations(
+            stats.frame_annotations,
+            window=window,
+            px_scale=getattr(self, "_ball_px_scale", 1.0),
+        )
+        summary["jitter_before"] = before
+        summary["jitter_after"] = jitter_metric(stats.frame_annotations)
+        stats.ball_smoothing = summary
+        log.info(
+            f"Ball smoothing (window {summary['window']}): "
+            f"{summary['moved']}/{summary['points']} points moved, "
+            f"mean {summary['mean_shift_px']} px, "
+            f"{summary['contacts_preserved']} contacts kept sharp, "
+            f"jitter {before['mean']} -> {summary['jitter_after']['mean']} px/frame"
+        )
 
     def _recompute_events_on_clean_trajectory(
         self, annotations: List[Dict], fps: float,
