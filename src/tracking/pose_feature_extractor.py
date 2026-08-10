@@ -15,14 +15,19 @@ recent grounded positions), so ByteTrack IDs from the pose model are required
 for accurate values; without IDs it degrades gracefully to zeros.
 """
 
+from __future__ import annotations
+
 from collections import defaultdict, deque
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from src.detection.player_pose import (
-    PlayerPose, L_SHOULDER, R_SHOULDER,
-)
+if TYPE_CHECKING:
+    from src.detection.player_pose import PlayerPose
+
+# COCO keypoint indices are intentionally kept local.  Importing player_pose
+# here used to make schema-only consumers load cv2 and the full detector stack.
+L_SHOULDER, R_SHOULDER = 5, 6
 
 # Fixed feature order — keep stable, dataset prep depends on it.
 POSE_FEATURE_NAMES: List[str] = [

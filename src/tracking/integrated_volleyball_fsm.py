@@ -101,6 +101,7 @@ class RallyEvent:
     rally_phase:     Optional[RallyPhase]
     team_controlling: str
     contacts_count:  int
+    lifecycle: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -133,9 +134,12 @@ class IntegratedVolleyballFSM:
     # Ball moving slower than this (px/frame, path length over the recent
     # window) is considered rolling or stationary → not in active play.
     ROLLING_SPEED_PX_PER_FRAME: float = 6.0
+    CARRIED_SPEED_PX_PER_FRAME: float = 20.0
     # When ball is within this many pixels of the near/far baseline AND moving
     # nearly horizontally at moderate speed → also considered out of play.
     FLOOR_MARGIN_PX: float = 70.0
+    SERVE_OUT_MARGIN_PX: float = 30.0
+    RALLY_OUT_MARGIN_PX: float = 50.0
     # How long the ball must stay slow before a rally is declared over.
     # A ball at the apex of a high pass is momentarily slow too, so anything
     # shorter than about a second cuts live rallies in half.
@@ -198,6 +202,17 @@ class IntegratedVolleyballFSM:
         # the ball back to the server, or a detector re-lock all produce
         # serve-shaped contacts that never cross — those must not open a rally.
         self._pending_serve: Optional[RallyEvent] = None
+        self._serve_event: Optional[RallyEvent] = None
+        self._reception_event: Optional[RallyEvent] = None
+        self._net_cross_frame: Optional[int] = None
+        self._followup_frame: Optional[int] = None
+        self._reception_return_frame: Optional[int] = None
+        self._reception_quality: Optional[str] = None
+        self._rally_start_frame: Optional[int] = None
+        self._rally_outcome: Optional[str] = None
+        self._rally_end_reason: Optional[str] = None
+        self._serve_crossed_net: bool = False
+        self._playable_rally: bool = False
         # ~2 s at 30fps: a real serve reaches the far court well inside this.
         self.serve_confirm_frames: int = 60
         # Events produced by state handlers (not by a contact) for this frame.
@@ -217,7 +232,6 @@ class IntegratedVolleyballFSM:
     ) -> List[RallyEvent]:
         """Main per-frame update. Returns new rally events for this frame."""
         new_events: List[RallyEvent] = []
-        self._deferred_events = []
 
         if ball_pos is not None:
             self.ball_trajectory.append((frame_idx, ball_pos[0], ball_pos[1]))
@@ -292,13 +306,22 @@ class IntegratedVolleyballFSM:
             # from the ball position, so prefer it.
             team_controlling=self.possessing_team or self.serving_team or contact.team,
             contacts_count=self.possessing_team_contacts,
+            lifecycle=self.get_rally_lifecycle(),
         )
 
         # Hold a candidate serve back until the ball crosses the net.
         if was_serve_ready and event_type == "serve":
             self._pending_serve = event
+            self._serve_event = event
+            event.lifecycle = self.get_rally_lifecycle()
             return None
 
+        if event_type == "reception":
+            self._reception_event = event
+        elif event_type in ("dig", "pass", "attack") and self._playable_rally:
+            self._followup_frame = frame_idx
+
+        event.lifecycle = self.get_rally_lifecycle()
         return event
 
     def _determine_event_type(
@@ -339,19 +362,34 @@ class IntegratedVolleyballFSM:
             receiving_team = (
                 "team_b" if self.serving_team == "team_a" else "team_a"
             )
-            if ball_side == receiving_team:
-                # Reception!
+            if not self._serve_crossed_net:
+                return None
+
+            if self._reception_event is None and ball_side == receiving_team:
                 self.possessing_team = receiving_team
                 self.possessing_team_contacts = 1
-
-                # Transition: SERVING → RALLY_ACTIVE
-                self.current_state = GameState.RALLY_ACTIVE
+                self._reception_quality = "unknown"
 
                 _log.info(f"f{frame_idx}: RECEPTION by {receiving_team}")
                 return "reception"
-            else:
-                # Serving team touched again (noise / fault) → ignore
-                return None
+
+            if self._reception_event is not None and ball_side == receiving_team:
+                self.possessing_team = receiving_team
+                self.possessing_team_contacts = 2
+                self._playable_rally = True
+                self._rally_outcome = "playable_rally"
+                self._followup_frame = frame_idx
+                self._reception_quality = "controlled"
+                if self._serve_event is not None:
+                    self._rally_start_frame = self._serve_event.frame_idx
+                self.current_state = GameState.RALLY_ACTIVE
+                _log.info(
+                    f"f{frame_idx}: PLAYABLE RALLY confirmed; "
+                    f"start=f{self._rally_start_frame}"
+                )
+                return "pass"
+
+            return None
 
         # ── RALLY_ACTIVE: sequence-based classification ─────────────────
         elif state == GameState.RALLY_ACTIVE:
@@ -455,13 +493,34 @@ class IntegratedVolleyballFSM:
         MAX_SERVING_FRAMES in the game analyzer / FSM timeout.
         """
         if self._ball_crossed_net():
-            # The crossing is what confirms a candidate contact really was a
-            # serve; only now does the event become public and the rally start.
+            # The crossing confirms the service attempt and makes the serve
+            # event public. The playable rally start remains deferred until
+            # reception plus a controlled follow-up, then backdates to serve.
             if self._pending_serve is not None:
+                self._serve_crossed_net = True
+                self._net_cross_frame = frame_idx
+                self._pending_serve.lifecycle = self.get_rally_lifecycle()
                 self._deferred_events.append(self._pending_serve)
                 _log.info(f"f{frame_idx}: SERVE confirmed (crossed net) "
                           f"by {self.serving_team}")
                 self._pending_serve = None
+            elif self._reception_event is not None:
+                # A serve reception may legally return the ball directly over
+                # the net.  It is an overpass/free-ball outcome, not a failed
+                # reception.  The serving team now has a fresh possession.
+                self._reception_return_frame = frame_idx
+                self._reception_quality = "overpass"
+                self._playable_rally = True
+                self._rally_outcome = "playable_rally"
+                self._followup_frame = frame_idx
+                if self._serve_event is not None:
+                    self._rally_start_frame = self._serve_event.frame_idx
+                self.possessing_team = self.serving_team
+                self.possessing_team_contacts = 0
+                self.current_state = GameState.RALLY_ACTIVE
+                _log.info(
+                    f"f{frame_idx}: reception OVERPASS; rally remains active"
+                )
             else:
                 _log.debug(f"f{frame_idx}: Serve crossed net (awaiting reception)")
             return
@@ -473,10 +532,10 @@ class IntegratedVolleyballFSM:
         # go back to waiting — no event, no rally.
         if (self._pending_serve is not None
                 and frames_serving >= self.serve_confirm_frames):
-            _log.debug(f"f{frame_idx}: candidate serve discarded (no net crossing)")
-            self._pending_serve = None
-            self.serve_done = False
-            self.serving_team = None
+            _log.info(
+                f"f{frame_idx}: serve candidate discarded (no net crossing)"
+            )
+            self._reset_rally_state()
             self.current_state = GameState.SERVE_READY
             return
 
@@ -486,14 +545,18 @@ class IntegratedVolleyballFSM:
         # Serve timeout: if serve has been in flight too long without reception,
         # end the rally (handles cases where reception was never detected).
         if frames_serving >= self.max_serving_frames:
-            _log.info(f"f{frame_idx}: Serve timeout after {frames_serving} frames → rally end")
+            _log.info(
+                f"f{frame_idx}: Serve timeout after {frames_serving} frames "
+                "-> rally end"
+            )
             self._end_rally(frame_idx, "serve_timeout")
             return
 
         # Serve out of frame bounds
         x, y = ball_pos
         w, h = self.court_bounds.right, self.court_bounds.bottom
-        if x < -30 or x > w + 30 or y < -30 or y > h + 30:
+        margin = self.SERVE_OUT_MARGIN_PX
+        if x < -margin or x > w + margin or y < -margin or y > h + margin:
             self._end_rally(frame_idx, "serve_out")
 
     def _handle_rally_active(
@@ -508,13 +571,14 @@ class IntegratedVolleyballFSM:
 
         # Ball rolling/stationary → end the rally
         if out_of_play_confirmed:
-            _log.info(f"f{frame_idx}: Ball out of play → rally end")
+            _log.info(f"f{frame_idx}: Ball out of play -> rally end")
             self._end_rally(frame_idx, "ball_out_of_play")
             return
 
         x, y = ball_pos
         w, h = self.court_bounds.right, self.court_bounds.bottom
-        if x < -50 or x > w + 50 or y < -50 or y > h + 50:
+        margin = self.RALLY_OUT_MARGIN_PX
+        if x < -margin or x > w + margin or y < -margin or y > h + margin:
             self._end_rally(frame_idx, "ball_out")
 
     def _handle_rally_end(
@@ -590,7 +654,7 @@ class IntegratedVolleyballFSM:
             yn > cb.bottom - self.FLOOR_MARGIN_PX
             or yn < cb.top + self.FLOOR_MARGIN_PX
         )
-        if near_floor and speed < 20.0:
+        if near_floor and speed < self.CARRIED_SPEED_PX_PER_FRAME:
             dx = abs(xn - x0)
             dy = abs(yn - y0)
             if dx > 0 and dy / (dx + 1e-6) < 0.25:
@@ -639,8 +703,48 @@ class IntegratedVolleyballFSM:
 
     def _end_rally(self, frame_idx: int, reason: str) -> None:
         """Transition to RALLY_END."""
+        self._rally_end_reason = reason
+        if self._playable_rally:
+            self._rally_outcome = "playable_rally"
+        elif self._reception_event is not None:
+            self._rally_outcome = "reception_failed"
+            if self._reception_quality in (None, "unknown"):
+                self._reception_quality = (
+                    "error"
+                    if reason in {"ball_out", "ball_out_of_play"}
+                    else "unknown"
+                )
+        elif self._serve_crossed_net:
+            self._rally_outcome = "ace_no_reception"
+        elif (
+            self._pending_serve is not None
+            and reason in {"serve_out", "serve_fault"}
+        ):
+            self._rally_outcome = "serve_fault"
+        elif self._pending_serve is not None:
+            # Detector loss/no-crossing is not evidence of an actual service
+            # attempt. Drop the candidate instead of polluting serve-fault
+            # analytics with between-rally handling and re-locks.
+            self._pending_serve = None
+            self._serve_event = None
+
         self.current_state = GameState.RALLY_END
         self.current_rally_phase = None
+
+        if self._rally_outcome == "serve_fault" and self._pending_serve is not None:
+            fault = self._pending_serve
+            fault.event_type = "serve_fault"
+            fault.game_state = GameState.RALLY_END
+            fault.rally_phase = None
+            fault.lifecycle = self.get_rally_lifecycle()
+            self._deferred_events.append(fault)
+            self._pending_serve = None
+
+        lifecycle = self.get_rally_lifecycle()
+        if self._serve_event is not None:
+            self._serve_event.lifecycle = lifecycle
+        if self._reception_event is not None:
+            self._reception_event.lifecycle = lifecycle
         _log.warning(f"f{frame_idx}: Rally ended -> {reason}")
 
     def _reset_rally_state(self) -> None:
@@ -658,6 +762,17 @@ class IntegratedVolleyballFSM:
         self.possessing_team_contacts = 0
         self._out_of_play_since_frame = -1
         self._pending_serve = None
+        self._serve_event = None
+        self._reception_event = None
+        self._net_cross_frame = None
+        self._followup_frame = None
+        self._reception_return_frame = None
+        self._reception_quality = None
+        self._rally_start_frame = None
+        self._rally_outcome = None
+        self._rally_end_reason = None
+        self._serve_crossed_net = False
+        self._playable_rally = False
 
     # ──────────────────────────────────────────────────────────────────
     # Status / legacy compatibility
@@ -684,6 +799,63 @@ class IntegratedVolleyballFSM:
                 for c in recnt
             ],
             "trajectory": traj,
+            "lifecycle": self.get_rally_lifecycle(),
+        }
+
+    def get_rally_lifecycle(self) -> Dict[str, Any]:
+        """Return the current confirmed service-attempt/rally lifecycle.
+
+        ``start_frame`` is populated only after the receiving team makes a
+        controlled follow-up, and is then backdated to the serve contact.
+        """
+        if self._rally_outcome is not None:
+            status = self._rally_outcome
+        elif self._playable_rally:
+            status = "playable_rally"
+        elif self._reception_event is not None:
+            status = "reception_pending"
+        elif self._serve_crossed_net:
+            status = "serve_confirmed"
+        elif self._pending_serve is not None:
+            status = "serve_candidate"
+        else:
+            status = "unconfirmed"
+
+        serving_team = self.serving_team
+        receiving_team = (
+            "team_b" if serving_team == "team_a" else "team_a"
+        ) if serving_team in ("team_a", "team_b") else None
+
+        return {
+            "status": status,
+            "is_playable": self._playable_rally,
+            "serve_confirmed": self._serve_crossed_net,
+            "start_frame": self._rally_start_frame if self._playable_rally else None,
+            "serve_frame": (
+                self._serve_event.frame_idx if self._serve_event is not None else None
+            ),
+            "net_cross_frame": self._net_cross_frame,
+            "reception_frame": (
+                self._reception_event.frame_idx
+                if self._reception_event is not None else None
+            ),
+            "followup_frame": self._followup_frame,
+            "reception_return_frame": self._reception_return_frame,
+            "serving_team": serving_team,
+            "receiving_team": receiving_team,
+            "end_reason": self._rally_end_reason,
+            "serve_outcome": (
+                "fault" if status == "serve_fault"
+                else "ace" if status == "ace_no_reception"
+                else "in_play" if self._serve_crossed_net
+                else "unknown"
+            ),
+            "reception_quality": (
+                self._reception_quality
+                if self._reception_event is not None
+                else "no_touch_ace" if status == "ace_no_reception"
+                else "not_applicable"
+            ),
         }
 
     def get_rally_summary(self) -> Dict[str, Any]:
@@ -704,6 +876,7 @@ class IntegratedVolleyballFSM:
             "team_contacts":   team_contacts,
             "rally_duration_frames": len(self.ball_trajectory),
             "current_phase":   self.current_rally_phase.value if self.current_rally_phase else None,
+            "lifecycle":       self.get_rally_lifecycle(),
         }
 
     # Legacy property kept for backward compatibility
