@@ -1,365 +1,328 @@
-# Volleystat — Volleyball Analytics Pipeline
+# Volleystat
 
-> Computer-vision pipeline that processes volleyball match footage to detect the ball,
-> estimate player poses, track game events, and classify ball-contact actions.
+Offline volleyball-video analytics for 4K fixed-camera footage. Pipeline detects and reconstructs ball trajectory, tracks player poses, calibrates court and net geometry, segments rallies, derives match analytics, predicts contact events, and exports viewer-ready annotations.
 
----
+Current production path is `analyze_video.py` -> `GameAnalyzer` -> JSON/video artifacts -> `viewer.py`.
 
-## What it does
+## Current capabilities
 
-| Stage | Technology | Output |
+| Stage | Current implementation | Main output |
 |---|---|---|
-| Ball detection | YOLOv8 (curated8) + temporal filter | Ball position per frame |
-| Pose estimation | YOLO11m-pose | Player bboxes → team A / B |
-| Court calibration | Interactive perspective tool | `court_calibration.json` (net_y, etc.) |
-| FSM game tracking | Finite-state machine on ball + net | Rally state, event triggers |
-| Event clip extraction | FSM contact events → per-clip Parquet | Trajectory features, video features |
-| Sequence classification | DualStreamProjectedLSTM (trajectory + CNN) | Per-clip multi-label: serve/reception/pass/attack/block/other |
-| **Action Spotting** | **SpottingTCN (dilated conv)** | **Per-frame contact detection** |
-| Overlay on video | StreamingEventPredictor (Transformer v3) | "Event: attack" text on annotated video |
-| Results viewer | Flask + D3.js | Interactive field overlay at localhost:5050 |
-
----
-
-## Quick Start
-
-```bash
-# 1. Activate virtual environment
-volley_env_311\Scripts\activate
-
-# 2. (Once) Calibrate court for your camera angle
-python scripts/interactive_court_calibration.py -i "your_game.mp4"
-
-# 3. Analyze a video
-python analyze_video.py --video "C:/path/to/game.mp4"
-
-# 4. View results in browser
-python viewer.py
-# → http://localhost:5050/load?video=<name>&results_dir=results/<name>
-```
-
----
-
-## Installation
-
-```bash
-# Core (ball detection, pose, pipeline)
-pip install -r requirements.txt
-
-# Pose estimation (YOLO11 pose)
-pip install -r requirements_yolo.txt
-
-# GPU (CUDA 11.8)
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
-```
-
-**Python 3.11** is required. The local venv is `volley_env_311/`.
-
----
-
-## Main Pipeline
-
-### Analyze a video
-
-```bash
-# Full analysis with event overlay (default)
-python analyze_video.py --video game.mp4
-
-# Skip video output (faster, still produces stats + annotations JSON)
-python analyze_video.py --video game.mp4 --no-video
-
-# Limit to first 60 seconds
-python analyze_video.py --video game.mp4 --duration 60
-
-# Use a different event-recognition checkpoint
-python analyze_video.py --video game.mp4 \
-    --event-checkpoint action_recognition/models/checkpoints_transformer_v3/best_event_sequence.pt
-
-# Disable event overlay completely
-python analyze_video.py --video game.mp4 --no-event-overlay
-
-# Process a frames directory (for testing)
-python analyze_video.py --frames data/dataset_30_sec/frames/
-```
-
-**Outputs** (in `results/<video_name>/`):
-- `<name>_stats.json` — per-frame ball positions, team detections, FSM events, rally stats
-- `<name>_annotations.json` — frame-level ball + player + event annotations for the viewer
-- `<name>_annotated.mp4` — annotated video (unless `--no-video`)
-
-### Batch: analyze 3.mp4 and open viewer
-
-```bat
-run_analyze_3mp4_and_view.bat
-```
-
----
-
-## Court Calibration
-
-Must be done **once per camera angle** before any analysis.
-
-```bash
-python scripts/interactive_court_calibration.py -i "your_video.mp4"
-```
-
-Interactive 5-stage process:
-1. Back line (far side)
-2. Side lines
-3. Net position
-4. Front line (near side)
-5. Confirm & save
-
-Saves `court_calibration.json`. Without it, net_y is wrong and the FSM will not split teams correctly.
-
----
-
-## Action Recognition
-
-### A. Sequence classification (per-clip, trained)
-
-Each FSM contact event produces a ~2-second clip.
-The **DualStreamProjectedLSTM** classifies the clip as one or more of:
-`serve | reception | pass | attack | block | other`
-
-**Event taxonomy:** multi-label (a block can also be an attack).
-
-#### Prepare clips from analysis results
-
-```bash
-# If analysis was run with --no-video, pass --original-video
-python -m action_recognition.event_clips.prepare \
-    --results-dir results/part_2 \
-    --output-dir data/event_clips_part2 \
-    --original-video "C:/path/to/video.mp4"
-```
-
-#### Merge datasets
-
-```bash
-python -m action_recognition.event_clips.merge_manifests \
-    --manifest1 data/event_clips_merged/manifest.json \
-    --manifest2 data/event_clips_part3/manifest_predicted.json \
-    --output-dir data/event_clips_merged_v2
-```
-
-#### Train
-
-```bash
-# Best model: DualStreamProjectedLSTM (--dual-stream flag)
-python -m action_recognition.training.train_fusion_lstm \
-    --manifest data/event_clips_merged_v5/manifest.json \
-    --features-dir data/event_clips_merged_v5/features \
-    --video-features-dir data/event_clips_merged_v5/video_features \
-    --checkpoint-dir action_recognition/models/checkpoints_fusion_v4_dual \
-    --dual-stream --epochs 60
-
-# Or Transformer / LSTM (trajectory only)
-python -m action_recognition.training.train_event_sequence \
-    --manifest data/event_clips_merged_v5/manifest.json \
-    --model transformer \
-    --checkpoint-dir action_recognition/models/checkpoints_transformer_v3 \
-    --epochs 50
-```
-
-**Best result (merged_v5, 1235 clips):**
-`checkpoints_fusion_v4_dual` — macro F1 = **0.491** (optimised thresholds) / 0.481 (default)
-
-#### Pre-label new clips
-
-```bash
-python -m action_recognition.inference.predict_event_sequence \
-    --manifest data/event_clips_part2/manifest.json \
-    --features-dir data/event_clips_part2/features \
-    --checkpoint action_recognition/models/checkpoints_fusion_v4_dual/best_event_sequence.pt \
-    --output data/event_clips_part2/manifest_predicted.json
-```
-
-#### Full pre-label pipeline for a new video
-
-```bash
-python -m action_recognition.inference.prelabel_new_video \
-    --video "C:/path/to/part_1.mp4" \
-    --checkpoint action_recognition/models/checkpoints_fusion_v4_dual/best_event_sequence.pt \
-    --no-video
-```
-
----
-
-### B. Action Spotting (frame-level, new)
-
-Instead of classifying a pre-segmented clip, the TCN predicts **which exact frame** is a ball contact
-and **what action** it is — no pre-segmentation needed.
-
-#### 1. Prepare spotting dataset
-
-```bash
-python -m action_recognition.spotting.prepare_spotting_data \
-    --manifest data/event_clips_merged_v5/manifest.json \
-    --features-dir data/event_clips_merged_v5/features \
-    --output-dir data/spotting_v1 \
-    --window 200 --stride 50 --sigma 3
-```
-
-Produces sliding windows with Gaussian soft labels around each contact frame.
-
-#### 2. Train SpottingTCN
-
-```bash
-python -m action_recognition.spotting.train_spotting \
-    --data-dir data/spotting_v1 \
-    --checkpoint-dir action_recognition/models/checkpoints_spotting_v1 \
-    --epochs 80 --lr 3e-4 --pos-weight 10
-```
-
-Evaluation metric: **mAP@5** (Mean Average Precision at 5-frame tolerance).
-
-#### 3. Use in streaming inference
-
-The `StreamingSpotter` class (same API as `StreamingEventPredictor`) processes a continuous frame stream:
-
-```python
-from action_recognition.spotting.streaming_spotter import StreamingSpotter
-
-spotter = StreamingSpotter("action_recognition/models/checkpoints_spotting_v1/best_spotting.pt")
-# In the frame loop:
-label = spotter.add_frame(ball_pos, player_teams, net_y, fps, fsm_state="rally_active")
-if label:
-    print(f"Spotted: {label}")
-```
-
----
-
-## Event Clip Annotator
-
-Fast Flask UI for labelling clips and correcting model or VLM pre-labels.
-
-```bash
-python -m action_recognition.annotator.event_clip_annotator \
-  --manifest data/event_clips_part2/manifest_predicted.json
-# Open: http://localhost:5056
-```
-
-**Workflow:**
-1. Load existing manifest (e.g. `data/event_clips_part2/manifest_predicted.json`)
-2. Annotator shows the clip video + current label
-3. Correct labels → **Save & Next**
-4. After labelling, merge into the main dataset and retrain
-
----
-
-### Remote Ollama VLM pre-labels
-
-A MacBook running Ollama can pre-label clips without moving the videos off the
-Windows workstation. Start with `qwen3-vl:8b-instruct`:
+| Ball detection | YOLO primary detector, optional tiled ensemble, temporal gate and global trajectory DP | Ball candidates and selected point per frame |
+| Ball cleanup | Static-source suppression and contact-preserving quadratic smoothing | Stable trajectory without parked false positives |
+| Gap reconstruction | Conservative or contact-aware offline reconstruction | Inferred 2D coordinates with provenance/confidence |
+| Player tracking | YOLO11m-pose + ByteTrack + calibrated court gate | Player boxes, 17 keypoints, track/team IDs |
+| Court and net | Perspective calibration, SAM net tape, optional SAM3 posts, Hough fallback | Court homography, tape band, net-floor divider |
+| Game logic | Integrated volleyball FSM + clean trajectory replay | Rallies, serves, contacts, attack map |
+| Event model | Four-class causal sequence model | `serve`, `reception`, `pass`, `attack` |
+| Rally spotting | Dilated TCN over continuous full-video features | Serve/reception/follow-up contacts and rally ends |
+| Match analytics | Manual set/team mapping plus event-sourced aggregation | Sets, side changes, points and team statistics |
+| Viewer | Flask app with upload, analysis, court editor and overlays | Interactive video and match dashboards |
+
+Pipeline is offline-first. RTX 3080 is supported; correctness takes priority over real-time speed.
+
+## Requirements
+
+- Windows or Linux
+- Python 3.11
+- NVIDIA GPU recommended for 4K processing
+- Local model weights or running MLflow model registry
+- FFmpeg-compatible video input readable by OpenCV
 
 ```powershell
-$env:OLLAMA_BASE_URL = "http://<mac-ip>:11434"
-python -m action_recognition.vlm.prelabel_events --check
-python -m action_recognition.vlm.prelabel_events `
-  --manifest data/event_clips_part2/manifest.json `
-  --limit 10
+py -3.11 -m venv volley_env_311
+.\volley_env_311\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+# Viewer, annotators and Parquet feature files
+pip install flask flask-cors pyarrow
 ```
 
-The source manifest is untouched; progress is saved after every clip to
-`manifest_vlm_predicted.json`. See
-[docs/OLLAMA_VLM_MAC.md](docs/OLLAMA_VLM_MAC.md) for Mac setup, benchmarking,
-resuming, and troubleshooting.
+`data/`, `models/`, `results/`, local MLflow storage and `court_calibration*.json` are gitignored. They must be provisioned separately.
 
----
+## Quick start
 
-## Results Viewer
+### 1. Calibrate camera
 
-Flask app that renders ball trajectory, player positions, FSM state, and events on a 2D field.
+Calibration is required once per fixed camera setup:
 
-```bash
+```powershell
+python scripts/interactive_court_calibration.py -i "C:\path\game.webm"
+```
+
+This writes a local `court_calibration.json`. Named court setups edited in viewer are stored in `configs/court_setups.json`.
+
+### 2. Analyze video
+
+```powershell
+python analyze_video.py `
+  --video "C:\path\game.webm" `
+  --calibration court_calibration.json `
+  --output "results\game"
+```
+
+Useful production options:
+
+```powershell
+# Higher ball recall, slower
+python analyze_video.py --video game.webm --output results\game --ball-ensemble
+
+# Compare conservative and contact-aware ball-gap reconstruction
+python analyze_video.py --video game.webm --output results\game_recon `
+  --ball-reconstruction compare `
+  --reconstruction-contacts data\full_video_gold\full_video_annotations.json
+
+# Stats and annotations only
+python analyze_video.py --video game.webm --output results\game --no-video
+
+# Manual set boundaries and stable team identities
+python analyze_video.py --video game.webm --output results\game `
+  --match-config configs\match_config.example.json
+```
+
+See every supported option:
+
+```powershell
+python analyze_video.py --help
+```
+
+### 3. Open viewer
+
+```powershell
 python viewer.py
-# Open: http://localhost:5050
-# Load results: http://localhost:5050/load?video=<name>&results_dir=results/<name>
 ```
 
-**Overlays:** Ball position, trajectory trail (~40 frames), net (SAM band + net_y line),
-Team A / Team B players, FSM state, detected events.
+Open `http://localhost:5050`. Viewer can upload a source video, launch analysis, restore saved jobs, edit court geometry, and show ball trail, reconstructed gaps, players, net, FSM events, attacks and match statistics.
 
----
+Existing result directory can be loaded with:
 
-## Dataset Curator
-
-FastAPI web tool for curating ball detection training data.
-
-```bash
-cd curator && python run_curator.py
-# Open: http://localhost:8000
-# Keyboard: A = Accept, S = Skip
+```text
+http://localhost:5050/load?video=<stem>&results_dir=results/<directory>
 ```
 
----
+## Analysis artifacts
 
-## MLflow Experiment Tracking
+For input `game.webm` and `--output results/game`:
 
-```bash
-# Windows (use --workers 1 to avoid WinError 10022)
-mlflow ui --workers 1
-# Open: http://localhost:5000
+| Artifact | Purpose |
+|---|---|
+| `results/game/game_stats.json` | Aggregate metrics, rallies, events, reconstruction/model provenance |
+| `results/game/game_annotations.json` | Compact frame-level ball, pose, net, FSM and event data |
+| `results/game/game_analyzed.mp4` | Annotated video; omitted with `--no-video` |
+
+Annotations distinguish observed and reconstructed ball positions. Reconstruction never becomes detector ground truth. By default it also does not alter FSM events; `--reconstruction-affects-fsm` admits only high-confidence reconstructed points into the clean FSM replay.
+
+## Ball trajectory workflow
+
+Default analysis applies:
+
+1. Primary YOLO detection; optional tiled second detector with `--ball-ensemble`.
+2. Motion-aware live gate.
+3. Static-source suppression for parked false positives.
+4. Global trajectory DP unless `--no-ball-dp` is set.
+5. Contact-preserving smoothing (`--ball-smooth moderate` by default).
+6. Optional offline gap reconstruction.
+7. Clean FSM replay on final accepted trajectory.
+
+Standalone reconstruction and review rendering:
+
+```powershell
+python scripts/reconstruct_ball_gaps.py `
+  --annotations results\game\game_annotations.json `
+  --output results\game\game_annotations_reconstructed.json `
+  --mode compare `
+  --contacts data\full_video_gold\full_video_annotations.json `
+  --video game.webm
 ```
 
-Experiment name for event sequence: `volleyball_event_sequence`
+Input is not overwritten unless output points to same file and `--force` is explicitly supplied.
 
----
+## Court and net calibration
 
-## Directory Structure
+`GameAnalyzer` scales calibration to native video resolution. Team split uses calibrated court homography and net-floor line, not raw pixel `net_y` alone.
 
-```
-volleystat/
-├── analyze_video.py          ← Main entry point
-├── viewer.py                 ← Flask results viewer
-├── court_calibration.json    ← Saved calibration (committed)
-│
-├── src/
-│   ├── detection/            # ball_detector.py, pose_estimator.py
-│   ├── tracking/             # integrated_volleyball_fsm.py, ball_tracker.py
-│   ├── visualization/        # pose_ball_visualizer.py
-│   └── pipeline/             # game_analyzer.py (main pipeline + event overlay)
-│
-├── action_recognition/
-│   ├── event_clips/          # prepare.py, extract_clips.py, compute_features.py
-│   ├── annotator/            # event_clip_annotator.py (Streamlit)
-│   ├── data/                 # event_clip_dataset.py
-│   ├── models/               # sequence_event_model.py + checkpoints_*/
-│   ├── training/             # train_event_sequence.py, train_fusion_lstm.py
-│   ├── inference/            # predict_event_sequence.py, streaming_event_predictor.py
-│   └── spotting/             # SpottingTCN, prepare_spotting_data.py, train_spotting.py
-│
-├── scripts/
-│   ├── detection/            # detect_ball_on_video.py, pose_estimation.py
-│   ├── training/             # YOLO training scripts
-│   └── utils/                # video_splitter.py, images_to_pdf.py
-│
-├── curator/                  # FastAPI dataset curation tool
-├── configs/                  # config.py
-├── models/                   # Trained YOLO/ball weights (local, not committed)
-├── data/                     # Datasets, clips, features (local, not committed)
-└── results/                  # Analysis outputs (local, not committed)
+Net workflow:
+
+- SAM detects net tape and caches it in calibration.
+- Isolated SAM3 worker can detect post X positions.
+- Physical net height projects tape-to-floor geometry.
+- Hough post detection is fallback when SAM3 is unavailable.
+- Implausible post spacing emits warning and needs visual validation.
+
+Manual refresh:
+
+```powershell
+python scripts/run_sam_net_detection.py `
+  --video game.webm `
+  --calibration court_calibration.json `
+  --validate
 ```
 
----
+Use `--posts-only` to keep saved tape bounds and refresh only posts/team divider. Use `--no-net-detection` during normal analysis when validated cached calibration must remain unchanged.
 
-## Key Models
+## Authoritative 4K event dataset
 
-| Model | Path | Purpose |
-|---|---|---|
-| Ball detector | `models/yolov8_curated_training/yolov8n_volleyball_curated8/weights/best.pt` | Ball detection (55% recall) |
-| Pose estimator | `yolo11n-pose.pt` (auto-download) | Player bboxes |
-| Event overlay | `action_recognition/models/checkpoints_transformer_v3/best_event_sequence.pt` | Streaming event display |
-| Sequence classifier | `action_recognition/models/checkpoints_fusion_v4_dual/best_event_sequence.pt` | Per-clip classification |
-| Action spotter | `action_recognition/models/checkpoints_spotting_v1/best_spotting.pt` | Frame-level spotting |
+Current curated clip dataset:
 
----
+```text
+data/event_clips_4k_gold_v1
+```
 
-## Notes
+Current local snapshot contains 430 human-labelled clips from three complete 4K videos:
 
-- **Court calibration is mandatory** before any analysis run
-- `volley_env_311/` — local Python 3.11 venv (not committed)
-- `data/`, `models/`, `results/` — local only (gitignored)
-- GPU (CUDA) strongly recommended; CPU works but is slow
-- MLflow on Windows: always run with `--workers 1`
+- `j0gRhgFCgIs_4_4k`
+- `j3BO9GgUFBI_3_4k`
+- `Khe4P8QcJkg_5_4k`
+
+Feature schema: `resolution_normalized_v2`. Split unit is whole source video; clips from one recording must never be divided randomly between train and validation. `Khe4P8QcJkg_5_4k` is validation source in `split_policy.json`.
+
+Train new models only from authoritative gold datasets. Human labels in full-video gold data are authoritative; FSM/model labels are weak labels only.
+
+Available feature variants:
+
+```text
+features/                               original published features
+features_baseline_raw_v1/               refreshed observed-ball baseline
+features_reconstructed_conservative_v1/ conservative reconstructed trajectory
+```
+
+Train current four-class causal event model:
+
+```powershell
+python -m action_recognition.training.train_event_sequence `
+  --manifest data\event_clips_4k_gold_v1\manifest.json `
+  --features-dir data\event_clips_4k_gold_v1\features_reconstructed_conservative_v1 `
+  --model transformer `
+  --sequence-len 60 `
+  --val-stems Khe4P8QcJkg_5_4k `
+  --checkpoint-dir action_recognition\models\experiments_4k_gold_transformer `
+  --epochs 50 `
+  --seed 42
+```
+
+Run cross-video model selection before `--final-fit`. Core sequence classifier intentionally excludes pure `other`/`free_ball` contacts.
+
+## Full-video human annotation
+
+Clip labeling UI:
+
+```powershell
+python -m action_recognition.annotator.event_clip_annotator `
+  --manifest data\event_clips_4k_gold_v1\manifest.json
+# http://localhost:5056
+```
+
+Full-video labeling UI:
+
+```powershell
+python -m action_recognition.annotator.full_video_annotator `
+  --manifest data\event_clips_4k_gold_v1\manifest.json
+# http://localhost:5058
+```
+
+Export one completed video into reusable event, rally, dense-target and spotting artifacts:
+
+```powershell
+python -m action_recognition.annotator.export_full_video_annotations `
+  --project data\event_clips_4k_gold_v1\full_video_annotations.json `
+  --video-id <video-id> `
+  --output-dir data\full_video_gold\<video-id> `
+  --annotations-path results\<video>\<video>_annotations.json `
+  --stats-path results\<video>\<video>_stats.json
+```
+
+Dataset replacement/build tools fail on missing human labels, mappings or Parquet files:
+
+```powershell
+python -m action_recognition.event_clips.build_4k_human_dataset --help
+python -m action_recognition.event_clips.replace_source_dataset --help
+```
+
+## Rally spotting
+
+Current spotting code lives under `action_recognition/rally_spotting/`. It operates on continuous full-video features with taxonomy:
+
+```text
+serve_contact | reception_contact | followup_contact | rally_end
+```
+
+Prepare and train:
+
+```powershell
+python -m action_recognition.rally_spotting.prepare `
+  --manifest data\full_video_gold\rally_spotting_sources.json `
+  --output-dir data\rally_spotting_three_full_gold_v1
+
+python -m action_recognition.rally_spotting.train `
+  --data-dir data\rally_spotting_three_full_gold_v1 `
+  --checkpoint-dir action_recognition\models\rally_spotting_three_full_gold_v1 `
+  --epochs 40
+```
+
+Apply checkpoint to saved analysis results without overwriting source files:
+
+```powershell
+python scripts\inference\predict_rally_spotting_results.py `
+  --results-dir results\game `
+  --checkpoint action_recognition\models\rally_spotting_three_full_gold_v1\best_rally_spotting.pt `
+  --output-dir results\game_spotting
+```
+
+## Model registry
+
+`configs/model_registry.json` maps logical model names to MLflow aliases and local fallbacks:
+
+```text
+ball_detector
+ball_detector_tiled
+pose_estimator
+net_sam
+event_sequence
+spotting
+```
+
+Start local registry and register configured weights:
+
+```powershell
+python scripts/models/run_mlflow_server.py
+# second terminal
+python scripts/models/register_models.py --all
+```
+
+Pipeline records resolved path, registry version and checksum in result provenance. Explicit `--ball-model`, `--pose-model` and `--event-checkpoint` paths override registry. `--no-model-registry` uses configured fallback files directly.
+
+## Repository map
+
+```text
+analyze_video.py                         production CLI
+viewer.py                                local Flask viewer and analysis launcher
+configs/
+  model_registry.json                    model aliases and fallbacks
+  court_setups.json                      named viewer court setups
+  match_config.example.json              set boundaries and stable team IDs
+src/
+  detection/                              ball, pose, court and net detection
+  pipeline/game_analyzer.py               end-to-end orchestration
+  tracking/                               trajectory, reconstruction, FSM, analytics
+  models/model_registry.py                model resolution and provenance
+action_recognition/
+  event_clips/                            schemas, features and gold dataset builders
+  annotator/                              clip and full-video labeling tools
+  training/                               causal event-model training/evaluation
+  rally_spotting/                         continuous frame-level spotting
+  hierarchical/                           multi-head phase/action/context model code
+scripts/
+  models/                                 local MLflow registry tools
+  inference/                              offline prediction over saved results
+  evaluation/                             trajectory and model diagnostics
+tests/                                    unit and integration tests
+```
+
+## Validation
+
+```powershell
+python -m pytest tests -q
+```
+
+For architecture navigation, repository contains generated graph under `graphify-out/`.
