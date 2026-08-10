@@ -29,7 +29,9 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--video", required=True)
     parser.add_argument("--calibration", default=_DEFAULT_CALIB)
-    parser.add_argument("--sam-checkpoint", default=_SAM_CHECKPOINT)
+    parser.add_argument("--sam-checkpoint", default=None,
+                        help="Explicit SAM weights; by default the local MLflow "
+                             "registry decides (configs/model_registry.json)")
     parser.add_argument("--net-height-m", type=float, default=2.34,
                         help="Net-top height in meters (mixed=2.34, men=2.43)")
     parser.add_argument(
@@ -63,7 +65,7 @@ def main():
 
     print(f"Video       : {args.video}")
     print(f"Calibration : {calib_path}")
-    print(f"SAM model   : {args.sam_checkpoint}")
+    print(f"SAM model   : {args.sam_checkpoint or '<from model registry>'}")
     print(f"net_y hint  : {net_y:.0f}px  x=[{net_x_left:.0f}, {net_x_right:.0f}]  "
           f"(original {frame_w:.0f}x{frame_h:.0f})")
 
@@ -72,6 +74,8 @@ def main():
         sam_checkpoint=args.sam_checkpoint,
         net_height_m=args.net_height_m,
     )
+    if detector.model_provenance:
+        print(f"SAM resolved: {detector.model_provenance}")
     if args.posts_only:
         top = old.get("net_top_y_720p")
         bot = old.get("net_bottom_y_720p")

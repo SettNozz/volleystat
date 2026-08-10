@@ -29,6 +29,7 @@ from src.tracking.integrated_volleyball_fsm import CourtBounds, IntegratedVolley
 from src.tracking.attack_heatmap import AttackHeatmap
 from src.tracking.ball_track_gate import BallCandidate, BallTrackGate
 from src.tracking.ball_trajectory_dp import BallTrajectoryDP, interpolate_gaps
+from src.models.model_registry import ResolvedModel, resolve_model
 from src.tracking.ball_static_sources import (
     clean_ball_annotations,
     find_static_sources_in_candidates,
@@ -132,6 +133,8 @@ class GameStats:
     ball_smoothing: Dict[str, Any] = field(default_factory=dict)
     # Fixed objects the detector fired on, and what was dropped because of it.
     ball_static_suppression: Dict[str, Any] = field(default_factory=dict)
+    # Which weights produced this result: registry name, version, source.
+    models: Dict[str, Any] = field(default_factory=dict)
     processing_time_sec: float = 0.0
 
     @property
@@ -151,6 +154,7 @@ class GameStats:
             "attack_heatmap": self.attack_heatmap,
             "ball_smoothing": self.ball_smoothing,
             "ball_static_suppression": self.ball_static_suppression,
+            "models": self.models,
             "processing_time_sec": round(self.processing_time_sec, 1),
         }
 
@@ -223,6 +227,9 @@ class GameAnalyzer:
         self.ball_trajectory_dp = ball_trajectory_dp
         self.ball_smooth_window = resolve_ball_smooth_window(ball_smooth_window)
         self.suppress_static_ball_sources = bool(suppress_static_ball_sources)
+        self.use_model_registry = bool(use_model_registry)
+        # name -> {source, version, path, ...}; written into the stats file.
+        self.model_provenance: Dict[str, Dict[str, Any]] = {}
         self._static_source_report: Dict[str, Any] = {}
         self._current_fps = 30.0
         self.ball_batch_size = max(1, int(ball_batch_size))
@@ -247,7 +254,7 @@ class GameAnalyzer:
             self._calibration_path = p if p.is_absolute() else _ROOT / p
 
         self.calibration = self._load_calibration(calibration_path)
-        self._init_ball_detector(ball_model_path or str(_ROOT / _BALL_MODEL))
+        self._init_ball_detector(ball_model_path)
         self._init_pose_model(pose_model_path or str(_ROOT / _POSE_MODEL))
         self._event_predictor = self._init_event_predictor(event_checkpoint_path)
         self._warmup()
@@ -436,16 +443,33 @@ class GameAnalyzer:
             )
         return c
 
-    def _init_ball_detector(self, model_path: str):
+    def _resolve(self, name: str, override: Optional[str] = None) -> ResolvedModel:
+        """Ask the registry which weights this run should use, and record it.
+
+        Provenance is kept per analyzer and copied into ``*_stats.json``: a
+        result that cannot say which model produced it is the problem the
+        registry exists to solve.
+        """
+        resolved = resolve_model(name, override=override,
+                                 use_registry=self.use_model_registry)
+        self.model_provenance[name] = resolved.as_dict()
+        return resolved
+
+    def _init_ball_detector(self, model_path: Optional[str]):
         from detection.detect_ball_on_video import BallDetectorVideo
-        self.ball_detector = BallDetectorVideo(model_path, imgsz=_BALL_IMGSZ)
+        primary = self._resolve("ball_detector", model_path)
+        imgsz = int(primary.extra.get("imgsz") or _BALL_IMGSZ)
+        self.ball_detector = BallDetectorVideo(str(primary.path), imgsz=imgsz)
         self.ball_detector_2 = None
         if self.ball_ensemble:
+            second = self._resolve("ball_detector_tiled")
+            grid = tuple(second.extra.get("tile_grid") or _BALL_TILE_GRID_2)
             self.ball_detector_2 = BallDetectorVideo(
-                str(_ROOT / _BALL_MODEL_2), imgsz=640, tile_grid=_BALL_TILE_GRID_2,
+                str(second.path), imgsz=int(second.extra.get("imgsz") or 640),
+                tile_grid=grid,
             )
-            log.info(f"Ball ensemble: second opinion from {Path(_BALL_MODEL_2).parent.parent.name} "
-                     f"tiled {_BALL_TILE_GRID_2[0]}x{_BALL_TILE_GRID_2[1]}")
+            log.info(f"Ball ensemble: second opinion from {second} "
+                     f"tiled {grid[0]}x{grid[1]}")
         self.ball_gate = BallTrackGate()
         self._ball_px_scale = 1.0
 
@@ -471,28 +495,34 @@ class GameAnalyzer:
         )
         log.info(f"Ball selection scaled x{scale:.2f} for {frame_width}px-wide frames")
 
-    def _init_pose_model(self, model_path: str):
+    def _init_pose_model(self, model_path: Optional[str]):
         from ultralytics import YOLO
-        if Path(model_path).exists():
-            self.pose_model = YOLO(model_path)
-            log.info(f"Pose model loaded: {Path(model_path).name}")
+        resolved = self._resolve("pose_estimator", model_path)
+        if resolved.path.exists():
+            self.pose_model = YOLO(str(resolved.path))
+            log.info(f"Pose model loaded: {resolved}")
         else:
-            log.warning(f"Pose model not found at {model_path} — downloading {_POSE_FALLBACK}")
+            log.warning(f"Pose model not found at {resolved.path} — downloading {_POSE_FALLBACK}")
             self.pose_model = YOLO(_POSE_FALLBACK)
+            self.model_provenance["pose_estimator"] = {
+                "name": "pose_estimator", "source": "ultralytics_download",
+                "path": _POSE_FALLBACK,
+            }
 
     def _init_event_predictor(self, event_checkpoint_path: Optional[str]):
         """Load sliding-window event predictor (Transformer v3) for overlay; None if disabled or file missing."""
         if event_checkpoint_path == "":
             return None
-        path = event_checkpoint_path if event_checkpoint_path else self._DEFAULT_EVENT_CHECKPOINT
-        p = Path(path)
-        if not p.is_absolute():
-            p = _ROOT / p
+        # The registry decides which of the twenty-odd checkpoint directories is
+        # the production event model; an explicit --event-checkpoint still wins.
+        resolved = self._resolve("event_sequence", event_checkpoint_path)
+        p = resolved.path
         if not p.exists():
             log.info(f"Event overlay disabled: checkpoint not found at {p}")
             return None
         try:
             from action_recognition.inference.streaming_event_predictor import StreamingEventPredictor
+            log.info(f"Event model: {resolved}")
             return StreamingEventPredictor(p)
         except Exception as e:
             log.warning(f"Event overlay disabled: {e}")
@@ -742,7 +772,10 @@ class GameAnalyzer:
             net_x_left = c.net_x_left if c else 0.0
             net_x_right = c.net_x_right if c else frame_w
 
-            detector = NetDetector(net_height_m=self.net_height_m)
+            detector = NetDetector(net_height_m=self.net_height_m,
+                                   use_model_registry=self.use_model_registry)
+            if detector.model_provenance:
+                self.model_provenance["net_sam"] = detector.model_provenance
             if c is not None and c.net_tape_top is not None and c.net_tape_bottom is not None:
                 top = c.net_tape_top * 720.0 / c.frame_height
                 bot = c.net_tape_bottom * 720.0 / c.frame_height
@@ -1251,6 +1284,8 @@ class GameAnalyzer:
 
         stats.rallies = completed_rallies
         stats.processing_time_sec = time.time() - t0
+        # Written last: SAM net detection may add its own entry mid-run.
+        stats.models = dict(self.model_provenance)
 
         # Post-process: re-pick the whole trajectory from the candidate cloud.
         # The gate above had to choose with only the past in hand; now the
@@ -1744,6 +1779,7 @@ class GameAnalyzer:
                 yield idx, frame
 
         stats = GameStats(video_name=fd.name)
+        stats.models = dict(self.model_provenance)
         self._process_frames_iter(
             frame_iter(), fps, total, stats,
             out_frames_dir=out_frames_dir,

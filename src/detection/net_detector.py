@@ -126,10 +126,24 @@ class NetDetector:
 
     def __init__(
         self,
-        sam_checkpoint: str = _SAM_CHECKPOINT,
+        sam_checkpoint: Optional[str] = None,
         net_height_m: float = _DEFAULT_NET_TOP_HEIGHT_M,
+        use_model_registry: bool = True,
     ):
-        self.sam_checkpoint = sam_checkpoint
+        # Which SAM checkpoint runs the net detection used to depend on what
+        # happened to be in ~/Downloads, while a different one sat in models/.
+        # The registry answers it; an explicit path still wins, and the model
+        # type travels with the weights instead of being a module constant.
+        self.model_type = _SAM_MODEL_TYPE
+        self.model_provenance = None
+        if sam_checkpoint:
+            self.sam_checkpoint = sam_checkpoint
+        else:
+            from src.models.model_registry import resolve_model
+            resolved = resolve_model("net_sam", use_registry=use_model_registry)
+            self.sam_checkpoint = str(resolved.path)
+            self.model_type = str(resolved.extra.get("model_type") or _SAM_MODEL_TYPE)
+            self.model_provenance = resolved.as_dict()
         self.net_height_m = float(net_height_m)
         self._predictor = None
 
@@ -526,8 +540,8 @@ class NetDetector:
             )
         import torch
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        log.info(f"Loading SAM ({_SAM_MODEL_TYPE}) on {device} ...")
-        sam = sam_model_registry[_SAM_MODEL_TYPE](checkpoint=self.sam_checkpoint)
+        log.info(f"Loading SAM ({self.model_type}) from {self.sam_checkpoint} on {device} ...")
+        sam = sam_model_registry[self.model_type](checkpoint=self.sam_checkpoint)
         sam.to(device)
         self._predictor = SamPredictor(sam)
         log.info("SAM ready")

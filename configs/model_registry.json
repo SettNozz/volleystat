@@ -1,0 +1,57 @@
+{
+  "_comment": [
+    "Logical model names used by the pipeline, and where their weights come from.",
+    "The MLflow registry is authoritative; 'fallback' is the local file used when",
+    "the registry is unreachable or the name was never registered, and every result",
+    "records which of the two it actually got.",
+    "Register with: python scripts/models/register_models.py --all"
+  ],
+  "models": {
+    "ball_detector": {
+      "registry_name": "volleystat_ball_detector",
+      "alias": "production",
+      "artifact": "best.pt",
+      "fallback": "models/best_fullframe/weights/best.pt",
+      "imgsz": 1280,
+      "note": "recall 0.72 at imgsz 1280 on the video-3 GT window (232 labelled frames)"
+    },
+    "ball_detector_tiled": {
+      "registry_name": "volleystat_ball_detector_tiled",
+      "alias": "production",
+      "artifact": "best.pt",
+      "fallback": "models/yolov8_curated_training/yolov8n_volleyball_curated8/weights/best.pt",
+      "imgsz": 640,
+      "tile_grid": [3, 2],
+      "note": "second opinion for --ball-ensemble; union recall 0.93 with the primary"
+    },
+    "pose_estimator": {
+      "registry_name": "volleystat_pose_estimator",
+      "alias": "production",
+      "artifact": "yolo11m-pose.pt",
+      "fallback": "models/pretrained/yolo11m-pose.pt",
+      "note": "stock ultralytics weights; registered so a run records which ones"
+    },
+    "net_sam": {
+      "registry_name": "volleystat_net_sam",
+      "alias": "production",
+      "artifact": "sam_vit_h_4b8939.pth",
+      "fallback": "~/Downloads/sam_vit_h_4b8939.pth",
+      "model_type": "vit_h",
+      "note": "net tape/post segmentation. The fallback keeps today's behaviour (vit_h from ~/Downloads); models/sam_vit_b_01ec64.pth is a different checkpoint that was never the one being used. Register whichever should win and the ambiguity is gone — but re-run scripts/run_sam_net_detection.py if you switch, because calibration caches the result"
+    },
+    "event_sequence": {
+      "registry_name": "volleystat_event_sequence",
+      "alias": "production",
+      "artifact": "final_event_sequence.pt",
+      "fallback": "action_recognition/models/experiments_three_full_gold_multiscale_v2/multiscale_final_three_videos_seed42/final_event_sequence.pt",
+      "note": "four-class causal fit; register the new run once training finishes"
+    },
+    "spotting": {
+      "registry_name": "volleystat_spotting",
+      "alias": "production",
+      "artifact": "best_spotting.pt",
+      "fallback": "action_recognition/models/checkpoints_spotting_v1/best_spotting.pt",
+      "note": "SpottingTCN, frame-level contact detection"
+    }
+  }
+}

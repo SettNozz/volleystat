@@ -92,6 +92,13 @@ def main():
         ),
     )
     parser.add_argument(
+        "--no-model-registry",
+        action="store_true",
+        help="Skip the local MLflow registry and load the configured local files "
+             "directly (configs/model_registry.json). Explicit --ball-model / "
+             "--pose-model / --event-checkpoint bypass the registry anyway",
+    )
+    parser.add_argument(
         "--no-static-suppression",
         action="store_true",
         help="Keep detections that sit motionless for seconds (a spare ball on "
@@ -147,6 +154,7 @@ def main():
         ball_batch_size=args.ball_batch_size,
         ball_smooth_window=args.ball_smooth,
         suppress_static_ball_sources=not args.no_static_suppression,
+        use_model_registry=not args.no_model_registry,
         net_height_m=net_height_m,
     )
 

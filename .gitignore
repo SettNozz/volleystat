@@ -76,7 +76,14 @@ volley_env_311/
 
 # Full data/model/results dirs
 data/
-models/
+/models/
+# Weight files anywhere, so a checkpoint dropped next to code is still
+# ignored without hiding the code itself.
+*.pt
+*.pth
+*.onnx
+action_recognition/models/checkpoints*/
+action_recognition/models/experiments*/
 results/
 notebooks/
 
@@ -93,3 +100,11 @@ CLAUDE.md
 
 # graphify
 graphify-out/cache/
+
+# Local MLflow model registry (scripts/models/run_mlflow_server.py).
+# The database and the artifact copies are machine-local; what is shared is
+# configs/model_registry.json, which says which names the pipeline resolves.
+mlflow.db
+mlflow.db-journal
+mlartifacts/
+models/_registry_cache/
