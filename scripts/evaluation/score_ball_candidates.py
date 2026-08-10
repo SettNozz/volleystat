@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from src.tracking.ball_track_gate import BallCandidate, BallTrackGate  # noqa: E402
+from src.tracking.ball_trajectory_dp import BallTrajectoryDP, interpolate_gaps  # noqa: E402
 
 
 def load_gt(path: Path) -> tuple[dict[int, tuple[float, float] | None], list[int]]:
@@ -86,16 +87,34 @@ def score(
     }
 
 
-def run_gate(frame_indices: list[int], dets_by_frame: dict[int, list[dict]]) -> dict[int, list[dict]]:
-    """Replay the production selector: at most one detection survives per frame."""
-    gate = BallTrackGate()
+def to_candidates(dets: list[dict]) -> list[BallCandidate]:
+    return [
+        BallCandidate(x=d["x"], y=d["y"], confidence=d["conf"], size=d["size"]) for d in dets
+    ]
+
+
+def as_dets(chosen: dict) -> dict[int, list[dict]]:
+    return {
+        f: [{"x": c.x, "y": c.y, "conf": c.confidence, "size": c.size}]
+        for f, c in chosen.items()
+    }
+
+
+def run_gate(
+    frame_indices: list[int], dets_by_frame: dict[int, list[dict]], px_scale: float = 1.0
+) -> dict[int, list[dict]]:
+    """Replay the live selector: at most one detection survives per frame."""
+    gate = BallTrackGate(
+        max_travel_px_per_frame=75.0 * px_scale,
+        gate_jitter_px=25.0 * px_scale,
+        gate_max_px=320.0 * px_scale,
+        acquire_min_travel_px=18.0 * px_scale,
+        acquire_max_step_px=110.0 * px_scale,
+        still_eps_px=3.0 * px_scale,
+    )
     out: dict[int, list[dict]] = {}
     for frame_idx in frame_indices:
-        cands = [
-            BallCandidate(x=d["x"], y=d["y"], confidence=d["conf"], size=d["size"])
-            for d in dets_by_frame.get(frame_idx, [])
-        ]
-        chosen = gate.update(frame_idx, cands)
+        chosen = gate.update(frame_idx, to_candidates(dets_by_frame.get(frame_idx, [])))
         out[frame_idx] = (
             [{"x": chosen.x, "y": chosen.y, "conf": chosen.confidence, "size": chosen.size}]
             if chosen else []
@@ -103,14 +122,31 @@ def run_gate(frame_indices: list[int], dets_by_frame: dict[int, list[dict]]) -> 
     return out
 
 
+def run_dp(
+    dets_by_frame: dict[int, list[dict]], px_scale: float = 1.0, max_gap: int = 4
+) -> dict[int, list[dict]]:
+    """Replay what the pipeline actually saves: the global trajectory solver."""
+    solver = BallTrajectoryDP(px_scale=px_scale)
+    chosen = solver.solve({f: to_candidates(d) for f, d in dets_by_frame.items()})
+    filled = interpolate_gaps(chosen, max_gap=max_gap, max_step_px=solver.max_step_px)
+    return as_dets(filled)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--gt", required=True)
     ap.add_argument("--candidates", required=True, nargs="+")
-    ap.add_argument("--tolerance", type=float, default=20.0, help="px from the clicked centre")
+    ap.add_argument(
+        "--tolerance",
+        type=float,
+        default=20.0,
+        help="px from the clicked centre, at 1280-wide; scaled with the frame like every "
+             "other pixel threshold (a 20 px hit on 720p is 60 px on 4K)",
+    )
     ap.add_argument("--conf", type=float, nargs="+", default=[0.05, 0.1, 0.2, 0.3, 0.5])
     ap.add_argument("--fps", type=float, default=29.97)
     ap.add_argument("--gate", action="store_true", help="Also score after BallTrackGate")
+    ap.add_argument("--dp", action="store_true", help="Also score after BallTrajectoryDP (production)")
     ap.add_argument(
         "--assume-unlabeled-absent",
         action="store_true",
@@ -140,6 +176,9 @@ def main() -> None:
     for cand_path in args.candidates:
         data = json.loads(Path(cand_path).read_text(encoding="utf-8"))
         frame_indices = data["frame_indices"]
+        px_scale = float(data.get("resolution", [1280])[0]) / 1280.0
+        tolerance = args.tolerance * px_scale
+        print(f"# {Path(cand_path).name}: px scale x{px_scale:.2f}, tolerance {tolerance:.0f} px")
         for imgsz, run in sorted(data["runs"].items()):
             per_frame_all: dict[int, list[dict]] = {}
             for fi, dets in zip(frame_indices, run["detections"]):
@@ -159,10 +198,14 @@ def main() -> None:
                 }
                 variants = [(f"{imgsz}", filtered)]
                 if args.gate:
-                    variants.append((f"{imgsz}+gate", run_gate(frame_indices, filtered)))
+                    variants.append(
+                        (f"{imgsz}+gate", run_gate(frame_indices, filtered, px_scale))
+                    )
+                if args.dp:
+                    variants.append((f"{imgsz}+dp", run_dp(filtered, px_scale)))
                 for label, dets_by_frame in variants:
                     # GT frames may be a strided subset; score only what is labeled.
-                    m = score(dets_by_frame, gt, args.tolerance, args.fps, gt_stride)
+                    m = score(dets_by_frame, gt, tolerance, args.fps, gt_stride)
                     print(
                         f"{label:>26} {conf:>5.2f} {m['recall']:>7.3f} {m['hits']:>5d} "
                         f"{m['misses']:>5d} {m['false_positives']:>6d} {m['fp_per_min']:>7.1f} "

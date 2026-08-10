@@ -55,11 +55,18 @@ def extract_frames(video: Path, indices: list[int], out_dir: Path) -> None:
     print(f"Extracted {len(missing)} frames to {out_dir}")
 
 
-def load_proposals(indices: list[int]) -> dict[int, list[dict]]:
-    """Merge every candidate dump we have for these frames, as visual hints."""
+def load_proposals(indices: list[int], video: Path) -> dict[int, list[dict]]:
+    """Merge every candidate dump for *this* video, as visual hints.
+
+    Dumps are keyed by frame index, which is only meaningful per video — a hint
+    from another clip that happens to share a frame number would put a circle on
+    empty floor and quietly teach the eye to distrust the hints.
+    """
     hints: dict[int, list[dict]] = {i: [] for i in indices}
-    for path in sorted(EVAL_DIR.glob("*_candidates.json")):
+    for path in sorted(EVAL_DIR.rglob("*_candidates.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
+        if Path(data.get("video", "")).stem != video.stem:
+            continue
         frame_indices = data.get("frame_indices", [])
         for imgsz, run in data.get("runs", {}).items():
             for fi, dets in zip(frame_indices, run.get("detections", [])):
@@ -76,8 +83,10 @@ def load_proposals(indices: list[int]) -> dict[int, list[dict]]:
                             "src": f"yolo{imgsz}",
                         }
                     )
-    for path in sorted(EVAL_DIR.glob("*_sam3_*.json")):
+    for path in sorted(EVAL_DIR.rglob("*_sam3_*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
+        if Path(data.get("video", "")).stem != video.stem:
+            continue
         for entry in data.get("frames", []):
             fi = entry["frame"]
             if fi not in hints:
@@ -179,7 +188,9 @@ PAGE = """
  body{margin:0;background:#111;color:#eee;font:13px system-ui}
  #bar{padding:6px 10px;background:#1b1b1b;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
  #wrap{position:relative;display:inline-block}
- canvas{display:block;cursor:crosshair}
+ /* A 4K frame must fit the window; clicks are mapped back through the
+    displayed size, and the magnifier carries the per-pixel precision. */
+ canvas{display:block;cursor:crosshair;max-width:100%;height:auto}
  #zoom{position:fixed;right:10px;top:46px;border:1px solid #444;background:#000;image-rendering:pixelated}
  .k{color:#888}
  b{color:#7fd}
@@ -228,8 +239,11 @@ function draw(){
 }
 c.addEventListener('mousemove',e=>{const r=c.getBoundingClientRect();
   mouse=[(e.clientX-r.left)*c.width/r.width,(e.clientY-r.top)*c.height/r.height];
+  // The window covers the same patch of court at any resolution: a 4K ball is
+  // ~65 px across and would not fit the 40 px window that suits 720p.
+  const win=40*Math.max(1,c.width/1280),half=win/2;
   zx.imageSmoothingEnabled=false;zx.clearRect(0,0,240,240);
-  zx.drawImage(img,mouse[0]-20,mouse[1]-20,40,40,0,0,240,240);
+  zx.drawImage(img,mouse[0]-half,mouse[1]-half,win,win,0,0,240,240);
   zx.strokeStyle='#f0f';zx.strokeRect(114,114,12,12);});
 c.addEventListener('click',e=>{const r=c.getBoundingClientRect();
   const x=(e.clientX-r.left)*c.width/r.width,y=(e.clientY-r.top)*c.height/r.height;
@@ -285,7 +299,7 @@ def main() -> None:
         frames_dir=frames_dir,
         width=width,
         height=height,
-        hints=load_proposals(indices),
+        hints=load_proposals(indices, video),
         labels=labels,
         gt_path=gt_path,
     )
