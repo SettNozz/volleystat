@@ -95,10 +95,24 @@ python viewer.py
 
 Open `http://localhost:5050`. Viewer can upload a source video, launch analysis, restore saved jobs, edit court geometry, and show ball trail, reconstructed gaps, players, net, FSM events, attacks and match statistics.
 
-Existing result directory can be loaded with:
+Every analysed result under `results/` is listed at:
+
+```text
+http://localhost:5050/library
+```
+
+Library scans for `<stem>_stats.json` / `<stem>_annotations.json` pairs, shows rallies, events, frames, length, ball rate and available artifacts, and opens a run in the viewer. Results without stats are listed but not openable. `/api/library` returns the same index as JSON.
+
+A single result directory can also be loaded directly:
 
 ```text
 http://localhost:5050/load?video=<stem>&results_dir=results/<directory>
+```
+
+Second instance next to a running viewer:
+
+```powershell
+python viewer.py --port 5051
 ```
 
 ## Analysis artifacts

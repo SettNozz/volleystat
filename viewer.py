@@ -14,6 +14,7 @@ import json
 import math
 import mimetypes
 import os
+import re
 import sys
 import threading
 import time
@@ -47,7 +48,8 @@ CORS(app)
 # Server can be launched from a shortcut or a different shell directory.
 # Persisted job recovery must therefore never depend on the process CWD.
 PROJECT_ROOT = Path(__file__).resolve().parent
-RESULTS_DIR = PROJECT_ROOT / "results" / "viewer"
+RESULTS_ROOT = PROJECT_ROOT / "results"
+RESULTS_DIR = RESULTS_ROOT / "viewer"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 COURT_SETUPS_PATH = PROJECT_ROOT / "configs" / "court_setups.json"
 
@@ -175,6 +177,132 @@ def _get_job(job_id: str):
     return jobs.get(job_id) or _restore_completed_job(job_id)
 
 
+# ---------------------------------------------------------------------------
+# Results library
+# ---------------------------------------------------------------------------
+
+_ORIGINAL_VIDEO_RE = re.compile(r'"original_video_path"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _annotation_original_video(path: Path) -> str:
+    """Read the recorded source video without parsing a multi-megabyte file.
+
+    Analysis writes ``original_video_path`` into the annotation header, well
+    inside the first kilobytes, so the library never loads the frame array.
+    """
+    try:
+        with open(path, "rb") as handle:
+            head = handle.read(8192).decode("utf-8", errors="ignore")
+    except OSError:
+        return ""
+    match = _ORIGINAL_VIDEO_RE.search(head)
+    if not match:
+        return ""
+    try:
+        return json.loads(f'"{match.group(1)}"')
+    except json.JSONDecodeError:
+        return ""
+
+
+def _library_summary(stats_path: Path) -> dict | None:
+    """Summarise one result for the library card."""
+    try:
+        stats = json.loads(stats_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(stats, dict):
+        return None
+
+    fps = float(stats.get("fps") or 0.0)
+    total_frames = int(stats.get("total_frames") or 0)
+    lifecycle = stats.get("rally_lifecycle")
+    lifecycle_available = isinstance(lifecycle, dict)
+    rallies = (
+        int(lifecycle.get("playable_rallies", 0) or 0) if lifecycle_available
+        else int(stats.get("total_rallies", 0) or 0)
+    )
+    return {
+        "video": stats.get("video", ""),
+        "fps": round(fps, 2) if fps else None,
+        "total_frames": total_frames or None,
+        "duration_sec": round(total_frames / fps, 1) if fps > 0 and total_frames else None,
+        "ball_detection_rate": stats.get("ball_detection_rate"),
+        "total_rallies": rallies,
+        "total_events": len(stats.get("all_events") or []),
+        "processing_time_sec": stats.get("processing_time_sec"),
+        "has_lifecycle": lifecycle_available,
+        "has_match_analytics": bool(stats.get("match_analytics")),
+        "has_reconstruction": bool(stats.get("ball_reconstruction")),
+    }
+
+
+def _library_entry(directory: Path, stem: str) -> dict | None:
+    """Describe one ``<stem>_*`` result set inside ``directory``."""
+    stats_path = directory / f"{stem}_stats.json"
+    ann_path = directory / f"{stem}_annotations.json"
+    annotated_video = directory / f"{stem}_analyzed.mp4"
+
+    present = [p for p in (stats_path, ann_path, annotated_video) if p.is_file()]
+    if not present:
+        return None
+
+    original_video = _annotation_original_video(ann_path) if ann_path.is_file() else ""
+    original_exists = bool(original_video) and _resolve_video_path(original_video).is_file()
+    rel_dir = directory.relative_to(PROJECT_ROOT).as_posix()
+    job_id = directory.name if directory.parent == RESULTS_DIR else None
+
+    entry = {
+        "stem": stem,
+        "results_dir": rel_dir,
+        "job_id": job_id,
+        "modified": max(p.stat().st_mtime for p in present),
+        "size_bytes": sum(p.stat().st_size for p in present),
+        "has_stats": stats_path.is_file(),
+        "has_annotations": ann_path.is_file(),
+        "has_annotated_video": annotated_video.is_file(),
+        "original_video": original_video,
+        "playable": annotated_video.is_file() or original_exists,
+        "summary": _library_summary(stats_path) if stats_path.is_file() else None,
+    }
+
+    # Both viewer routes read `<stem>_stats.json`, so a stats-less folder is
+    # listed for visibility but cannot be opened. Persisted upload jobs restore
+    # through /results/<job_id>; anything else is addressed by directory.
+    if not entry["has_stats"]:
+        entry["open_url"] = None
+        entry["blocked_reason"] = f"{stem}_stats.json missing"
+    elif job_id and entry["playable"]:
+        entry["open_url"] = f"/results/{job_id}"
+        entry["blocked_reason"] = None
+    else:
+        query = urllib.parse.urlencode({"video": stem, "results_dir": rel_dir})
+        entry["open_url"] = f"/load?{query}"
+        entry["blocked_reason"] = None
+    return entry
+
+
+def _library_index() -> list[dict]:
+    """List every analysed result under results/, newest first."""
+    if not RESULTS_ROOT.is_dir():
+        return []
+
+    entries: list[dict] = []
+    seen: set[tuple[Path, str]] = set()
+    for suffix in ("_stats.json", "_annotations.json"):
+        for path in RESULTS_ROOT.rglob(f"*{suffix}"):
+            stem = path.name[: -len(suffix)]
+            key = (path.parent, stem)
+            if key in seen:
+                continue
+            seen.add(key)
+            entry = _library_entry(path.parent, stem)
+            if entry:
+                entries.append(entry)
+
+    entries.sort(key=lambda item: item["modified"], reverse=True)
+    return entries
+
+
 def _run_analysis(
     job_id: str,
     video_path: str,
@@ -244,6 +372,22 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/library")
+def library():
+    """Browse every analysed result on disk and open one in the viewer."""
+    return render_template("library.html")
+
+
+@app.route("/api/library")
+def api_library():
+    entries = _library_index()
+    return jsonify({
+        "root": RESULTS_ROOT.relative_to(PROJECT_ROOT).as_posix(),
+        "count": len(entries),
+        "entries": entries,
+    })
+
+
 @app.route("/load")
 def load_existing():
     """Load pre-existing analysis results without re-running analysis.
@@ -252,6 +396,10 @@ def load_existing():
     """
     stem = request.args.get("video", "")
     results_dir = Path(request.args.get("results_dir", "results/viewer"))
+    # The server may be launched from any directory, so a relative results path
+    # is anchored to the project instead of the process CWD.
+    if not results_dir.is_absolute():
+        results_dir = PROJECT_ROOT / results_dir
     orig_video = request.args.get("original_video", "")
 
     stats_path = results_dir / f"{stem}_stats.json"
@@ -659,6 +807,11 @@ def original_video():
 
 
 if __name__ == "__main__":
+    # A second instance is useful while another viewer is already serving 5050.
+    port = int(os.environ.get("VIEWER_PORT", 5050))
+    if "--port" in sys.argv:
+        port = int(sys.argv[sys.argv.index("--port") + 1])
     print("\nVolleyball Analytics Viewer")
-    print("Open http://localhost:5050 in your browser\n")
-    app.run(host="0.0.0.0", port=5050, debug=False, threaded=True)
+    print(f"Open http://localhost:{port} in your browser")
+    print(f"Processed results: http://localhost:{port}/library\n")
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
