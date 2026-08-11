@@ -270,6 +270,8 @@ Existing result URL:
 http://localhost:5050/load?video=game&results_dir=results/game
 ```
 
+Result library (`/library`, JSON at `/api/library`) indexes every `<stem>_stats.json` under `results/`. Entries without stats are listed as blocked, not hidden. Persisted upload jobs open through `/results/<job_id>`; all other directories through `/load`. `python viewer.py --port 5051` runs a second instance.
+
 ## Tests and validation
 
 Use standalone Python 3.11 with project packages when venv launcher is broken:

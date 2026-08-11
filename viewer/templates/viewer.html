@@ -39,6 +39,7 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 .nav-item.active { background: var(--primary-soft); color: var(--primary); }
 .top-meta { font-size: 13px; font-weight: 700; padding: 8px 14px; border-radius: 8px; background: var(--head-bg); color: var(--ink); }
 .upload-btn { padding: 9px 18px; border-radius: 8px; background: var(--primary); color: #fff; font-size: 13px; font-weight: 700; cursor: pointer; text-decoration: none; }
+.library-btn { padding: 9px 16px; border-radius: 8px; background: var(--head-bg); color: var(--ink); font-size: 13px; font-weight: 700; text-decoration: none; margin-right: 8px; }
 
 /* ── Shared ──────────────────────────────────────────── */
 .page { flex: 1; overflow: hidden; display: none; }
@@ -172,6 +173,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
     <div class="nav-item" data-page="table" onclick="showPage('table')">Match Stats</div>
   </div>
   <div class="top-meta">{{ job.video_stem }} · {{ stats.viewer_lifecycle.playable_rallies }} {% if stats.viewer_lifecycle.available %}playable {% endif %}rallies · {{ (stats.ball_detection_rate * 100) | round(0) | int }}% ball</div>
+  <a class="library-btn" href="/library">Library</a>
   <a class="upload-btn" href="/">Upload</a>
 </div>
 

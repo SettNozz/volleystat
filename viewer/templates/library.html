@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Results Library — CourtSense</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: oklch(98% 0.004 250);
+  --ink: oklch(20% 0.02 260);
+  --muted: oklch(55% 0.015 260);
+  --border: oklch(91% 0.006 255);
+  --primary: oklch(58% 0.19 265);
+  --primary-dark: oklch(48% 0.19 265);
+  --primary-soft: oklch(94% 0.03 265);
+  --card: #fff;
+  --green: oklch(62% 0.15 150);
+  --green-soft: oklch(95% 0.04 150);
+  --amber: oklch(62% 0.14 75);
+  --amber-soft: oklch(95% 0.05 75);
+  --red: oklch(60% 0.18 25);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--ink); min-height: 100vh; }
+
+.topbar { height: 60px; display: flex; align-items: center; gap: 28px; padding: 0 28px; background: var(--card); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+.logo { display: flex; align-items: center; gap: 10px; }
+.logo-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--primary); display: flex; align-items: center; justify-content: center; }
+.logo-mark div { width: 11px; height: 11px; border-radius: 50%; background: #fff; }
+.logo-name { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; }
+.nav { display: flex; gap: 6px; }
+.nav a { padding: 7px 13px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
+.nav a:hover { background: var(--bg); color: var(--ink); }
+.nav a.active { background: var(--primary-soft); color: var(--primary-dark); }
+
+.wrap { max-width: 1240px; margin: 0 auto; padding: 26px 24px 60px; }
+h1 { font-size: 23px; font-weight: 800; letter-spacing: -0.02em; }
+.subtitle { color: var(--muted); font-size: 13px; font-weight: 500; margin-top: 4px; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 20px 0 16px; }
+input[type=search], select {
+  padding: 9px 13px; background: var(--card); border: 1px solid var(--border);
+  border-radius: 9px; color: var(--ink); font-size: 13px; font-family: inherit; font-weight: 500;
+}
+input[type=search] { flex: 1; min-width: 220px; }
+input[type=search]:focus, select:focus { outline: none; border-color: var(--primary); }
+.check-label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.check-label input { accent-color: var(--primary); }
+.ghost-btn { padding: 9px 14px; background: var(--card); border: 1px solid var(--border); border-radius: 9px; font-size: 13px; font-weight: 600; font-family: inherit; color: var(--ink); cursor: pointer; }
+.ghost-btn:hover { border-color: var(--primary); color: var(--primary-dark); }
+
+.count { font-size: 12.5px; font-weight: 600; color: var(--muted); margin-bottom: 12px; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+.item { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 17px; display: flex; flex-direction: column; gap: 11px; }
+.item.blocked { opacity: 0.72; }
+.item-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.stem { font-size: 15px; font-weight: 700; letter-spacing: -0.01em; word-break: break-all; }
+.dir { font-size: 11.5px; font-weight: 600; color: var(--muted); word-break: break-all; margin-top: 3px; font-variant-numeric: tabular-nums; }
+.when { font-size: 11.5px; font-weight: 600; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.metrics { display: flex; flex-wrap: wrap; gap: 14px; }
+.metric-label { font-size: 10.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.metric-value { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 1px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); color: var(--muted); }
+.chip.on { background: var(--green-soft); border-color: oklch(88% 0.06 150); color: var(--green); }
+.chip.warn { background: var(--amber-soft); border-color: oklch(88% 0.07 75); color: var(--amber); }
+
+.item-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: auto; padding-top: 4px; }
+.size { font-size: 11.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+a.open { padding: 8px 16px; background: var(--primary); color: #fff; border-radius: 9px; font-size: 13px; font-weight: 700; text-decoration: none; }
+a.open:hover { background: var(--primary-dark); }
+.blocked-note { font-size: 12px; font-weight: 600; color: var(--red); }
+.empty { padding: 40px; text-align: center; color: var(--muted); font-size: 13.5px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-mark"><div></div></div>
+    <div class="logo-name">CourtSense</div>
+  </div>
+  <div class="nav">
+    <a href="/">New analysis</a>
+    <a href="/library" class="active">Results library</a>
+  </div>
+</div>
+
+<div class="wrap">
+  <h1>Processed videos</h1>
+  <p class="subtitle" id="subtitle">Scanning results/ ...</p>
+
+  <div class="controls">
+    <input type="search" id="filter" placeholder="Filter by video, folder or source path...">
+    <select id="sort">
+      <option value="modified">Newest first</option>
+      <option value="rallies">Most rallies</option>
+      <option value="frames">Most frames</option>
+      <option value="stem">Video name (A→Z)</option>
+      <option value="dir">Folder (A→Z)</option>
+    </select>
+    <label class="check-label"><input type="checkbox" id="onlyOpenable" checked> Only openable</label>
+    <button class="ghost-btn" id="refresh">Refresh</button>
+  </div>
+
+  <div class="count" id="count"></div>
+  <div class="grid" id="grid"></div>
+  <div class="empty" id="empty" style="display:none">No results match this filter.</div>
+</div>
+
+<script>
+let entries = [];
+
+function formatWhen(ts) {
+  const d = new Date(ts * 1000);
+  const day = d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+  const time = d.toLocaleTimeString(undefined, {hour: '2-digit', minute: '2-digit'});
+  return `${day}, ${time}`;
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  const mb = bytes / 1048576;
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+}
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  const total = Math.round(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return m ? `${m}m ${s}s` : `${s}s`;
+}
+
+function metric(label, value) {
+  if (value === null || value === undefined || value === '') return '';
+  return `<div><div class="metric-label">${label}</div><div class="metric-value">${value}</div></div>`;
+}
+
+function chip(text, cls) {
+  return `<span class="chip ${cls || ''}">${text}</span>`;
+}
+
+function card(entry) {
+  const s = entry.summary || {};
+  const metrics = [
+    metric('Rallies', s.total_rallies),
+    metric('Events', s.total_events),
+    metric('Frames', s.total_frames ? s.total_frames.toLocaleString() : null),
+    metric('Length', formatDuration(s.duration_sec)),
+    metric('Ball rate', s.ball_detection_rate != null
+      ? `${(s.ball_detection_rate * 100).toFixed(1)}%` : null),
+  ].join('');
+
+  const chips = [
+    entry.has_annotations ? chip('annotations', 'on') : chip('no annotations', 'warn'),
+    entry.has_annotated_video ? chip('annotated mp4', 'on') : '',
+    entry.job_id ? chip('upload job') : '',
+    s.has_lifecycle ? chip('lifecycle', 'on') : '',
+    s.has_match_analytics ? chip('match analytics', 'on') : '',
+    s.has_reconstruction ? chip('reconstruction', 'on') : '',
+    !entry.playable ? chip('no playable video', 'warn') : '',
+  ].join('');
+
+  const action = entry.open_url
+    ? `<a class="open" href="${entry.open_url}">Open in viewer</a>`
+    : `<span class="blocked-note">${entry.blocked_reason || 'not openable'}</span>`;
+
+  return `
+  <div class="item ${entry.open_url ? '' : 'blocked'}">
+    <div class="item-head">
+      <div>
+        <div class="stem">${entry.stem}</div>
+        <div class="dir">${entry.results_dir}</div>
+      </div>
+      <div class="when">${formatWhen(entry.modified)}</div>
+    </div>
+    <div class="metrics">${metrics}</div>
+    <div class="chips">${chips}</div>
+    <div class="item-foot">
+      <span class="size">${formatSize(entry.size_bytes)}</span>
+      ${action}
+    </div>
+  </div>`;
+}
+
+function render() {
+  const query = document.getElementById('filter').value.trim().toLowerCase();
+  const sort = document.getElementById('sort').value;
+  const onlyOpenable = document.getElementById('onlyOpenable').checked;
+
+  let list = entries.filter(e => {
+    if (onlyOpenable && !e.open_url) return false;
+    if (!query) return true;
+    const haystack = [
+      e.stem, e.results_dir, e.original_video || '', (e.summary || {}).video || '',
+    ].join(' ').toLowerCase();
+    return haystack.includes(query);
+  });
+
+  list.sort((a, b) => {
+    if (sort === 'stem') return a.stem.localeCompare(b.stem);
+    if (sort === 'dir') return a.results_dir.localeCompare(b.results_dir);
+    if (sort === 'rallies')
+      return ((b.summary || {}).total_rallies || 0) - ((a.summary || {}).total_rallies || 0);
+    if (sort === 'frames')
+      return ((b.summary || {}).total_frames || 0) - ((a.summary || {}).total_frames || 0);
+    return b.modified - a.modified;
+  });
+
+  document.getElementById('grid').innerHTML = list.map(card).join('');
+  document.getElementById('empty').style.display = list.length ? 'none' : 'block';
+  document.getElementById('count').textContent =
+    `${list.length} of ${entries.length} result sets`;
+}
+
+function load() {
+  document.getElementById('subtitle').textContent = 'Scanning results/ ...';
+  fetch('/api/library')
+    .then(r => r.json())
+    .then(data => {
+      entries = data.entries || [];
+      document.getElementById('subtitle').textContent =
+        `Every analysed result found under ${data.root}/`;
+      render();
+    })
+    .catch(e => {
+      document.getElementById('subtitle').textContent = 'Failed to read results: ' + e;
+    });
+}
+
+document.getElementById('filter').addEventListener('input', render);
+document.getElementById('sort').addEventListener('change', render);
+document.getElementById('onlyOpenable').addEventListener('change', render);
+document.getElementById('refresh').addEventListener('click', load);
+load();
+</script>
+</body>
+</html>

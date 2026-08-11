@@ -27,6 +27,10 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 .logo-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--primary); display: flex; align-items: center; justify-content: center; }
 .logo-mark div { width: 11px; height: 11px; border-radius: 50%; background: #fff; }
 .logo-name { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; }
+.nav { display: flex; gap: 6px; }
+.nav a { padding: 7px 13px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
+.nav a:hover { background: var(--bg); color: var(--ink); }
+.nav a.active { background: var(--primary-soft); color: var(--primary-dark); }
 
 .hero { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; }
 h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 6px; }
@@ -67,6 +71,10 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
   <div class="logo">
     <div class="logo-mark"><div></div></div>
     <div class="logo-name">CourtSense</div>
+  </div>
+  <div class="nav">
+    <a href="/" class="active">New analysis</a>
+    <a href="/library">Results library</a>
   </div>
 </div>
 

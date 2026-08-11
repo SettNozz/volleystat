@@ -414,5 +414,150 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertEqual(missing.status_code, 404)
 
 
+class TestViewerResultsLibrary(unittest.TestCase):
+    """The library lists analysed results so a run can be reopened by name."""
+
+    def _fixture_root(self, root: Path) -> None:
+        results = root / "results"
+        source = root / "data" / "game.mp4"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"video")
+
+        full = results / "full_run"
+        full.mkdir(parents=True)
+        (full / "game_stats.json").write_text(json.dumps({
+            "video": "game.mp4",
+            "fps": 30.0,
+            "total_frames": 900,
+            "ball_detection_rate": 0.51,
+            "total_rallies": 9,
+            "all_events": [{}, {}, {}],
+            "rally_lifecycle": {"playable_rallies": 4},
+            "match_analytics": {"sets": []},
+            "processing_time_sec": 120.0,
+        }), encoding="utf-8")
+        (full / "game_annotations.json").write_text(
+            json.dumps({"original_video_path": str(source), "frames": []}),
+            encoding="utf-8",
+        )
+        (full / "game_analyzed.mp4").write_bytes(b"annotated")
+
+        job = results / "viewer" / "job_7"
+        job.mkdir(parents=True)
+        (job / "clip_stats.json").write_text(json.dumps({
+            "fps": 30.0, "total_frames": 300, "all_events": [],
+        }), encoding="utf-8")
+        (job / "clip_annotations.json").write_text(
+            json.dumps({"original_video_path": str(source)}), encoding="utf-8",
+        )
+
+        # Reconstruction reviews export annotations only; the viewer cannot open
+        # them, so the library has to list them as blocked instead of hiding them.
+        partial = results / "reconstruction_only"
+        partial.mkdir(parents=True)
+        (partial / "game_annotations.json").write_text("{}", encoding="utf-8")
+
+    def _index(self, root: Path) -> dict:
+        with patch.object(viewer, "PROJECT_ROOT", root), \
+                patch.object(viewer, "RESULTS_ROOT", root / "results"), \
+                patch.object(viewer, "RESULTS_DIR", root / "results" / "viewer"):
+            return {entry["results_dir"]: entry for entry in viewer._library_index()}
+
+    def test_index_summarises_every_result_and_flags_missing_stats(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._fixture_root(root)
+            index = self._index(root)
+
+        self.assertEqual(
+            sorted(index),
+            ["results/full_run", "results/reconstruction_only", "results/viewer/job_7"],
+        )
+
+        full = index["results/full_run"]
+        self.assertEqual(full["stem"], "game")
+        self.assertTrue(full["has_annotated_video"])
+        self.assertTrue(full["playable"])
+        self.assertEqual(
+            full["open_url"],
+            "/load?video=game&results_dir=results%2Ffull_run",
+        )
+        # The canonical lifecycle counter wins over the legacy rally total.
+        self.assertEqual(full["summary"]["total_rallies"], 4)
+        self.assertEqual(full["summary"]["total_events"], 3)
+        self.assertEqual(full["summary"]["duration_sec"], 30.0)
+        self.assertTrue(full["summary"]["has_match_analytics"])
+        self.assertFalse(full["summary"]["has_reconstruction"])
+
+        # A persisted upload restores through its job route, not by path.
+        self.assertEqual(index["results/viewer/job_7"]["open_url"], "/results/job_7")
+
+        blocked = index["results/reconstruction_only"]
+        self.assertIsNone(blocked["open_url"])
+        self.assertIn("game_stats.json", blocked["blocked_reason"])
+
+    def test_index_reads_source_path_without_parsing_whole_annotations(self):
+        # Annotation files run to tens of megabytes, so the library reads only
+        # the header. A truncated file still has to yield its source video.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._fixture_root(root)
+            source = root / "data" / "game.mp4"
+            annotations = root / "results" / "full_run" / "game_annotations.json"
+            annotations.write_text(
+                '{"fps":30.0,"original_video_path":'
+                + json.dumps(str(source))
+                + ',"frames":[{"f":0,"ball":[1.0,2.0]},{"f":1,',
+                encoding="utf-8",
+            )
+            index = self._index(root)
+
+        entry = index["results/full_run"]
+        self.assertEqual(entry["original_video"], str(source))
+        self.assertTrue(entry["playable"])
+
+    def test_library_api_and_page_expose_the_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._fixture_root(root)
+            with patch.object(viewer, "PROJECT_ROOT", root), \
+                    patch.object(viewer, "RESULTS_ROOT", root / "results"), \
+                    patch.object(viewer, "RESULTS_DIR", root / "results" / "viewer"):
+                with viewer.app.test_client() as client:
+                    api = client.get("/api/library")
+                    page = client.get("/library")
+
+        payload = api.get_json()
+        self.assertEqual(api.status_code, 200)
+        self.assertEqual(payload["root"], "results")
+        self.assertEqual(payload["count"], 3)
+        self.assertEqual(len(payload["entries"]), 3)
+        # Newest first keeps the run a user just finished at the top.
+        modified = [entry["modified"] for entry in payload["entries"]]
+        self.assertEqual(modified, sorted(modified, reverse=True))
+
+        self.assertEqual(page.status_code, 200)
+        markup = page.get_data(as_text=True)
+        self.assertIn("/api/library", markup)
+        self.assertIn('id="onlyOpenable"', markup)
+        self.assertIn("Open in viewer", markup)
+
+    def test_load_route_resolves_relative_results_dir_from_project_root(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._fixture_root(root)
+            with patch.object(viewer, "PROJECT_ROOT", root):
+                with viewer.app.test_client() as client:
+                    response = client.get(
+                        "/load", query_string={
+                            "video": "game", "results_dir": "results/full_run",
+                        },
+                    )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/results/preloaded_game", response.headers["Location"])
+        viewer.jobs.pop("preloaded_game", None)
+
+
 if __name__ == "__main__":
     unittest.main()
