@@ -10,7 +10,7 @@ import json
 import math
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -83,6 +83,33 @@ _POSE_FALLBACK = "yolo11n-pose.pt"  # will be auto-downloaded
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
+@dataclass
+class _EventOverlayState:
+    """Per-pass display policy shared by provisional and final predictions."""
+    fps: float
+    last_serve_frame: Optional[int] = None
+    last_rally_display: str = ""
+    last_rally_frame: int = 0
+
+    def update(self, raw_display: Optional[str], state: str, frame: int) -> Optional[str]:
+        if raw_display is not None and state in {"serving", "rally_active"}:
+            if raw_display == "serve":
+                if (self.last_serve_frame is not None
+                        and frame - self.last_serve_frame < int(self.fps * 8.0)):
+                    return None
+                self.last_serve_frame = frame
+            self.last_rally_display = raw_display
+            self.last_rally_frame = frame
+            return raw_display
+        if (raw_display is not None
+                and state not in {"serving", "rally_active"}
+                and self.last_rally_display
+                and self.last_rally_display != "serve"
+                and frame - self.last_rally_frame < int(self.fps * 2.0)):
+            return self.last_rally_display
+        return None
+
 
 @dataclass
 class CalibrationData:
@@ -212,7 +239,7 @@ class GameAnalyzer:
         net_y_override: Optional[float] = None,
         event_checkpoint_path: Optional[str] = None,
         max_players_per_team: int = 6,
-        pose_imgsz: Optional[int] = None,
+        pose_imgsz: Optional[int] = 2560,
         refresh_net_floor: bool = False,
         ball_ensemble: bool = False,
         ball_trajectory_dp: bool = True,
@@ -229,6 +256,7 @@ class GameAnalyzer:
         ball_smooth_window: Any = BALL_SMOOTH_DEFAULT_WINDOW,
         suppress_static_ball_sources: bool = True,
         use_model_registry: bool = True,
+        person_masks_path: Optional[str] = None,
     ):
         """
         Args:
@@ -310,7 +338,7 @@ class GameAnalyzer:
 
         self._pose_track_warned = False
         self.max_players_per_team = max_players_per_team
-        self.pose_imgsz = pose_imgsz  # e.g. 1280 improves recall on small/far players
+        self.pose_imgsz = pose_imgsz or 2560  # Preserve small/far players in native 4K footage.
         self.refresh_net_floor = refresh_net_floor
         self._projector: Optional[CourtProjector] = None
         self._projector_calib: Optional[CalibrationData] = None
@@ -327,6 +355,14 @@ class GameAnalyzer:
         self.pose_model = None
         if self.enable_pose:
             self._init_pose_model(pose_model_path)
+        self._person_pose_recovery = None
+        if person_masks_path:
+            if not self.enable_pose or self.pose_model is None:
+                raise ValueError("SAM-guided recovery requires YOLO-pose")
+            from src.detection.sam_pose_recovery import SamGuidedPoseRecovery
+            self._person_pose_recovery = SamGuidedPoseRecovery(
+                person_masks_path, self.model_provenance["pose_estimator"]["path"],
+            )
         self._event_predictor = self._init_event_predictor(event_checkpoint_path)
         self._warmup()
         self._emit_progress(
@@ -439,7 +475,7 @@ class GameAnalyzer:
                     net_height_m,
                 )
 
-        return CalibrationData(
+        return self._validated_net_floor(CalibrationData(
             net_y=net_y,
             net_x_left=float(min(net_xs)) if net_xs else court_left,
             net_x_right=float(max(net_xs)) if net_xs else court_right,
@@ -460,11 +496,58 @@ class GameAnalyzer:
             net_post_spacing_m=net_post_spacing_m,
             homography=data.get("perspective_matrix"),
             court_corners=court_corners,
+        ))
+
+    @staticmethod
+    def _validated_net_floor(calibration: Optional[CalibrationData]) -> Optional[CalibrationData]:
+        """Reject a geometrically impossible detected divider, in memory only.
+
+        An invalid Hough/SAM floor line can put both teams on one side; the
+        six-player cap then drops real players. Use the calibrated court's
+        centre line at the detected post X coordinates, preserving its slope.
+        """
+        c = calibration
+        if c is None or c.homography is None or not (c.net_floor_left and c.net_floor_right):
+            return c
+        if c.net_floor_method == "calibrated_court_midline_fallback":
+            return c
+        from src.detection.net_detector import NetDetector, infer_net_bottom_y_from_floor
+        spacing = c.net_post_spacing_m
+        if spacing is None:
+            spacing = NetDetector.estimate_post_spacing_m(
+                (c.net_floor_left[0] * 1280 / c.frame_width,
+                 c.net_floor_left[1] * 720 / c.frame_height),
+                (c.net_floor_right[0] * 1280 / c.frame_width,
+                 c.net_floor_right[1] * 720 / c.frame_height),
+                c.homography, c.frame_width, c.frame_height,
+            )
+        if NetDetector.post_spacing_is_plausible(spacing):
+            return c
+        try:
+            projector = CourtProjector(c.homography)
+            a = projector.world_to_image((-projector.half_width, 0.0))
+            b = projector.world_to_image((projector.half_width, 0.0))
+            if not np.isfinite([*a, *b]).all() or abs(b[0] - a[0]) < 1e-6:
+                return c
+            def on_midline(x):
+                return (float(x), float(a[1] + (x - a[0]) * (b[1] - a[1]) / (b[0] - a[0])))
+            left, right = on_midline(c.net_floor_left[0]), on_midline(c.net_floor_right[0])
+            bottom = c.net_tape_bottom
+            if c.net_tape_top is not None:
+                bottom = infer_net_bottom_y_from_floor(c.net_tape_top, (left[1] + right[1]) / 2, c.net_height_m)
+        except (ValueError, TypeError, ZeroDivisionError, np.linalg.LinAlgError):
+            return c
+        log.warning(
+            f"Rejecting {c.net_floor_method} team divider (post spacing {spacing:.2f} m); "
+            "using calibrated court midline. Source calibration is unchanged."
         )
+        return replace(c, net_floor_left=left, net_floor_right=right,
+                       net_floor_method="calibrated_court_midline_fallback",
+                       net_post_spacing_m=None, net_tape_bottom=bottom)
 
     def _scale_calibration(self, actual_w: int, actual_h: int) -> "CalibrationData":
         """Return calibration scaled to actual frame size, with optional net_y override."""
-        c = self.calibration
+        c = self._validated_net_floor(self.calibration)
         if c is None:
             # No calibration: build defaults with override if provided
             net_y = self.net_y_override if self.net_y_override else actual_h * 0.5
@@ -805,6 +888,11 @@ class GameAnalyzer:
             projector=projector,
         )
 
+        recovery = getattr(self, "_person_pose_recovery", None)
+        if recovery is not None:
+            poses = recovery.recover(frame, getattr(self, "_current_pose_frame", None),
+                                     poses, projector, device)
+
         # On-court filter with track hysteresis: spectators/benches never get
         # in; players chasing a ball outside the lines don't drop out.
         if projector is not None:
@@ -815,6 +903,8 @@ class GameAnalyzer:
                 serve_setup=fsm_state in {"serve_prep", "serve_ready"},
             )
 
+        if recovery is not None:
+            recovery.accepted_person_frames += sum(p.source == "sam_guided_yolo_pose" for p in poses)
         return poses_to_teams(poses), poses
 
     def _get_projector(self) -> Optional[CourtProjector]:
@@ -1168,18 +1258,9 @@ class GameAnalyzer:
         # force the rally to end (ball went out / rally over).
         frames_since_ball = 0
 
-        # Serve cooldown: suppress repeated "serve" predictions — a real serve can happen
-        # at most once per rally. After showing "serve", block it for at least this many
-        # frames so the model can't flicker back to "serve" mid-rally.
-        _SERVE_COOLDOWN_SEC  = 8.0          # minimum seconds between two serve displays
-        _serve_cooldown_frames = int(fps * _SERVE_COOLDOWN_SEC)
-        _last_serve_shown_frame: int = -_serve_cooldown_frames  # allow first serve immediately
-
-        # Sticky overlay: after rally ends, keep showing the last in-rally prediction for
-        # a short window so the screen doesn't go blank between rallies.
-        _STICKY_FRAMES = int(fps * 2.0)     # show last prediction for 2 sec after rally ends
-        _last_rally_display: str = ""
-        _last_rally_display_frame: int = -_STICKY_FRAMES
+        overlay = _EventOverlayState(fps)
+        if self._event_predictor is not None:
+            self._event_predictor.reset()
 
         t0 = time.time()
         progress_interval = max(1, int(fps / 2))
@@ -1289,6 +1370,7 @@ class GameAnalyzer:
                 fsm._end_rally(frame_idx, "no_ball_timeout")
                 frames_since_ball = 0
 
+            self._current_pose_frame = frame_idx
             player_teams, player_poses = self._detect_players(
                 frame,
                 fsm_state=cur_state_pre,
@@ -1361,7 +1443,6 @@ class GameAnalyzer:
             # FSM gate: only show LSTM prediction when ball is actually in play.
             # During serve_prep / serve_ready players stand in serving position, causing
             # the LSTM to continuously output "serve" between rallies — suppress that.
-            _LSTM_ACTIVE_STATES = {"serving", "rally_active"}
             event_display = None
             if self._event_predictor is not None and self.calibration is not None:
                 raw_display = self._event_predictor.add_frame(
@@ -1372,32 +1453,9 @@ class GameAnalyzer:
                         self.calibration.frame_width,
                         self.calibration.frame_height,
                     ),
+                    ball_new=bool(ball_pos and self.ball_gate.acquired_this_frame),
                 )
-                # Gate: only pass prediction through when FSM says ball is in play
-                if raw_display is not None and cur_state in _LSTM_ACTIVE_STATES:
-                    if raw_display == "serve":
-                        # Serve cooldown: enforce minimum gap between serve displays.
-                        # During rally_active the predictor already suppresses serve, but
-                        # "serving" state can still briefly overlap with a false serve
-                        # prediction lingering in the smoothing window.
-                        frames_since_serve = frame_idx - _last_serve_shown_frame
-                        if frames_since_serve >= _serve_cooldown_frames:
-                            _last_serve_shown_frame = frame_idx
-                            _last_rally_display = raw_display
-                            _last_rally_display_frame = frame_idx
-                            event_display = raw_display
-                        # else: too soon — suppress this serve prediction silently
-                    else:
-                        _last_rally_display = raw_display
-                        _last_rally_display_frame = frame_idx
-                        event_display = raw_display
-                elif (raw_display is not None
-                      and cur_state not in _LSTM_ACTIVE_STATES
-                      and _last_rally_display
-                      and _last_rally_display != "serve"
-                      and frame_idx - _last_rally_display_frame < _STICKY_FRAMES):
-                    # Sticky: rally just ended — keep last non-serve prediction briefly visible
-                    event_display = _last_rally_display
+                event_display = overlay.update(raw_display, cur_state or "", frame_idx)
 
             # --- Collect per-frame annotation for viewer (FSM + Transformer for comparison) ---
             frame_events_this = [e for e in stats.all_events if e["frame"] == frame_idx]
@@ -1430,6 +1488,8 @@ class GameAnalyzer:
                             if p.back_facing_score is not None else None
                         ),
                         "team_prior": p.team_prior,
+                        "source": p.source,
+                        "mask_instance_id": p.mask_instance_id,
                     }
                     for p in player_poses
                 ],
@@ -1575,6 +1635,7 @@ class GameAnalyzer:
         )
         annotate_match_phases(stats.frame_annotations, self.match_segments)
         annotate_score_timeline(stats.frame_annotations, stats.match_analytics)
+        self._recompute_features_and_predictions(stats.frame_annotations, fps)
         if stats.rally_lifecycle.get("service_attempts"):
             lc = stats.rally_lifecycle
             log.info(
@@ -1617,6 +1678,77 @@ class GameAnalyzer:
         )
 
         return stats
+
+    def _recompute_features_and_predictions(self, annotations: List[Dict], fps: float) -> None:
+        """Replay saved poses against final ball coordinates and clean FSM states.
+
+        Features use the exported ``ball`` trajectory, including accepted
+        reconstruction. The separate reconstruction-affects-FSM policy remains
+        enforced by the clean FSM replay. Raw observations/provenance stay intact.
+        """
+        pose_fx = PoseFeatureExtractor()
+        predictor = self._event_predictor
+        if predictor is not None:
+            predictor.reset()
+        overlay = _EventOverlayState(fps)
+        calibration = self.calibration
+        pose_net_y = (
+            calibration.net_tape_top
+            if calibration is not None and calibration.net_tape_top is not None
+            else (calibration.net_y if calibration is not None else 830.0)
+        )
+        for ann in annotations:
+            frame_idx = int(ann["f"])
+            poses = self._poses_from_annotation(ann)
+            ball = ann.get("ball")
+            ball_pos = tuple(float(value) for value in ball) if ball is not None else None
+            if ann.get("ball_out_of_frame"):
+                ball_pos = None
+            ann["pose_f"] = pose_fx.update(frame_idx, poses, ball_pos, pose_net_y)
+            ann.pop("event_model", None)
+            if predictor is None or calibration is None:
+                continue
+            teams = {"team_a": [], "team_b": []}
+            for pose in poses:
+                teams[pose.team].append(pose.center)
+            # ``p`` stores the exact rounded centers used by offline feature
+            # builders, grouped team_a then team_b. Avoid bbox-rounding drift.
+            points = ann.get("p")
+            if points is not None and len(points) == len(poses):
+                split = len(teams["team_a"])
+                teams = {"team_a": points[:split], "team_b": points[split:]}
+            state = ann.get("state") or ""
+            raw_display = predictor.add_frame(
+                ball_pos, teams, calibration.net_y, fps,
+                fsm_state=state,
+                pose_features=ann["pose_f"],
+                frame_size=(calibration.frame_width, calibration.frame_height),
+                ball_new=bool(ann.get("ball_new")),
+            )
+            display = overlay.update(raw_display, state, frame_idx)
+            if display is not None:
+                ann["event_model"] = display
+
+    @staticmethod
+    def _poses_from_annotation(ann: Dict) -> List[PlayerPose]:
+        poses = []
+        for saved in ann.get("poses") or []:
+            bbox = tuple(float(value) for value in saved.get("bb", ()))
+            keypoints = np.asarray(saved.get("kp") or [], dtype=np.float32)
+            if len(bbox) != 4 or keypoints.shape != (17, 3):
+                continue
+            poses.append(PlayerPose(
+                team="team_a" if saved.get("team") in ("a", "team_a") else "team_b",
+                center=((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0),
+                bbox=bbox,
+                keypoints=keypoints,
+                track_id=saved.get("id"),
+                back_facing_score=saved.get("back"),
+                source=saved.get("source", "yolo_pose"),
+                mask_instance_id=saved.get("mask_instance_id"),
+                team_prior=saved.get("team_prior"),
+            ))
+        return poses
 
     def _apply_trajectory_dp(self, stats: "GameStats") -> bool:
         """Replace the gate's per-frame picks with a globally chosen path.
@@ -2151,6 +2283,13 @@ class GameAnalyzer:
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        recovery = getattr(self, "_person_pose_recovery", None)
+        if recovery is not None:
+            try:
+                recovery.validate_video(vp, fps, w, h)
+            except Exception:
+                cap.release()
+                raise
         max_frames = int(max_duration_sec * fps) if max_duration_sec else total
         max_frames = min(max_frames, total) if total > 0 else max_frames
 
@@ -2326,6 +2465,11 @@ class GameAnalyzer:
                 list(point) for point in calib.court_corners
             ] if calib and calib.court_corners else None,
             "team_divider_prior_counts": team_prior_counts,
+            "player_detection": {
+                "pose_imgsz": getattr(self, "pose_imgsz", None),
+                "sam_guided_recovery": self._person_pose_recovery.summary()
+                    if getattr(self, "_person_pose_recovery", None) is not None else {"enabled": False},
+            },
             "pose_feature_names": POSE_FEATURE_NAMES,
             "attack_heatmap": stats.attack_heatmap,
             "ball_reconstruction": stats.ball_reconstruction,

@@ -180,6 +180,8 @@ class PlayerPose:
     track_id: Optional[int] = None  # ByteTrack ID (None if tracking unavailable)
     back_facing_score: Optional[float] = None  # 0..1 face-hidden/back evidence
     team_prior: Optional[str] = None
+    source: str = "yolo_pose"
+    mask_instance_id: Optional[int] = None
 
     @property
     def bbox_h(self) -> float:

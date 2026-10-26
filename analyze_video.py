@@ -119,6 +119,10 @@ def main():
                         help="Override ball detection model path")
     parser.add_argument("--pose-model", default=None, metavar="PATH",
                         help="Override pose estimation model path")
+    parser.add_argument("--pose-imgsz", type=int, default=2560,
+                        help="YOLO-pose input size (default 2560 for small/far 4K players)")
+    parser.add_argument("--person-masks", default=None, metavar="JSONL",
+                        help="Completed SAM people masks for optional crop-based YOLO-pose recovery")
     parser.add_argument("--ball-ensemble", action="store_true",
                         help="Collect ball candidates from a second, tiled detector "
                              "(union recall 0.93 vs 0.72, roughly half the speed)")
@@ -189,6 +193,10 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.person_masks and not args.video:
+        parser.error("--person-masks requires --video for exact source-frame validation")
+    if args.pose_imgsz <= 0:
+        parser.error("--pose-imgsz must be positive")
     if args.video:
         args.video = str(local_path_from_uri(args.video))
         if not Path(args.video).is_file():
@@ -227,6 +235,8 @@ def main():
         calibration_path=args.calibration,
         ball_model_path=args.ball_model,
         pose_model_path=args.pose_model,
+        pose_imgsz=args.pose_imgsz,
+        person_masks_path=args.person_masks,
         output_video=not args.no_video,
         skip_frames=args.skip_frames,
         net_y_override=args.net_y,

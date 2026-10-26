@@ -333,7 +333,7 @@ def _run_analysis(
             # doubles wall time.
             output_video=False,
             skip_frames=skip_frames,
-            pose_imgsz=1280,
+            pose_imgsz=2560,
             max_players_per_team=6,
             refresh_net_floor=refresh_net_floor,
             ball_batch_size=ball_batch_size,

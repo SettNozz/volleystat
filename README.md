@@ -127,6 +127,8 @@ For input `game.webm` and `--output results/game`:
 
 Annotations distinguish observed and reconstructed ball positions. Reconstruction never becomes detector ground truth. By default it also does not alter FSM events; `--reconstruction-affects-fsm` admits only high-confidence reconstructed points into the clean FSM replay.
 
+After trajectory cleanup and clean FSM replay, the pipeline recomputes `pose_f` and event-model predictions from the final exported ball coordinates and saved player poses. Predictor and pose history start fresh for each replay. Features can use accepted reconstruction without changing the separate FSM reconstruction policy. Normalized clip features preserve missing/off-camera observations and reset velocity at gaps and new tracks, matching streaming inference; legacy pixel features retain their compatibility behavior. Existing annotations, feature files and checkpoints are not rewritten automatically. Inline video overlays remain provisional unless the final rendering pass is enabled.
+
 ## Ball trajectory workflow
 
 Default analysis applies:
@@ -340,3 +342,26 @@ python -m pytest tests -q
 ```
 
 For architecture navigation, repository contains generated graph under `graphify-out/`.
+
+## Experimental SAM3 people masks
+
+Compare body masks with saved poses on a short video interval using the isolated
+SAM3 environment. Outputs include a comparison video, missing-pose review
+candidates, adjacent-frame mask associations and eight versioned mask features
+with validity flags. Production inference and existing checkpoints stay unchanged.
+See [SAM people-mask experiment](docs/sam_people_masks.md) for commands, provenance,
+raw-YOLO diagnostics and the future training contract.
+
+Player detection uses `--pose-imgsz 2560` by default in both CLI and viewer
+for small/far players in 4K. Set `--pose-imgsz 1280` explicitly to reduce cost.
+Geometrically impossible detected net-floor lines fall back to the calibrated
+court centre line in memory, recorded as `calibrated_court_midline_fallback`.
+This prevents both teams collapsing into one six-player cap; it does not add
+unobserved players or rewrite the source calibration.
+
+Optional `--person-masks results/<completed-sam-run>/masks.jsonl` recovers real
+YOLO-pose keypoints from unmatched SAM person crops. It verifies source-video
+identity and keeps recovery inference separate from ByteTrack. Recovered poses
+retain their model provenance and a separate negative SAM-mask ID namespace;
+all poses still pass the existing court gate and six-per-team cap. See the
+[SAM workflow](docs/sam_people_masks.md) for the complete commands and limitations.

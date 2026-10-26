@@ -112,12 +112,16 @@ class StreamingEventPredictor:
         fsm_state: str = "",
         pose_features: Optional[List[float]] = None,
         frame_size: Optional[Tuple[float, float]] = None,
+        ball_new: bool = False,
     ) -> Optional[str]:
         sequence_len = int(
             getattr(self, "sequence_len", self._buf.maxlen or SEQUENCE_LEN)
         )
         ball = ball_pos
         bx, by = ball if ball else (0.0, 0.0)
+        if ball_new:
+            # A new candidate identity is not a one-frame ball flight.
+            self._prev_ball = None
 
         players = (player_teams.get("team_a", []) + player_teams.get("team_b", []))
 

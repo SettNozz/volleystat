@@ -125,6 +125,7 @@ Main code:
 - Reconstruction must not affect FSM unless `--reconstruction-affects-fsm`; then only accepted high-confidence points enter clean replay.
 - Original observed values and derived values must remain recoverable in annotations.
 - FSM/events, viewer, Parquet features, and analytics must consume same final accepted trajectory for a run.
+- After clean FSM replay, recompute `pose_f` and event-model predictions from final exported ball coordinates and saved poses with fresh temporal history. Feature reconstruction use does not change `--reconstruction-affects-fsm`. Normalized clip features must preserve missing/off-camera observations and reset velocity at gaps/new tracks; legacy pixel compatibility remains unchanged. Existing feature files/checkpoints require explicit versioned refresh, never implicit rewriting.
 
 Standalone reconstruction review:
 
@@ -357,3 +358,37 @@ tests/
 ```
 
 Read `README.md` for user-facing setup and examples.
+
+## Experimental people masks
+
+- `scripts/evaluation/sam3_people_masks.py` runs offline SAM3 image segmentation
+  in `.sam3_env` against saved final annotations; refuses existing output paths.
+- `src/detection/person_masks.py` owns RLE, one-to-one pose matching, causal
+  adjacent-frame IoU and `person_mask_features_v1` (8 values + 8 validity bits).
+- `scripts/evaluation/compare_sam_yolo_samples.py` independently reruns raw
+  YOLO-pose on five frames at 640/1280 for diagnosis, not source annotation edits.
+- Unmatched court masks are review candidates, not proven YOLO misses or new
+  player identities. Saved poses are already court-filtered. No keypoints/teams
+  are fabricated; no ball, FSM, authoritative dataset or checkpoint is rewritten.
+- Temporal matching is not native SAM3 video propagation or occlusion recovery.
+- See `docs/sam_people_masks.md`; test `tests/test_person_masks.py`.
+
+Player-recall correction: CLI/viewer default pose input is 2560 (CLI override
+`--pose-imgsz`). `GameAnalyzer._validated_net_floor` uses the existing post-spacing
+plausibility gate; an invalid detected divider falls back to the homography
+world-y=0 line before shared runtime calibration is scaled/consumed. Its method
+is `calibrated_court_midline_fallback`, not measured/SAM ground truth. Source
+calibration remains unchanged; plausible detected floor geometry keeps priority.
+Regression tests in `tests/test_player_pose.py` cover both teams surviving the
+six-player cap, slope/scaling and preservation of valid geometry.
+
+Optional `--person-masks <masks.jsonl>` enables `SamGuidedPoseRecovery` from
+`src/detection/sam_pose_recovery.py`: same-video validated SAM proposals guide
+independent YOLO crop inference, never primary ByteTrack callbacks/state.
+Recovered keypoints come only from YOLO; duplicates and weak torso evidence are
+rejected before the normal court gate. Export `source=sam_guided_yolo_pose`,
+`mask_instance_id` and negative mask-track IDs; these are a separate association
+namespace, not identity continuity with positive ByteTrack IDs. Record proposal
+and accepted person-frame counts in annotation `player_detection` provenance.
+SAM feature sidecars tied to old annotations must not silently be reused as
+refreshed features for new recovered poses. Tests: `test_sam_pose_recovery.py`.
