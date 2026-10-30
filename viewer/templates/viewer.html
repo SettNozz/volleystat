@@ -76,7 +76,8 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 .clips-title { font-size: 13px; font-weight: 700; color: var(--muted2); margin-bottom: 8px; }
 .clips-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; }
 .clip-card { width: 150px; flex-shrink: 0; cursor: pointer; }
-.clip-thumb { height: 64px; border-radius: 8px; margin-bottom: 8px; background: var(--court); position: relative; overflow: hidden; border: 1px solid var(--border); }
+.clip-thumb { height: 84px; border-radius: 8px; margin-bottom: 8px; background: var(--court); position: relative; overflow: hidden; border: 1px solid var(--border); }
+.clip-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .clip-thumb .bar { position: absolute; bottom: 0; left: 0; height: 4px; background: var(--primary); }
 .clip-name { font-size: 12.5px; font-weight: 700; }
 .clip-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
@@ -597,7 +598,9 @@ function renderRallyClips() {
     el.onclick = () => seekAndPlay(rallyStartFrame(r));
     const widthPct = Math.min(100, (r.duration_sec / 15) * 100);
     el.innerHTML =
-      `<div class="clip-thumb"><div class="bar" style="width:${widthPct}%"></div></div>` +
+      // The rally's first frame (its serve), decoded server-side on demand.
+      `<div class="clip-thumb"><img loading="lazy" alt="" src="/api/frame/${JOB_ID}/${rallyStartFrame(r)}" onerror="this.remove()">` +
+      `<div class="bar" style="width:${widthPct}%"></div></div>` +
       `<div class="clip-name">Rally ${i + 1} · ${r.duration_sec}s</div>` +
       `<div class="clip-meta">${rallyContactsLabel(r)} · <span style="color:${outColor};font-weight:700">${outcome.replace(/_/g, ' ')}</span></div>`;
     box.appendChild(el);

@@ -424,7 +424,10 @@ is recovered from the spotter's serve probability and marked `inferred`); a
 serve nobody touched is a service attempt, not a rally. The FSM's are kept in
 `rallies_fsm`/`service_attempts_fsm`. Score and the attack heatmap stay
 FSM-derived. `scripts/apply_spotter_rallies.py` rebuilds a saved result into a
-fresh directory without rerunning detection. The spotter cannot tell warm-up from play and does
+fresh directory without rerunning detection. Viewer uploads run the shipped
+checkpoint (`models/contact_spotter/spotter_20261028_v1.pt`) automatically and
+fall back to the FSM when it is absent; each rally clip shows the rally's first
+frame, decoded from the original video. The spotter cannot tell warm-up from play and does
 not attribute a contact to a team, so exclude non-game time with
 `--match-config`. Train a checkpoint with
 `scripts/models/train_contact_spotter.py`. See

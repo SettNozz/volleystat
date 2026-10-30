@@ -555,7 +555,11 @@ Rules specific to this work:
   `rally_lifecycle_fsm`; `match_analytics` and `attack_heatmap` stay
   FSM-derived. JIZ3 check: 22 rallies all on a serve (8 inferred, visually
   plausible), not a labelled score. `scripts/apply_spotter_rallies.py`
-  rebuilds a saved result into a fresh directory.
+  rebuilds a saved result into a fresh directory. Viewer uploads pass
+  `viewer.CONTACT_SPOTTER_PATH` (the shipped checkpoint) when it exists and
+  fall back to FSM events/rallies otherwise. Rally clips show the rally's first
+  frame from `/api/frame/<job_id>/<frame>`, decoded from the original video and
+  cached in memory only; nothing is written to the result directory.
 - Do not build a phase gate for warm-up. Measured: the decoder labels warm-up
   `rally_live`/`serve_flight`, a surrounding-phase gate catches 1 of 36 and the
   phase probability margin carries no signal (the contact class takes the mass

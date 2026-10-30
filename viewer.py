@@ -21,6 +21,7 @@ import threading
 import time
 import urllib.parse
 import uuid
+from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 
@@ -57,6 +58,10 @@ RESULTS_ROOT = PROJECT_ROOT / "results"
 RESULTS_DIR = RESULTS_ROOT / "viewer"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 COURT_SETUPS_PATH = PROJECT_ROOT / "configs" / "court_setups.json"
+# Viewer uploads run the dense contact spotter, so their events and rallies
+# match `analyze_video.py --contact-spotter`. Without the checkpoint the
+# analysis falls back to the FSM's events and rallies.
+CONTACT_SPOTTER_PATH = PROJECT_ROOT / "models" / "contact_spotter" / "spotter_20261028_v1.pt"
 
 
 def _setup_store() -> CourtSetupStore:
@@ -353,6 +358,9 @@ def _run_analysis(
             ball_batch_size=ball_batch_size,
             net_height_m=net_height_m,
             progress_callback=update_progress,
+            contact_spotter_path=(
+                str(CONTACT_SPOTTER_PATH) if CONTACT_SPOTTER_PATH.is_file() else None
+            ),
         )
         jobs[job_id]["message"] = (
             f"GPU batch {ball_batch_size}: skeletons + SAM3 net posts + heatmap..."
@@ -889,6 +897,61 @@ def video(job_id):
 def original_video():
     """Serve the original (unannotated) video for canvas overlay mode."""
     return _stream_video(request.args.get("path", ""))
+
+
+# Rally clip thumbnails are decoded from the video on demand and kept only in
+# memory: a result directory is never written to just to show a preview.
+_THUMB_WIDTH = 320
+_THUMB_CACHE_SIZE = 256
+_thumb_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
+_thumb_lock = threading.Lock()
+
+
+def _decode_thumbnail(video_path: Path, frame: int):
+    import cv2
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
+        ok, image = cap.read()
+    finally:
+        cap.release()
+    if not ok or image is None:
+        return None
+    height, width = image.shape[:2]
+    size = (_THUMB_WIDTH, max(1, round(height * _THUMB_WIDTH / width)))
+    image = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
+    ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    return encoded.tobytes() if ok else None
+
+
+@app.route("/api/frame/<job_id>/<int:frame>")
+def frame_thumbnail(job_id, frame):
+    """One downscaled JPEG of a source frame, e.g. a rally's first frame."""
+    job = _get_job(job_id)
+    if not job or job["status"] != "done":
+        return ("Not ready", 404)
+    # The original video is what the overlays are drawn on; an analysed MP4
+    # is only a fallback for results whose original has moved.
+    source = next(
+        (Path(path) for path in (job.get("original_video_path"), job.get("video_path"))
+         if path and Path(path).is_file()),
+        None,
+    )
+    if source is None:
+        return ("Video not found", 404)
+    key = (str(source), frame)
+    with _thumb_lock:
+        data = _thumb_cache.get(key)
+    if data is None:
+        data = _decode_thumbnail(source, frame)
+        if data is None:
+            return ("Frame not readable", 404)
+        with _thumb_lock:
+            _thumb_cache[key] = data
+            while len(_thumb_cache) > _THUMB_CACHE_SIZE:
+                _thumb_cache.popitem(last=False)
+    return Response(data, mimetype="image/jpeg",
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 if __name__ == "__main__":
