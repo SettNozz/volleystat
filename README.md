@@ -22,6 +22,11 @@ events with click-to-seek. Unverified contact proposals use saved ball/pose
 evidence from both sides; ambiguous contacts stay unresolved. Correct an
 attribution in the dropdown; corrections are separate, source-bound records.
 No video/model rerun is needed. See [per-player contacts](docs/player_contacts.md).
+An isolated [contact-author learning experiment](docs/contact_author_learning.md)
+compares geometric rules, nine team-side classifiers and weak actor ranking on
+frozen data. Review results expose an approach selector, paused contact frames
+and uncertain player suggestions. Team-side validation is not individual-author
+accuracy; nothing is promoted into production or source annotations.
 For short skeleton dropouts, the experimental
 [offline pose completion](docs/pose_completion.md) uses the same person's past
 and future observed joints. Hidden joints appear as cyan dashed estimates,

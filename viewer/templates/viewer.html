@@ -218,7 +218,16 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
   <div class="side-col">
     <div class="card side-card" id="playerContactsPanel">
       <div class="card-title">Player contacts</div>
+      <div id="playerContactMethodBar" style="display:none;margin-bottom:8px">
+        <label style="font-size:11px;color:var(--muted)">Review approach
+          <select class="ctrl" id="playerContactMethod" style="max-width:100%;width:100%;font-size:11px" onchange="changePlayerContactMethod(this.value)"></select>
+        </label>
+        <p id="playerContactMethodQuality" style="font-size:11px;color:var(--muted)"></p>
+      </div>
       <div class="chip-row" id="playerChips" aria-label="Roster player"></div>
+      <label style="font-size:11px;color:var(--muted);display:block;margin-top:8px">
+        <input type="checkbox" id="showPlayerContactCandidates" checked onchange="renderPlayerContacts()"> Include uncertain suggestions
+      </label>
       <p id="playerContactSummary" style="font-size:12px;line-height:1.7"></p>
       <p id="playerContactStatus" role="status" style="font-size:11px;color:var(--muted)">Loading player contacts…</p>
       <div class="event-list" id="playerContactList" style="max-height:300px"></div>
@@ -446,6 +455,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 .player-contact-row { display:grid; grid-template-columns:1fr auto; gap:5px; padding:8px 0; border-bottom:1px solid var(--border); }
 .player-contact-row small { grid-column:1 / -1; color:var(--muted); font-size:10px; }
 .player-contact-jump { text-align:left; white-space:normal; }
+.player-contact-row.candidate { border-left:3px solid #f0b429; padding-left:6px; }
 </style>
 <script src="{{ url_for('static', filename='player_contacts.js') }}"></script>
 <script src="{{ url_for('static', filename='pose_completion.js') }}"></script>
@@ -1097,7 +1107,7 @@ fetch('/api/annotations/' + JOB_ID)
     annotations = {};
     for (const f of data.frames) annotations[f.f] = f;
     window._annData = data;
-    initPoseEstimates(data);
+    initPoseEstimates(data, Boolean(playerContactReport && playerContactReport.parameters && playerContactReport.parameters.estimates));
     courtEditor.originalCorners = Array.isArray(data.court_corners)
       ? JSON.parse(JSON.stringify(data.court_corners)) : null;
     const slider = document.getElementById('netYSlider');
@@ -1761,9 +1771,9 @@ function stepFrame(d) {
   vid.currentTime = Math.max(0, vid.currentTime + d / FPS);
 }
 function seekToFrame(f) { vid.currentTime = f / FPS; }
-function seekAndPlay(f) {
+function seekAndPlay(f, autoPlay = true) {
   vid.currentTime = f / FPS;
-  vid.play();
+  if (autoPlay) vid.play(); else vid.pause();
 }
 function seekTo(e) {
   const bar = document.getElementById('timelineBar');
@@ -2214,13 +2224,13 @@ function redraw() {
       [11, 12], [11, 13], [13, 15], [12, 14], [14, 16], [0, 1],
       [0, 2], [1, 3], [2, 4], [0, 5], [0, 6],
     ];
-    for (const pose of (ann.poses || [])) {
+    for (const [poseIndex, pose] of (ann.poses || []).entries()) {
       const hasIdentity = Object.prototype.hasOwnProperty.call(pose, 'player_id');
       // A roster identity must not follow the legacy last-annotation fallback.
       if (hasIdentity && Number(ann.f) !== currentFrameIdx) continue;
       const keypoints = pose.kp || [];
       const isNearTeam = pose.team === 'b' || pose.team === 'team_b';
-      const { color, width, radius } = playerPoseStyle(pose);
+      const { color, width, radius } = playerPoseStyle(pose, poseIndex, currentFrameIdx);
 
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
@@ -2259,6 +2269,7 @@ function redraw() {
   }
 
   if (showPlayers) drawPoseEstimates(ctx, ann, currentFrameIdx, px, py, sx);
+  if (showPlayers) drawPlayerContactCandidate(ctx, ann, currentFrameIdx, px, py, sx);
 
   let stateY = 70;
   if (showState) {

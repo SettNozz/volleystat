@@ -412,6 +412,52 @@ $py=(Get-Content -Raw '.graphify_python').Trim()
   `test_pose_completion_ui.cjs`. Never enable estimated contact evidence merely
   because the skeleton looks continuous.
 
+## Isolated contact-author learning (2026-10-30)
+
+- User authorized CPU learning in an independent worktree/branch. The active
+  experiment is `codex/contact-author-learning`, based on `202bd7a`; never
+  switch or stage files in the shared checkout used by another process.
+- `scripts/evaluation/run_contact_author_learning.py` creates a fresh manifest,
+  frozen features and comparison for 397 human team labels (205 far, 192 near),
+  three whole source videos, no person labels. Print/verify manifest, feature
+  path, source hashes, provenance, schema, split and counts before fitting.
+- `contact_author_side_frozen_v1` uses only saved ball/observed poses, normalized
+  body/hand geometry and offline motion. Human ball xy, raw/player IDs, video
+  names and absolute match times are excluded from numeric model inputs.
+  Fold scalers fit training videos only. Audited event timing/type is given
+  in the gold comparison; JIZ3 supplies model-predicted timing/type.
+- Fixed logistic/ExtraTrees/HistGradient candidates compare geometry, typed and
+  layout feature views. Layout is diagnostic, excluded from automatic choice
+  because gold videos share a camera. No random clip split, early-stopping
+  holdout, production checkpoint/registry update or image-model inference.
+- Best review candidate: ExtraTrees typed, leave-one-video-out team accuracy
+  0.84635 / macro F1 0.84596. Score >=0.65 or <=0.35 gives 0.92617 accuracy at
+  0.75063 coverage. Scores are uncalibrated. These are selection estimates,
+  not an untouched test set, final-fit score or individual-player accuracy.
+- `run_contact_author_mil.py` trains a shared latent actor scorer from team
+  bags only, seeds 42/43/44, fixed 140 epochs, CPU/two threads. Geometry MIL
+  reaches 0.79093 team accuracy; typed MIL 0.77330, so neither is selected.
+  Latent actors are never human person labels or detector ground truth.
+- Experimental weights/data stay under the worktree's fresh `results/` dirs.
+  Completed flat run: `contact_author_learning_20261030_v3`; MIL/review run:
+  `contact_author_mil_20261030_v1`. No source annotations/events/IDs/ball/features,
+  trained spotter/ReID or another worktree is rewritten.
+- `<stem>_player_contact_experiment.json` binds every frozen proposal report to
+  SHA256 of both byte-identical source JSON files. Viewer validates event
+  indices/frames/types and rejects changed sources or fake human verification.
+  Human attribution corrections remain separate and shared across approaches.
+- Independent viewer port 5053 offers 11 comparison approaches. Chosen JIZ3
+  result: 24 assigned, 21 other-side, 58 unresolved from the SAME 103 events.
+  Uncertain suggestions are excluded from totals; human overrides suppress old
+  conflicting suggestions. A paused amber box marks the proposed actor only
+  at the exact evidence frame and never rewrites source pose identities.
+- No block contacts have human side labels in this training set; do not quote
+  the measured team accuracy as block or per-person performance. JIZ3 and its
+  camera are unlabelled transfer; the user will visually validate it.
+- See `docs/contact_author_learning.md`; tests `test_contact_author_learning.py`,
+  `test_contact_author_experiments.py`, `test_contact_author_mil.py`, and
+  `test_contact_author_ui.cjs`.
+
 ## Repository map
 
 ```text
