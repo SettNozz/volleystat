@@ -25,6 +25,7 @@ _ROOT = Path(__file__).parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from action_recognition.inference.serve_guard import ServeGuard
 from action_recognition.event_clips.config import (
     EVENT_TYPES, NUM_FEATURES, NUM_POSE_FEATURES, NUM_TRAJ_FEATURES, SEQUENCE_LEN,
 )
@@ -68,7 +69,9 @@ class StreamingEventPredictor:
     SMOOTH_WINDOW = 5
     MIN_CONFIDENCE = 0.35
 
-    def __init__(self, checkpoint_path):
+    def __init__(self, checkpoint_path, serve_restart_seconds=3.0, enforce_restart_pause=False):
+        self.serve_guard = ServeGuard(serve_restart_seconds, enforce_restart_pause)
+        self.last_decision = None
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model, ckpt = load_checkpoint(checkpoint_path, self.device)
         self.event_types = list(ckpt["event_types"])
@@ -95,6 +98,8 @@ class StreamingEventPredictor:
         self._last_fsm_state = ""
 
     def reset(self):
+        if hasattr(self, 'serve_guard'): self.serve_guard.reset()
+        self.last_decision = None
         self._buf.clear()
         self._recent.clear()
         self._frame_count = 0
@@ -113,6 +118,7 @@ class StreamingEventPredictor:
         pose_features: Optional[List[float]] = None,
         frame_size: Optional[Tuple[float, float]] = None,
         ball_new: bool = False,
+        video_time: Optional[float] = None,
     ) -> Optional[str]:
         sequence_len = int(
             getattr(self, "sequence_len", self._buf.maxlen or SEQUENCE_LEN)
@@ -145,6 +151,10 @@ class StreamingEventPredictor:
         else:
             self._prev_ball = None
         self._frame_count += 1
+        if not hasattr(self, 'serve_guard'): self.serve_guard = ServeGuard()
+        self.serve_guard.update(self._frame_count / fps if video_time is None else video_time, fsm_state)
+        if self.serve_guard.reason('serve'):
+            self._recent = deque((v for v in self._recent if v != 'serve'), maxlen=self.SMOOTH_WINDOW)
 
         if fsm_state != self._last_fsm_state:
             self._recent.clear()
@@ -168,10 +178,22 @@ class StreamingEventPredictor:
             logits = self.model(torch.from_numpy(x[None]).to(self.device))
             probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
 
+        raw_k = int(np.argmax(probs))
+        self.last_decision = self.serve_guard.decision(self.event_types[raw_k])
+        self.last_decision['raw_confidence'] = float(probs[raw_k])
+        if self.last_decision['suppression_reason']:
+            self._recent.clear()
+            return None
         probs = gate_event_probabilities(probs, self.event_types, fsm_state)
 
         k = int(np.argmax(probs))
         label = self.event_types[k]
+        self.last_decision['gated_label'] = label
+        reason = self.serve_guard.reason(label)
+        if reason:
+            self.last_decision.update(label=None, suppression_reason=reason)
+            self._recent.clear()
+            return None
         if probs[k] < self.MIN_CONFIDENCE or label == "other":
             self._recent.append(None)
         else:

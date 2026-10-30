@@ -1731,6 +1731,7 @@ class GameAnalyzer:
                 raw_display = self._event_predictor.add_frame(
                     ball_pos, player_teams, self.calibration.net_y, fps,
                     fsm_state=cur_state or "",   # let predictor exclude impossible classes
+                    video_time=frame_idx / fps,
                     pose_features=pose_features,  # 8 pose channels (new checkpoints)
                     frame_size=(
                         self.calibration.frame_width,
@@ -1739,6 +1740,9 @@ class GameAnalyzer:
                     ball_new=bool(ball_pos and self.ball_gate.acquired_this_frame),
                 )
                 event_display = overlay.update(raw_display, cur_state or "", frame_idx)
+                guard = getattr(self._event_predictor, 'serve_guard', None)
+                if guard is not None and guard.reason(event_display):
+                    event_display = None
 
             # --- Collect per-frame annotation for viewer (FSM + Transformer for comparison) ---
             frame_events_this = [e for e in stats.all_events if e["frame"] == frame_idx]
@@ -1995,6 +1999,7 @@ class GameAnalyzer:
                 ball_pos = None
             ann["pose_f"] = pose_fx.update(frame_idx, poses, ball_pos, pose_net_y)
             ann.pop("event_model", None)
+            ann.pop('event_model_decision', None)
             if predictor is None or calibration is None:
                 continue
             teams = {"team_a": [], "team_b": []}
@@ -2010,11 +2015,17 @@ class GameAnalyzer:
             raw_display = predictor.add_frame(
                 ball_pos, teams, calibration.net_y, fps,
                 fsm_state=state,
+                video_time=frame_idx / fps,
                 pose_features=ann["pose_f"],
                 frame_size=(calibration.frame_width, calibration.frame_height),
                 ball_new=bool(ann.get("ball_new")),
             )
             display = overlay.update(raw_display, state, frame_idx)
+            guard = getattr(predictor, 'serve_guard', None)
+            if guard is not None and guard.reason(display):
+                display = None
+            if getattr(predictor, 'last_decision', None) is not None:
+                ann['event_model_decision'] = dict(predictor.last_decision)
             if display is not None:
                 ann["event_model"] = display
 
