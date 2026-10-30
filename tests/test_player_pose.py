@@ -139,5 +139,94 @@ class TestNetFloorLine(unittest.TestCase):
         self.assertEqual(kept[0].team, "team_a")
 
 
+
+
+class TestRejectedNetDivider(unittest.TestCase):
+    def calibration(self, spacing=14.08):
+        from src.pipeline.game_analyzer import CalibrationData
+        return CalibrationData(
+            net_y=200,net_x_left=0,net_x_right=1000,court_top=0,
+            court_bottom=1000,court_left=0,court_right=1000,
+            frame_width=1000,frame_height=1000,
+            homography=[[100,0,500],[0,100,500],[0,0,1]],
+            net_floor_left=(0,200),net_floor_right=(1000,200),
+            net_floor_method='hough_post_x_physical_height',
+            net_post_spacing_m=spacing,
+        )
+
+    def test_bad_floor_cannot_collapse_both_teams_and_trigger_six_cap(self):
+        from src.pipeline.game_analyzer import GameAnalyzer
+        original=self.calibration()
+        corrected=GameAnalyzer._validated_net_floor(original)
+        def players():
+            result=[]
+            for side,y in enumerate((400.,600.)):
+                for i in range(6):
+                    p=_pose(side*6+i,y)
+                    x=200.+i*100
+                    p.keypoints[15]=(x,y,1.)
+                    p.keypoints[16]=(x+5,y,1.)
+                    p.bbox=(x-20,y-80,x+20,y)
+                    result.append(p)
+            return result
+        def gate(calib):
+            proj=CourtProjector(calib.homography,net_floor_line=(calib.net_floor_left,calib.net_floor_right))
+            return CourtPlayerGate(proj,6).filter(players())
+        before,after=gate(original),gate(corrected)
+        self.assertEqual(len(before),6)
+        self.assertEqual(sum(p.team=='team_a' for p in after),6)
+        self.assertEqual(sum(p.team=='team_b' for p in after),6)
+        self.assertEqual(original.net_floor_left,(0,200))
+        self.assertEqual(corrected.net_floor_method,'calibrated_court_midline_fallback')
+        self.assertIsNone(corrected.net_post_spacing_m)
+
+    def test_plausible_divider_is_preserved(self):
+        from src.pipeline.game_analyzer import GameAnalyzer
+        c=self.calibration(10.5)
+        self.assertIs(GameAnalyzer._validated_net_floor(c),c)
+
+    def test_missing_spacing_is_measured_before_trusting_divider(self):
+        from src.pipeline.game_analyzer import GameAnalyzer
+        c=self.calibration(None)
+        # At constant affine scale these posts really are 10m apart.
+        self.assertIs(GameAnalyzer._validated_net_floor(c),c)
+        c.net_floor_right=(1500,200)
+        self.assertEqual(GameAnalyzer._validated_net_floor(c).net_floor_method,'calibrated_court_midline_fallback')
+
+    def test_fallback_retains_calibrated_slope(self):
+        from src.pipeline.game_analyzer import GameAnalyzer
+        c=self.calibration()
+        c.homography=[[100,0,500],[10,100,500],[0,0,1]]
+        fixed=GameAnalyzer._validated_net_floor(c)
+        self.assertAlmostEqual(fixed.net_floor_left[1],450)
+        self.assertAlmostEqual(fixed.net_floor_right[1],550)
+
+    def test_unusable_homography_does_not_invent_geometry(self):
+        from src.pipeline.game_analyzer import GameAnalyzer
+        c=self.calibration()
+        c.homography=None
+        self.assertIs(GameAnalyzer._validated_net_floor(c),c)
+
+    def test_fallback_survives_resolution_scaling(self):
+        from src.pipeline.game_analyzer import GameAnalyzer
+        a=GameAnalyzer.__new__(GameAnalyzer)
+        a.calibration=self.calibration();a.net_y_override=None
+        scaled=a._scale_calibration(2000,2000)
+        self.assertEqual(scaled.net_floor_left,(0.,1000.))
+        self.assertEqual(scaled.net_floor_right,(2000.,1000.))
+        self.assertEqual(scaled.net_floor_method,'calibrated_court_midline_fallback')
+        self.assertEqual(a.calibration.net_floor_left,(0,200))
+
+    def test_six_is_a_cap_not_a_fabricated_count(self):
+        from src.pipeline.game_analyzer import GameAnalyzer
+        c=GameAnalyzer._validated_net_floor(self.calibration())
+        proj=CourtProjector(c.homography,net_floor_line=(c.net_floor_left,c.net_floor_right))
+        poses=[_pose(i,600) for i in range(3)]
+        for p in poses:
+            p.keypoints[15,0]=300
+            p.keypoints[16,0]=310
+        self.assertEqual(len(CourtPlayerGate(proj,6).filter(poses)),3)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -127,9 +127,9 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
       </div>
     </div>
     <p class="hint">
-      Measured on an RTX 3080 (10 GB): a 57s 4K video takes ~3 min 30s
-      with Every frame + batch 8. Fresh net calibration adds setup time;
-      other GPUs may vary.
+      The first analysis saves model outputs. Compatible repeats reuse those
+      outputs for tracking and statistics. Playback uses the original video
+      with overlays; a second MP4 is encoded only when explicitly requested.
     </p>
   </div>
 </div>

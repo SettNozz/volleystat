@@ -8,14 +8,15 @@ import viewer
 
 
 class TestViewerUploadWorkflow(unittest.TestCase):
-    def test_home_page_shows_measured_4k_processing_time(self):
+    def test_home_page_describes_cached_repeats_and_explicit_video_export(self):
         with viewer.app.test_client() as client:
             response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
         page = response.get_data(as_text=True)
-        self.assertIn("57s 4K video takes ~3 min 30s", page)
-        self.assertIn("Every frame + batch 8", page)
+        self.assertIn("first analysis saves model outputs", page)
+        self.assertIn("Compatible repeats reuse", page)
+        self.assertIn("encoded only when explicitly requested", page)
         self.assertIn('id="analysisProgressFill"', page)
         self.assertIn("job.frame_current", page)
         self.assertIn("job.processing_fps", page)
@@ -45,6 +46,10 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertIn("off-frame", template)
         self.assertNotIn("createRadialGradient", template)
         self.assertNotIn('type="video/mp4"', template)
+        self.assertIn("Object.prototype.hasOwnProperty.call(pose, 'player_id')", template)
+        self.assertIn("pose.player_id || 'P?'", template)
+        self.assertIn("Number(ann.f) !== currentFrameIdx", template)
+        self.assertIn("player IDs unavailable", template)
 
     def test_lifecycle_stats_keep_only_confirmed_playable_rallies(self):
         stats = viewer._prepare_viewer_stats({
@@ -557,6 +562,68 @@ class TestViewerResultsLibrary(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn("/results/preloaded_game", response.headers["Location"])
         viewer.jobs.pop("preloaded_game", None)
+
+    def test_upload_analysis_runs_the_contact_spotter_when_installed(self):
+        captured = []
+
+        class _Analyzer:
+            def __init__(self, **kwargs):
+                captured.append(kwargs)
+
+            def process_video(self, video_path, output_dir):
+                return None
+
+        with tempfile.TemporaryDirectory() as root:
+            checkpoint = Path(root) / "spotter.pt"
+            checkpoint.write_bytes(b"checkpoint")
+            with patch("src.pipeline.game_analyzer.GameAnalyzer", _Analyzer), \
+                    patch.object(viewer, "RESULTS_DIR", Path(root)):
+                with patch.object(viewer, "CONTACT_SPOTTER_PATH", checkpoint):
+                    viewer._run_analysis("spotter_on", str(Path(root) / "clip.mp4"), 0)
+                with patch.object(viewer, "CONTACT_SPOTTER_PATH", Path(root) / "missing.pt"):
+                    viewer._run_analysis("spotter_off", str(Path(root) / "clip.mp4"), 0)
+
+        self.assertEqual(captured[0]["contact_spotter_path"], str(checkpoint))
+        # Without the checkpoint the upload still runs, on the FSM's events.
+        self.assertIsNone(captured[1]["contact_spotter_path"])
+        self.assertEqual(viewer.jobs.pop("spotter_off")["status"], "done")
+        viewer.jobs.pop("spotter_on", None)
+
+    def test_frame_thumbnail_returns_the_requested_frame(self):
+        import cv2
+        import numpy as np
+
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "clip.avi"
+            writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"MJPG"), 30, (640, 360))
+            for value in range(0, 250, 25):
+                writer.write(np.full((360, 640, 3), value, dtype=np.uint8))
+            writer.release()
+            viewer.jobs["thumb_test"] = {
+                "status": "done", "job_id": "thumb_test",
+                "video_path": str(Path(root) / "missing_analyzed.mp4"),
+                "original_video_path": str(source),
+            }
+            try:
+                with viewer.app.test_client() as client:
+                    response = client.get("/api/frame/thumb_test/4")
+                    beyond = client.get("/api/frame/thumb_test/500")
+                    unknown = client.get("/api/frame/no_such_job/4")
+            finally:
+                viewer.jobs.pop("thumb_test", None)
+                viewer._thumb_cache.clear()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "image/jpeg")
+        image = cv2.imdecode(np.frombuffer(response.data, np.uint8), cv2.IMREAD_GRAYSCALE)
+        self.assertEqual(image.shape, (180, 320))
+        self.assertAlmostEqual(float(image.mean()), 100.0, delta=6.0)
+        self.assertEqual(beyond.status_code, 404)
+        self.assertEqual(unknown.status_code, 404)
+
+    def test_rally_clips_show_their_first_frame(self):
+        template = (Path(viewer.__file__).parent / "viewer" / "templates" / "viewer.html").read_text(encoding="utf-8")
+        self.assertIn("/api/frame/${JOB_ID}/${rallyStartFrame(r)}", template)
 
 
 if __name__ == "__main__":

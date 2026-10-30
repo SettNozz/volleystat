@@ -145,7 +145,7 @@ def build_continuous_features(
 
     for row, frame_number in enumerate(frame_numbers):
         frame = by_number.get(int(frame_number), {})
-        ball = frame.get("ball")
+        ball = None if frame.get("ball_out_of_frame") else frame.get("ball")
         if not (
             isinstance(ball, (list, tuple))
             and len(ball) >= 2

@@ -126,6 +126,53 @@ def test_checkpoint_contract_masks_channels_absent_during_training():
     np.testing.assert_allclose(normalized, [[1.0, 0.0, -0.5]])
 
 
+def test_normalized_clip_streaming_and_spotting_agree_on_gaps_and_restarts():
+    frames = [
+        {"f": 0, "ball": [100.0, 200.0]},
+        {"f": 1, "ball": None},
+        {"f": 2, "ball": [300.0, 200.0]},
+        {"f": 3, "ball": [900.0, 400.0], "ball_new": True},
+        {"f": 4, "ball": [900.0, 400.0], "ball_out_of_frame": True},
+        {"f": 5, "ball": [500.0, 300.0]},
+    ]
+    for frame in frames:
+        frame["p"] = [[150.0, 240.0]]
+        frame["pose_f"] = [0.1] * 8
+    clip = compute_clip_features(
+        frames, 350.0, 30.0, frame_width=1280, frame_height=720,
+        feature_schema=RESOLUTION_NORMALIZED_SCHEMA,
+    ).to_numpy()
+    _, spotting = build_continuous_features({
+        "frames": frames, "net_y": 350.0, "fps": 30.0,
+        "frame_width": 1280, "frame_height": 720,
+    })
+    np.testing.assert_allclose(clip, np.concatenate((spotting[:, :10], spotting[:, 12:20]), axis=1))
+
+    predictor = StreamingEventPredictor.__new__(StreamingEventPredictor)
+    predictor.feature_schema = RESOLUTION_NORMALIZED_SCHEMA
+    predictor._buf = deque(maxlen=SEQUENCE_LEN)
+    predictor._recent = deque(maxlen=predictor.SMOOTH_WINDOW)
+    predictor.reset()
+    for frame in frames:
+        predictor.add_frame(
+            None if frame.get("ball_out_of_frame") else frame["ball"],
+            {"team_a": frame["p"], "team_b": []}, 350.0, 30.0,
+            pose_features=frame["pose_f"], frame_size=(1280, 720),
+            ball_new=bool(frame.get("ball_new")),
+        )
+    clip[:, 7] = 0.0  # streaming frame_norm is assigned per inference window
+    np.testing.assert_allclose(clip, np.stack(predictor._buf))
+    assert np.all(clip[[1, 4], :2] == 0.0)
+    assert np.all(clip[[2, 3, 5], 2] == 0.0)
+
+
+def test_legacy_clip_features_keep_last_known_ball_compatibility():
+    frames = [{"ball": [100.0, 200.0]}, {"ball": None}, {"ball": [130.0, 200.0]}]
+    clip = compute_clip_features(frames, 350.0, 30.0)
+    assert clip.loc[1, "ball_x"] == 100.0
+    assert clip.loc[2, "ball_speed"] == 900.0
+
+
 def test_fsm_gate_keeps_only_phase_possible_classes_and_renormalizes():
     labels = ["serve", "reception", "pass", "attack"]
     raw = np.asarray([0.7, 0.1, 0.15, 0.05], dtype=np.float32)

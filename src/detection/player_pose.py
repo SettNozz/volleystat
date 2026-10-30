@@ -180,6 +180,10 @@ class PlayerPose:
     track_id: Optional[int] = None  # ByteTrack ID (None if tracking unavailable)
     back_facing_score: Optional[float] = None  # 0..1 face-hidden/back evidence
     team_prior: Optional[str] = None
+    source: str = "yolo_pose"
+    mask_instance_id: Optional[int] = None
+    player_id: Optional[str] = None  # offline roster identity, never a ByteTrack ID
+    player_identity_processed: bool = False
 
     @property
     def bbox_h(self) -> float:
@@ -539,7 +543,9 @@ def draw_skeleton(
     for i in range(kp.shape[0]):
         if kp[i, 2] >= KP_CONF_MIN:
             cv2.circle(frame, (int(kp[i, 0]), int(kp[i, 1])), kp_radius, color, -1, cv2.LINE_AA)
-    if draw_id and pose.track_id is not None:
+    label = pose.player_id or ("P?" if pose.player_identity_processed else
+                              (f"track #{pose.track_id}" if pose.track_id is not None else None))
+    if draw_id and label is not None:
         x1, y1 = int(pose.bbox[0]), int(pose.bbox[1])
-        cv2.putText(frame, f"#{pose.track_id}", (x1, max(y1 - 8, 12)),
+        cv2.putText(frame, label, (x1, max(y1 - 8, 12)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)

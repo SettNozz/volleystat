@@ -17,6 +17,7 @@ from action_recognition.event_clips.config import (
 )
 from action_recognition.event_clips.feature_schema import (
     LEGACY_PIXEL_SCHEMA,
+    RESOLUTION_NORMALIZED_SCHEMA,
     build_trajectory_features,
     validate_feature_schema,
 )
@@ -56,7 +57,12 @@ def compute_clip_features(
     prev_ball: Optional[List[float]] = None
 
     for i, ann in enumerate(frames):
-        ball = ann.get("ball") or last_ball  # carry last known position
+        if schema == RESOLUTION_NORMALIZED_SCHEMA:
+            ball = None if ann.get("ball_out_of_frame") else ann.get("ball")
+            if ann.get("ball_new"):
+                prev_ball = None
+        else:
+            ball = ann.get("ball") or last_ball  # legacy checkpoint compatibility
         players = ann.get("p") or []
 
         bx, by = (ball[0], ball[1]) if ball else (0.0, 0.0)
@@ -81,6 +87,8 @@ def compute_clip_features(
         if ball:
             prev_ball = [bx, by]
             last_ball = [bx, by]
+        elif schema == RESOLUTION_NORMALIZED_SCHEMA:
+            prev_ball = None
 
     result = pd.DataFrame(out, columns=ALL_FEATURE_NAMES)
     result.attrs["feature_schema"] = schema

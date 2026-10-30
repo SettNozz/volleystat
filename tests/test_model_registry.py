@@ -168,7 +168,7 @@ def test_shipped_config_covers_every_model_the_pipeline_asks_for():
     """A name used in code but missing from the config raises at load time."""
     config = mr.load_config()
     for name in ("ball_detector", "ball_detector_tiled", "pose_estimator",
-                 "net_sam", "event_sequence"):
+                 "net_sam", "event_sequence", "player_reid"):
         assert name in config, f"{name} missing from configs/model_registry.json"
         assert config[name].get("fallback"), f"{name} has no fallback path"
 

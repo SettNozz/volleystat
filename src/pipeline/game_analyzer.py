@@ -10,7 +10,9 @@ import json
 import math
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field, replace
+import hashlib
+import inspect
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -55,6 +57,11 @@ from src.tracking.match_analytics import (
 )
 from src.utils.logger import get_logger
 from src.utils.path_utils import local_path_from_uri
+from src.models.inference_cache import (
+    DEFAULT_CACHE, CachedForward, CacheMiss, LazyModel, ModelOutputCache,
+    array_payload, digest, file_digest, model_spec,
+    pack_pose_result, payload_array, unpack_pose_result, PoseTracker, FrozenOSNet, osnet_feature_store,
+)
 
 log = get_logger("Analyzer")
 
@@ -83,6 +90,33 @@ _POSE_FALLBACK = "yolo11n-pose.pt"  # will be auto-downloaded
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
+@dataclass
+class _EventOverlayState:
+    """Per-pass display policy shared by provisional and final predictions."""
+    fps: float
+    last_serve_frame: Optional[int] = None
+    last_rally_display: str = ""
+    last_rally_frame: int = 0
+
+    def update(self, raw_display: Optional[str], state: str, frame: int) -> Optional[str]:
+        if raw_display is not None and state in {"serving", "rally_active"}:
+            if raw_display == "serve":
+                if (self.last_serve_frame is not None
+                        and frame - self.last_serve_frame < int(self.fps * 8.0)):
+                    return None
+                self.last_serve_frame = frame
+            self.last_rally_display = raw_display
+            self.last_rally_frame = frame
+            return raw_display
+        if (raw_display is not None
+                and state not in {"serving", "rally_active"}
+                and self.last_rally_display
+                and self.last_rally_display != "serve"
+                and frame - self.last_rally_frame < int(self.fps * 2.0)):
+            return self.last_rally_display
+        return None
+
 
 @dataclass
 class CalibrationData:
@@ -140,6 +174,19 @@ class GameStats:
     rally_lifecycle: Dict[str, int] = field(default_factory=dict)
     match_analytics: Dict[str, Any] = field(default_factory=dict)
     all_events: List[Dict] = field(default_factory=list)
+    # With the dense contact spotter enabled it owns ``all_events``, and the
+    # FSM's own contacts are kept here so nothing is lost by the swap.
+    all_events_fsm: List[Dict] = field(default_factory=list)
+    # Likewise the spotter's serve-anchored rallies replace the FSM's, which
+    # stay here. Empty when the spotter did not run.
+    rallies_fsm: List[Dict] = field(default_factory=list)
+    service_attempts_fsm: List[Dict] = field(default_factory=list)
+    rally_lifecycle_fsm: Dict[str, int] = field(default_factory=dict)
+    # Spotter diagnostics, provenance and decoded rally phases.
+    contact_spotter: Dict[str, Any] = field(default_factory=dict)
+    player_identity: Dict[str, Any] = field(default_factory=dict)
+    player_contacts: Dict[str, Any] = field(default_factory=dict)
+    model_cache: Dict[str, Any] = field(default_factory=dict)
     # Per-frame data for HTML viewer overlay (ball pos, players, FSM state)
     frame_annotations: List[Dict] = field(default_factory=list)
     # Trajectory-only contact/attack candidates aggregated into court zones.
@@ -170,6 +217,14 @@ class GameStats:
             "rally_lifecycle": self.rally_lifecycle,
             "match_analytics": self.match_analytics,
             "all_events": self.all_events,
+            "all_events_fsm": self.all_events_fsm,
+            "rallies_fsm": self.rallies_fsm,
+            "service_attempts_fsm": self.service_attempts_fsm,
+            "rally_lifecycle_fsm": self.rally_lifecycle_fsm,
+            "contact_spotter": self.contact_spotter,
+            "player_identity": self.player_identity,
+            "player_contacts": self.player_contacts,
+            "model_cache": self.model_cache,
             "attack_heatmap": self.attack_heatmap,
             "ball_reconstruction": self.ball_reconstruction,
             "ball_smoothing": self.ball_smoothing,
@@ -207,12 +262,12 @@ class GameAnalyzer:
         calibration_path: Optional[str] = "court_calibration.json",
         ball_model_path: Optional[str] = None,
         pose_model_path: Optional[str] = None,
-        output_video: bool = True,
+        output_video: bool = False,
         skip_frames: int = 0,
         net_y_override: Optional[float] = None,
         event_checkpoint_path: Optional[str] = None,
         max_players_per_team: int = 6,
-        pose_imgsz: Optional[int] = None,
+        pose_imgsz: Optional[int] = 2560,
         refresh_net_floor: bool = False,
         ball_ensemble: bool = False,
         ball_trajectory_dp: bool = True,
@@ -229,6 +284,15 @@ class GameAnalyzer:
         ball_smooth_window: Any = BALL_SMOOTH_DEFAULT_WINDOW,
         suppress_static_ball_sources: bool = True,
         use_model_registry: bool = True,
+        person_masks_path: Optional[str] = None,
+        contact_spotter_path: Optional[str] = None,
+        enable_player_identity: bool = True,
+        player_identity_side: str = "b",
+        player_identity_seed: Optional[str] = None,
+        player_reid_assets: Optional[str] = None,
+        player_reid_device: str = "auto",
+        model_cache_dir: Optional[str] = None,
+        require_model_cache: bool = False,
     ):
         """
         Args:
@@ -271,6 +335,20 @@ class GameAnalyzer:
         """
         self.progress_callback = progress_callback
         self.enable_pose = bool(enable_pose)
+        self.enable_player_identity = bool(enable_player_identity and enable_pose)
+        if player_identity_side not in {"a", "b"}:
+            raise ValueError("player_identity_side must be a or b")
+        if player_reid_device not in {"auto", "cpu", "cuda"}:
+            raise ValueError("player_reid_device must be auto, cpu or cuda")
+        self.player_identity_side = player_identity_side
+        self.player_identity_seed = player_identity_seed
+        self.player_reid_assets = player_reid_assets
+        self.player_reid_device = player_reid_device
+        self.model_cache_dir = Path(model_cache_dir) if model_cache_dir else DEFAULT_CACHE
+        self.require_model_cache = require_model_cache
+        self._model_cache = None
+        self._ball_specs = {}
+        self._pose_spec = None
         self.enable_net_detection = bool(enable_net_detection)
         self.match_segments = list(match_segments or [])
         self.team_identity_map = dict(team_identity_map or {})
@@ -298,6 +376,10 @@ class GameAnalyzer:
         )
         self.output_video = output_video
         self.skip_frames = skip_frames
+        # Loaded on first use: a checkpoint is useless until there are final
+        # trajectories and poses to run it over.
+        self.contact_spotter_path = contact_spotter_path
+        self._contact_spotter = None
         self.net_y_override = net_y_override
         self.ball_ensemble = ball_ensemble
         self.ball_trajectory_dp = ball_trajectory_dp
@@ -310,7 +392,7 @@ class GameAnalyzer:
 
         self._pose_track_warned = False
         self.max_players_per_team = max_players_per_team
-        self.pose_imgsz = pose_imgsz  # e.g. 1280 improves recall on small/far players
+        self.pose_imgsz = pose_imgsz or 2560  # Preserve small/far players in native 4K footage.
         self.refresh_net_floor = refresh_net_floor
         self._projector: Optional[CourtProjector] = None
         self._projector_calib: Optional[CalibrationData] = None
@@ -327,6 +409,14 @@ class GameAnalyzer:
         self.pose_model = None
         if self.enable_pose:
             self._init_pose_model(pose_model_path)
+        self._person_pose_recovery = None
+        if person_masks_path:
+            if not self.enable_pose or self.pose_model is None:
+                raise ValueError("SAM-guided recovery requires YOLO-pose")
+            from src.detection.sam_pose_recovery import SamGuidedPoseRecovery
+            self._person_pose_recovery = SamGuidedPoseRecovery(
+                person_masks_path, self.model_provenance["pose_estimator"]["path"],
+            )
         self._event_predictor = self._init_event_predictor(event_checkpoint_path)
         self._warmup()
         self._emit_progress(
@@ -343,6 +433,105 @@ class GameAnalyzer:
             self.progress_callback(dict(payload))
         except Exception as exc:
             log.warning(f"Progress callback failed: {exc}")
+
+    def _prepare_model_cache(self, source, fps, width, height, limit, source_identity=None):
+        # __new__-based subsystem tests deliberately do not construct production models.
+        if not hasattr(self, 'model_cache_dir'):
+            return None
+        self._model_cache = ModelOutputCache(source, self.model_cache_dir, self.require_model_cache,
+                                             source_identity=source_identity)
+        cache = self._model_cache
+        self._ball_stages = {name: cache.stage('ball_'+name, spec) for name,spec in self._ball_specs.items()}
+        scope = {'limit': limit, 'skip_frames': self.skip_frames, 'fps': fps, 'size': [width,height]}
+        self._pose_sequence = None
+        self._pose_cache_read = False
+        if self.enable_pose:
+            self._pose_sequence, self._pose_cache_read = cache.sequence({
+                'model': self._pose_spec, 'scope': scope,
+                'adapter': hashlib.sha256(inspect.getsource(PoseTracker).encode()).hexdigest()})
+            self._raw_pose_stage = cache.stage('pose_raw', {k:v for k,v in self._pose_spec.items() if k!='tracker'})
+            self._cached_pose_tracker = PoseTracker(self._pose_tracker_path)
+        self._cache_pass = digest({'ball': self._ball_stages, 'pose': self._pose_spec if self.enable_pose else None,
+                                   'scope': scope})
+        previous = cache.get('detection_passes', self._cache_pass)
+        if previous is None:
+            length = cache.get('source_video', 'decoded_total') if source_identity is None else None
+            count = min(limit,length['count']) if length else limit
+            frames = list(range(0,count,self.skip_frames+1))
+            if (all(cache.covers(stage,frames) for stage in self._ball_stages.values())
+                    and (not self.enable_pose or cache.covers(self._raw_pose_stage,frames))):
+                previous = {'total_frames':count,'frame_indices':list(range(count)),
+                            'processed_frames':len(frames)}
+        if self.require_model_cache and previous is None:
+            raise CacheMiss('No completed model-output pass for this video/range; inference is disabled')
+        self._cached_pass = previous
+        self._cache_scope_limit = limit
+        self._cache_visited_frames = []
+        self._cache_frame_size = (width,height)
+        recovery = getattr(self, '_person_pose_recovery', None)
+        if recovery is not None:
+            self._recovery_model_sha = file_digest(recovery.checkpoint)
+            self._recovery_backend_sha = file_digest(_ROOT/'src/detection/sam_pose_recovery.py')
+            self._recovery_pose_code_sha = file_digest(_ROOT/'src/detection/player_pose.py')
+            original = getattr(recovery, '_uncached_predict', recovery._predict)
+            recovery._uncached_predict = original
+            stage = cache.stage('sam_crop_pose_raw', model_spec(recovery.checkpoint,
+                backend=hashlib.sha256(inspect.getsource(type(recovery)._predict).encode()).hexdigest(),
+                imgsz=640, conf=.15))
+            def predict_crop(crop, device):
+                key = digest({'shape': list(crop.shape), 'sha256': hashlib.sha256(crop.tobytes()).hexdigest()})
+                return unpack_pose_result(cache.compute(stage,key,lambda:pack_pose_result(original(crop,device))))
+            recovery._predict = predict_crop
+        predictor = self._event_predictor
+        if predictor is not None:
+            model = predictor.model
+            if isinstance(model, CachedForward):
+                model = model.model
+            predictor.model = CachedForward(model, cache, model_spec(
+                self.model_provenance['event_sequence']['path'],
+                backend=file_digest(_ROOT/'action_recognition/models/sequence_event_model.py')))
+        log.info(f'Model cache: {cache.path}; completed detection pass={previous is not None}')
+        return previous
+
+    def _finish_detection_cache(self, stats):
+        cache = getattr(self, '_model_cache', None)
+        if cache is not None:
+            if (getattr(self, '_cache_full_source_limit', None)==self._cache_scope_limit
+                    and stats.total_frames < self._cache_scope_limit-1):
+                raise RuntimeError('Video ended early; raw cache retained but detection pass is not complete')
+            if self._pose_sequence and not self._pose_cache_read:
+                cache.seal_sequence(self._pose_sequence)
+            cache.put('detection_passes', self._cache_pass,
+                      {'total_frames': stats.total_frames, 'processed_frames': stats.processed_frames,
+                       'frame_indices': self._cache_visited_frames})
+            if getattr(self, '_cache_full_source_limit', None)==self._cache_scope_limit:
+                cache.put('source_video','decoded_total',{'count':stats.total_frames})
+
+    def _cached_frame_iterator(self):
+        # Pixel-free replay: detectors only read cached values, downstream uses
+        # poses/candidates. Image-dependent recovery/rendering use real frames.
+        empty = np.empty((0,0,3), dtype=np.uint8)
+        for frame in self._cached_pass['frame_indices']:
+            yield frame, empty
+
+    def _cache_dense_probabilities(self, spotter, checkpoint):
+        cache = getattr(self, '_model_cache', None)
+        if cache is None:
+            return
+        module = sys.modules[type(spotter).__module__]
+        backend = hashlib.sha256((inspect.getsource(type(spotter).probabilities)
+                                  +inspect.getsource(module.predict_dense)).encode()).hexdigest()
+        stage = cache.stage('contact_probabilities', model_spec(checkpoint, backend=backend,
+            architecture=file_digest(_ROOT/'action_recognition/rally_spotting/model.py'),
+            window=spotter.window, stride=spotter.stride,
+            mean=spotter.mean, deviation=spotter.deviation))
+        original = getattr(spotter, '_uncached_probabilities', spotter.probabilities)
+        spotter._uncached_probabilities = original
+        def probabilities(features):
+            key = digest({'shape': list(features.shape), 'dtype': features.dtype.str,
+                          'sha256': hashlib.sha256(features.tobytes()).hexdigest()})
+            return payload_array(cache.compute(stage,key,lambda:array_payload(original(features))))
+        spotter.probabilities = probabilities
 
     # ------------------------------------------------------------------
     # Initialisation helpers
@@ -439,7 +628,7 @@ class GameAnalyzer:
                     net_height_m,
                 )
 
-        return CalibrationData(
+        return self._validated_net_floor(CalibrationData(
             net_y=net_y,
             net_x_left=float(min(net_xs)) if net_xs else court_left,
             net_x_right=float(max(net_xs)) if net_xs else court_right,
@@ -460,11 +649,58 @@ class GameAnalyzer:
             net_post_spacing_m=net_post_spacing_m,
             homography=data.get("perspective_matrix"),
             court_corners=court_corners,
+        ))
+
+    @staticmethod
+    def _validated_net_floor(calibration: Optional[CalibrationData]) -> Optional[CalibrationData]:
+        """Reject a geometrically impossible detected divider, in memory only.
+
+        An invalid Hough/SAM floor line can put both teams on one side; the
+        six-player cap then drops real players. Use the calibrated court's
+        centre line at the detected post X coordinates, preserving its slope.
+        """
+        c = calibration
+        if c is None or c.homography is None or not (c.net_floor_left and c.net_floor_right):
+            return c
+        if c.net_floor_method == "calibrated_court_midline_fallback":
+            return c
+        from src.detection.net_detector import NetDetector, infer_net_bottom_y_from_floor
+        spacing = c.net_post_spacing_m
+        if spacing is None:
+            spacing = NetDetector.estimate_post_spacing_m(
+                (c.net_floor_left[0] * 1280 / c.frame_width,
+                 c.net_floor_left[1] * 720 / c.frame_height),
+                (c.net_floor_right[0] * 1280 / c.frame_width,
+                 c.net_floor_right[1] * 720 / c.frame_height),
+                c.homography, c.frame_width, c.frame_height,
+            )
+        if NetDetector.post_spacing_is_plausible(spacing):
+            return c
+        try:
+            projector = CourtProjector(c.homography)
+            a = projector.world_to_image((-projector.half_width, 0.0))
+            b = projector.world_to_image((projector.half_width, 0.0))
+            if not np.isfinite([*a, *b]).all() or abs(b[0] - a[0]) < 1e-6:
+                return c
+            def on_midline(x):
+                return (float(x), float(a[1] + (x - a[0]) * (b[1] - a[1]) / (b[0] - a[0])))
+            left, right = on_midline(c.net_floor_left[0]), on_midline(c.net_floor_right[0])
+            bottom = c.net_tape_bottom
+            if c.net_tape_top is not None:
+                bottom = infer_net_bottom_y_from_floor(c.net_tape_top, (left[1] + right[1]) / 2, c.net_height_m)
+        except (ValueError, TypeError, ZeroDivisionError, np.linalg.LinAlgError):
+            return c
+        log.warning(
+            f"Rejecting {c.net_floor_method} team divider (post spacing {spacing:.2f} m); "
+            "using calibrated court midline. Source calibration is unchanged."
         )
+        return replace(c, net_floor_left=left, net_floor_right=right,
+                       net_floor_method="calibrated_court_midline_fallback",
+                       net_post_spacing_m=None, net_tape_bottom=bottom)
 
     def _scale_calibration(self, actual_w: int, actual_h: int) -> "CalibrationData":
         """Return calibration scaled to actual frame size, with optional net_y override."""
-        c = self.calibration
+        c = self._validated_net_floor(self.calibration)
         if c is None:
             # No calibration: build defaults with override if provided
             net_y = self.net_y_override if self.net_y_override else actual_h * 0.5
@@ -541,18 +777,22 @@ class GameAnalyzer:
         return resolved
 
     def _init_ball_detector(self, model_path: Optional[str]):
-        from detection.detect_ball_on_video import BallDetectorVideo
         primary = self._resolve("ball_detector", model_path)
         imgsz = int(primary.extra.get("imgsz") or _BALL_IMGSZ)
-        self.ball_detector = BallDetectorVideo(str(primary.path), imgsz=imgsz)
+        def detector(path, size, grid=None):
+            from detection.detect_ball_on_video import BallDetectorVideo
+            return BallDetectorVideo(str(path), imgsz=size, tile_grid=grid)
+        backend = file_digest(_ROOT/'scripts/detection/detect_ball_on_video.py')
+        self._ball_specs['primary'] = model_spec(primary.path, backend=backend, imgsz=imgsz,
+                                                  batch_size=self.ball_batch_size)
+        self.ball_detector = LazyModel(lambda: detector(primary.path, imgsz))
         self.ball_detector_2 = None
         if self.ball_ensemble:
             second = self._resolve("ball_detector_tiled")
             grid = tuple(second.extra.get("tile_grid") or _BALL_TILE_GRID_2)
-            self.ball_detector_2 = BallDetectorVideo(
-                str(second.path), imgsz=int(second.extra.get("imgsz") or 640),
-                tile_grid=grid,
-            )
+            size = int(second.extra.get("imgsz") or 640)
+            self._ball_specs['tiled'] = model_spec(second.path, backend=backend, imgsz=size, tile_grid=grid)
+            self.ball_detector_2 = LazyModel(lambda: detector(second.path, size, grid))
             log.info(f"Ball ensemble: second opinion from {second} "
                      f"tiled {grid[0]}x{grid[1]}")
         self.ball_gate = BallTrackGate()
@@ -581,18 +821,23 @@ class GameAnalyzer:
         log.info(f"Ball selection scaled x{scale:.2f} for {frame_width}px-wide frames")
 
     def _init_pose_model(self, model_path: Optional[str]):
-        from ultralytics import YOLO
         resolved = self._resolve("pose_estimator", model_path)
         if resolved.path.exists():
-            self.pose_model = YOLO(str(resolved.path))
-            log.info(f"Pose model loaded: {resolved}")
+            from importlib import metadata
+            tracker = metadata.distribution('ultralytics').locate_file('ultralytics/cfg/trackers/bytetrack.yaml')
+            self._pose_tracker_path = tracker
+            backend = hashlib.sha256(inspect.getsource(type(self)._infer_pose_model).encode()).hexdigest()
+            self._pose_spec = model_spec(resolved.path, backend=backend,
+                                         imgsz=self.pose_imgsz, conf=.1, batch=1,
+                                         precision='fp16_cuda_fp32_cpu')
+            self._pose_spec['tracker'] = file_digest(tracker)
+            def load():
+                from ultralytics import YOLO
+                return YOLO(str(resolved.path))
+            self.pose_model = LazyModel(load)
+            log.info(f"Pose model resolved (loads only on cache miss): {resolved}")
         else:
-            log.warning(f"Pose model not found at {resolved.path} — downloading {_POSE_FALLBACK}")
-            self.pose_model = YOLO(_POSE_FALLBACK)
-            self.model_provenance["pose_estimator"] = {
-                "name": "pose_estimator", "source": "ultralytics_download",
-                "path": _POSE_FALLBACK,
-            }
+            raise FileNotFoundError(f'Pose checkpoint unavailable: {resolved.path}; install it before inference')
 
     def _init_event_predictor(self, event_checkpoint_path: Optional[str]):
         """Load an explicitly selected event predictor, or disable the overlay."""
@@ -624,6 +869,8 @@ class GameAnalyzer:
         kernels on the first call — this takes 5+ minutes without warmup.
         Running warmup upfront means the main loop starts fast.
         """
+        if isinstance(self.ball_detector, LazyModel):
+            return  # A cache hit must never execute dummy inference.
         import torch
         if not torch.cuda.is_available():
             return
@@ -702,7 +949,7 @@ class GameAnalyzer:
         look-alikes steal the track for a few frames at a time, which is what
         made the drawn trajectory jump hundreds of pixels and back.
         """
-        candidates = self._ball_candidates_for(frame)
+        candidates = self._ball_candidates_for(frame, frame_idx)
         return self._select_ball_candidate(candidates, frame_idx)
 
     def _select_ball_candidate(
@@ -731,17 +978,20 @@ class GameAnalyzer:
             if conf >= self.BALL_MIN_CONFIDENCE
         ]
 
-    def _ball_candidates_for(self, frame: np.ndarray) -> List[BallCandidate]:
+    def _ball_candidates_for(self, frame: np.ndarray, frame_idx=None, primary=None) -> List[BallCandidate]:
         """Every plausible ball in this frame, from one or both detectors."""
-        candidates = self._candidates_from_detections(
-            self.ball_detector.detect_ball(frame)
-        )
+        def raw(name, detector):
+            cache = getattr(self, '_model_cache', None)
+            def infer():
+                return [[float(v) for v in row] for row in detector.detect_ball(frame)]
+            return cache.compute(self._ball_stages[name], frame_idx, infer) if cache else infer()
+        candidates = self._candidates_from_detections(primary if primary is not None else raw('primary', self.ball_detector))
         if self.ball_detector_2 is None:
             return candidates
 
         # Merge the second opinion; the two models often report the same ball.
         for extra in self._candidates_from_detections(
-            self.ball_detector_2.detect_ball(frame)
+            raw('tiled', self.ball_detector_2)
         ):
             if not any(
                 math.hypot(extra.x - c.x, extra.y - c.y) < self.BALL_MERGE_RADIUS
@@ -749,6 +999,12 @@ class GameAnalyzer:
             ):
                 candidates.append(extra)
         return candidates
+
+    def _infer_pose_model(self, frame, kwargs):
+        settings = self._pose_spec['settings']
+        result = self.pose_model.predict(frame, conf=settings.get('conf',.1),
+                                         batch=settings.get('batch',1), mode='track', **kwargs)
+        return pack_pose_result(result[0] if result else None)
 
     def _detect_players(
         self,
@@ -771,15 +1027,32 @@ class GameAnalyzer:
         if self.pose_imgsz:
             kwargs["imgsz"] = self.pose_imgsz
 
-        try:
-            results = self.pose_model.track(
-                frame, persist=True, tracker="bytetrack.yaml", **kwargs,
-            )
-        except Exception as e:
-            if not self._pose_track_warned:
-                log.warning(f"Pose tracking unavailable ({e}) — using per-frame inference (no IDs)")
-                self._pose_track_warned = True
-            results = self.pose_model(frame, **kwargs)
+        cache = getattr(self, '_model_cache', None)
+        frame_index = getattr(self, '_current_pose_frame', None)
+        saved = cache.get(self._pose_sequence, frame_index) if cache and self._pose_cache_read else None
+        if saved is not None:
+            results = [unpack_pose_result(saved)]
+        elif cache and not self._pose_cache_read:
+            def infer_pose():
+                return self._infer_pose_model(frame, kwargs)
+            raw = cache.compute(self._raw_pose_stage, frame_index, infer_pose)
+            saved = self._cached_pose_tracker.update(raw, self._cache_frame_size)
+            cache.put(self._pose_sequence, frame_index, saved)
+            results = [unpack_pose_result(saved)]
+        else:
+            if cache and self._pose_cache_read:
+                raise CacheMiss(f'Incomplete/corrupt sealed pose sequence at {frame_index}')
+            try:
+                results = self.pose_model.track(
+                    frame, persist=True, tracker="bytetrack.yaml", **kwargs,
+                )
+            except Exception as e:
+                if not self._pose_track_warned:
+                    log.warning(f"Pose tracking unavailable ({e}) — using per-frame inference (no IDs)")
+                    self._pose_track_warned = True
+                results = self.pose_model(frame, **kwargs)
+            if cache:
+                cache.put(self._pose_sequence, frame_index, pack_pose_result(results[0] if results else None))
 
         net_y = self.calibration.net_y if self.calibration else 830.0
 
@@ -805,6 +1078,34 @@ class GameAnalyzer:
             projector=projector,
         )
 
+        recovery = getattr(self, "_person_pose_recovery", None)
+        if recovery is not None:
+            if cache:
+                def pack_pose(pose):
+                    value = asdict(pose)
+                    value['keypoints'] = pose.keypoints.tolist()
+                    return value
+                spec = {'sidecar': recovery.sidecar_hash, 'weights': self._recovery_model_sha,
+                        'backend': self._recovery_backend_sha, 'pose_code': self._recovery_pose_code_sha,
+                        'geometry': asdict(self.calibration)}
+                stage = cache.stage('sam_guided_pose', spec)
+                key = digest({'frame': frame_index, 'poses': [pack_pose(p) for p in poses]})
+                counters = ('covered_frames', 'crop_inferences', 'proposals_recovered')
+                def recover():
+                    before = {name: getattr(recovery, name) for name in counters}
+                    output = recovery.recover(frame, frame_index, poses, projector, device)
+                    delta = {name: getattr(recovery, name)-before[name] for name in counters}
+                    for name in counters:
+                        setattr(recovery, name, before[name])
+                    return {'poses': [pack_pose(p) for p in output], 'counters': delta}
+                value = cache.compute(stage, key, recover)
+                poses = [PlayerPose(**{**p, 'keypoints': np.asarray(p['keypoints'], dtype=np.float32)})
+                         for p in value['poses']]
+                for name, delta in value['counters'].items():
+                    setattr(recovery, name, getattr(recovery, name)+delta)
+            else:
+                poses = recovery.recover(frame, frame_index, poses, projector, device)
+
         # On-court filter with track hysteresis: spectators/benches never get
         # in; players chasing a ball outside the lines don't drop out.
         if projector is not None:
@@ -815,6 +1116,8 @@ class GameAnalyzer:
                 serve_setup=fsm_state in {"serve_prep", "serve_ready"},
             )
 
+        if recovery is not None:
+            recovery.accepted_person_frames += sum(p.source == "sam_guided_yolo_pose" for p in poses)
         return poses_to_teams(poses), poses
 
     def _get_projector(self) -> Optional[CourtProjector]:
@@ -845,7 +1148,42 @@ class GameAnalyzer:
             self._projector_calib = c
         return self._projector
 
-    def _maybe_run_sam_net_detection(
+    def _maybe_run_sam_net_detection(self, video_path, frame_w, frame_h, refresh_floor=False):
+        cache = getattr(self, '_model_cache', None)
+        if cache is None or not self.enable_net_detection:
+            return self._run_net_detection_uncached(video_path, frame_w, frame_h, refresh_floor)
+        import os
+        resolved = self._resolve('net_sam')
+        worker = _ROOT/'scripts/detection/detect_net_posts_sam3.py'
+        python = Path(os.environ.get('SAM3_PYTHON') or (_ROOT/'.sam3_env'/('Scripts/python.exe' if os.name=='nt' else 'bin/python')))
+        sam3 = {'python':str(python),'available':python.is_file(),
+                'worker_sha256':file_digest(worker) if worker.is_file() else None}
+        if python.is_file():
+            try:
+                from huggingface_hub import try_to_load_from_cache
+                for name in ('sam3.pt','config.json'):
+                    path = try_to_load_from_cache('facebook/sam3',name)
+                    sam3[name] = file_digest(path) if isinstance(path,str) and Path(path).is_file() else None
+            except ImportError:
+                sam3['checkpoint_resolution']='unavailable'
+        base = {'weights': file_digest(resolved.path) if resolved.path.is_file() else None,
+                'backend': file_digest(_ROOT/'src/detection/net_detector.py'),
+                'size': [frame_w,frame_h], 'net_height_m': self.net_height_m,
+                'refresh_floor': refresh_floor,
+                'sam3_worker':sam3}
+        def stage():
+            return cache.stage('net_geometry', {**base, 'calibration': asdict(self.calibration) if self.calibration else None})
+        key = stage()
+        def infer():
+            self._run_net_detection_uncached(video_path, frame_w, frame_h, refresh_floor)
+            return {'calibration': asdict(self.calibration) if self.calibration else None,
+                    'models': {k:v for k,v in self.model_provenance.items() if k.startswith('net_')}}
+        result = cache.compute(key, 'result', infer)
+        self.calibration = CalibrationData(**result['calibration']) if result['calibration'] else None
+        self.model_provenance.update(result['models'])
+        cache.put(stage(), 'result', result)  # Calibration write-back must not force another SAM pass.
+
+    def _run_net_detection_uncached(
         self,
         video_path: str,
         frame_w: float,
@@ -1096,7 +1434,7 @@ class GameAnalyzer:
                 st = self._SKELETON_STYLE[pose.team]
                 draw_skeleton(out, pose, st["color"],
                               bone_thickness=st["bone"], kp_radius=st["kp"],
-                              draw_id=st["draw_id"])
+                              draw_id=st["draw_id"] or pose.player_identity_processed)
                 if pose.team_prior:
                     x1, y1 = int(pose.bbox[0]), int(pose.bbox[1])
                     cv2.putText(
@@ -1168,18 +1506,9 @@ class GameAnalyzer:
         # force the rally to end (ball went out / rally over).
         frames_since_ball = 0
 
-        # Serve cooldown: suppress repeated "serve" predictions — a real serve can happen
-        # at most once per rally. After showing "serve", block it for at least this many
-        # frames so the model can't flicker back to "serve" mid-rally.
-        _SERVE_COOLDOWN_SEC  = 8.0          # minimum seconds between two serve displays
-        _serve_cooldown_frames = int(fps * _SERVE_COOLDOWN_SEC)
-        _last_serve_shown_frame: int = -_serve_cooldown_frames  # allow first serve immediately
-
-        # Sticky overlay: after rally ends, keep showing the last in-rally prediction for
-        # a short window so the screen doesn't go blank between rallies.
-        _STICKY_FRAMES = int(fps * 2.0)     # show last prediction for 2 sec after rally ends
-        _last_rally_display: str = ""
-        _last_rally_display_frame: int = -_STICKY_FRAMES
+        overlay = _EventOverlayState(fps)
+        if self._event_predictor is not None:
+            self._event_predictor.reset()
 
         t0 = time.time()
         progress_interval = max(1, int(fps / 2))
@@ -1228,6 +1557,39 @@ class GameAnalyzer:
         def frames_with_ball_candidates():
             nonlocal batch_enabled
             for frame_chunk in frame_chunks():
+                cache = getattr(self, '_model_cache', None)
+                if cache is not None:
+                    raw = {}
+                    missing = []
+                    for idx,image in frame_chunk:
+                        if self.skip_frames > 0 and idx % (self.skip_frames+1):
+                            continue
+                        value = cache.get(self._ball_stages['primary'], idx)
+                        if value is None:
+                            missing.append((idx,image))
+                        else:
+                            raw[idx] = value
+                    if missing and cache.require:
+                        raise CacheMiss(f'Missing ball model outputs at frame {missing[0][0]}')
+                    if missing:
+                        if batch_enabled and len(missing) > 1:
+                            try:
+                                values = self.ball_detector.detect_ball_batch([image for _,image in missing])
+                            except Exception as error:
+                                log.warning(f'Ball batch unavailable ({error}); using single-frame model outputs')
+                                batch_enabled = False
+                                values = [self.ball_detector.detect_ball(image) for _,image in missing]
+                            if len(values) != len(missing):
+                                raise ValueError('Ball batch output count differs from input')
+                        else:
+                            values = [self.ball_detector.detect_ball(image) for _,image in missing]
+                        cache.computed['ball_primary'] += len(missing)
+                        for (idx,_),value in zip(missing,values):
+                            raw[idx] = [[float(v) for v in row] for row in value]
+                            cache.put(self._ball_stages['primary'], idx, raw[idx])
+                    for idx,image in frame_chunk:
+                        yield idx,image,(self._ball_candidates_for(image,idx,raw[idx]) if idx in raw else None)
+                    continue
                 batched_candidates: Dict[int, List[BallCandidate]] = {}
                 if batch_enabled:
                     processable = [
@@ -1256,6 +1618,8 @@ class GameAnalyzer:
                     yield frame_idx, frame, batched_candidates.get(frame_idx)
 
         for frame_idx, frame, candidates in frames_with_ball_candidates():
+            if getattr(self, '_model_cache', None) is not None:
+                self._cache_visited_frames.append(frame_idx)
             stats.total_frames += 1
 
             # Frame skipping
@@ -1289,6 +1653,7 @@ class GameAnalyzer:
                 fsm._end_rally(frame_idx, "no_ball_timeout")
                 frames_since_ball = 0
 
+            self._current_pose_frame = frame_idx
             player_teams, player_poses = self._detect_players(
                 frame,
                 fsm_state=cur_state_pre,
@@ -1361,43 +1726,23 @@ class GameAnalyzer:
             # FSM gate: only show LSTM prediction when ball is actually in play.
             # During serve_prep / serve_ready players stand in serving position, causing
             # the LSTM to continuously output "serve" between rallies — suppress that.
-            _LSTM_ACTIVE_STATES = {"serving", "rally_active"}
             event_display = None
             if self._event_predictor is not None and self.calibration is not None:
                 raw_display = self._event_predictor.add_frame(
                     ball_pos, player_teams, self.calibration.net_y, fps,
                     fsm_state=cur_state or "",   # let predictor exclude impossible classes
+                    video_time=frame_idx / fps,
                     pose_features=pose_features,  # 8 pose channels (new checkpoints)
                     frame_size=(
                         self.calibration.frame_width,
                         self.calibration.frame_height,
                     ),
+                    ball_new=bool(ball_pos and self.ball_gate.acquired_this_frame),
                 )
-                # Gate: only pass prediction through when FSM says ball is in play
-                if raw_display is not None and cur_state in _LSTM_ACTIVE_STATES:
-                    if raw_display == "serve":
-                        # Serve cooldown: enforce minimum gap between serve displays.
-                        # During rally_active the predictor already suppresses serve, but
-                        # "serving" state can still briefly overlap with a false serve
-                        # prediction lingering in the smoothing window.
-                        frames_since_serve = frame_idx - _last_serve_shown_frame
-                        if frames_since_serve >= _serve_cooldown_frames:
-                            _last_serve_shown_frame = frame_idx
-                            _last_rally_display = raw_display
-                            _last_rally_display_frame = frame_idx
-                            event_display = raw_display
-                        # else: too soon — suppress this serve prediction silently
-                    else:
-                        _last_rally_display = raw_display
-                        _last_rally_display_frame = frame_idx
-                        event_display = raw_display
-                elif (raw_display is not None
-                      and cur_state not in _LSTM_ACTIVE_STATES
-                      and _last_rally_display
-                      and _last_rally_display != "serve"
-                      and frame_idx - _last_rally_display_frame < _STICKY_FRAMES):
-                    # Sticky: rally just ended — keep last non-serve prediction briefly visible
-                    event_display = _last_rally_display
+                event_display = overlay.update(raw_display, cur_state or "", frame_idx)
+                guard = getattr(self._event_predictor, 'serve_guard', None)
+                if guard is not None and guard.reason(event_display):
+                    event_display = None
 
             # --- Collect per-frame annotation for viewer (FSM + Transformer for comparison) ---
             frame_events_this = [e for e in stats.all_events if e["frame"] == frame_idx]
@@ -1430,6 +1775,8 @@ class GameAnalyzer:
                             if p.back_facing_score is not None else None
                         ),
                         "team_prior": p.team_prior,
+                        "source": p.source,
+                        "mask_instance_id": p.mask_instance_id,
                     }
                     for p in player_poses
                 ],
@@ -1462,6 +1809,7 @@ class GameAnalyzer:
                          f"state={cur_state} | ball={ball_pct:.0f}%")
             report_frame_progress(frame_idx, force=(frame_idx + 1 >= total))
 
+        self._finish_detection_cache(stats)
         stats.rallies = completed_rallies
         stats.processing_time_sec = time.time() - t0
         # Written last: SAM net detection may add its own entry mid-run.
@@ -1575,10 +1923,16 @@ class GameAnalyzer:
         )
         annotate_match_phases(stats.frame_annotations, self.match_segments)
         annotate_score_timeline(stats.frame_annotations, stats.match_analytics)
-        if stats.rally_lifecycle.get("service_attempts"):
-            lc = stats.rally_lifecycle
+        self._recompute_features_and_predictions(stats.frame_annotations, fps)
+        # Strictly after the recompute: the spotter reads the same final ball
+        # coordinates and ``pose_f`` the exported annotations carry.
+        self._spot_contacts(stats, fps)
+        # The spotter, when it ran, logged its own rallies; these are the FSM's.
+        fsm_lifecycle = stats.rally_lifecycle_fsm or stats.rally_lifecycle
+        if fsm_lifecycle.get("service_attempts"):
+            lc = fsm_lifecycle
             log.info(
-                "Rally lifecycle: "
+                "FSM rally lifecycle: "
                 f"{lc['service_attempts']} attempts, "
                 f"{lc['confirmed_serves']} crossed net, "
                 f"{lc['playable_rallies']} playable, "
@@ -1617,6 +1971,239 @@ class GameAnalyzer:
         )
 
         return stats
+
+    def _recompute_features_and_predictions(self, annotations: List[Dict], fps: float) -> None:
+        """Replay saved poses against final ball coordinates and clean FSM states.
+
+        Features use the exported ``ball`` trajectory, including accepted
+        reconstruction. The separate reconstruction-affects-FSM policy remains
+        enforced by the clean FSM replay. Raw observations/provenance stay intact.
+        """
+        pose_fx = PoseFeatureExtractor()
+        predictor = self._event_predictor
+        if predictor is not None:
+            predictor.reset()
+        overlay = _EventOverlayState(fps)
+        calibration = self.calibration
+        pose_net_y = (
+            calibration.net_tape_top
+            if calibration is not None and calibration.net_tape_top is not None
+            else (calibration.net_y if calibration is not None else 830.0)
+        )
+        for ann in annotations:
+            frame_idx = int(ann["f"])
+            poses = self._poses_from_annotation(ann)
+            ball = ann.get("ball")
+            ball_pos = tuple(float(value) for value in ball) if ball is not None else None
+            if ann.get("ball_out_of_frame"):
+                ball_pos = None
+            ann["pose_f"] = pose_fx.update(frame_idx, poses, ball_pos, pose_net_y)
+            ann.pop("event_model", None)
+            ann.pop('event_model_decision', None)
+            if predictor is None or calibration is None:
+                continue
+            teams = {"team_a": [], "team_b": []}
+            for pose in poses:
+                teams[pose.team].append(pose.center)
+            # ``p`` stores the exact rounded centers used by offline feature
+            # builders, grouped team_a then team_b. Avoid bbox-rounding drift.
+            points = ann.get("p")
+            if points is not None and len(points) == len(poses):
+                split = len(teams["team_a"])
+                teams = {"team_a": points[:split], "team_b": points[split:]}
+            state = ann.get("state") or ""
+            raw_display = predictor.add_frame(
+                ball_pos, teams, calibration.net_y, fps,
+                fsm_state=state,
+                video_time=frame_idx / fps,
+                pose_features=ann["pose_f"],
+                frame_size=(calibration.frame_width, calibration.frame_height),
+                ball_new=bool(ann.get("ball_new")),
+            )
+            display = overlay.update(raw_display, state, frame_idx)
+            guard = getattr(predictor, 'serve_guard', None)
+            if guard is not None and guard.reason(display):
+                display = None
+            if getattr(predictor, 'last_decision', None) is not None:
+                ann['event_model_decision'] = dict(predictor.last_decision)
+            if display is not None:
+                ann["event_model"] = display
+
+    def _spot_contacts(self, stats: "GameStats", fps: float) -> None:
+        """Replace the FSM's contact events with the dense spotter's.
+
+        Measured leave-one-video-out on the three gold videos, the spotter puts
+        a typed contact on the right frame far more often than the FSM
+        (0.79 against 0.156 four-class macro F1 at +/-5 frames). The contact
+        events are replaced, and so are rallies and service attempts: they are
+        rebuilt from the spotter's contacts, each rally opening on its serve
+        (see ``rally_segmentation``). Score and match analytics stay
+        FSM-derived; they were computed before this point and need team sides
+        the spotter does not produce.
+
+        The FSM's events, rallies, attempts and counters are kept in their
+        ``*_fsm`` fields so enabling this never loses what the previous path
+        produced.
+        """
+        # Read defensively: tests build an analyzer with ``__new__`` and set
+        # only the attributes the path under test needs, as elsewhere here.
+        checkpoint = getattr(self, "contact_spotter_path", None)
+        if not checkpoint:
+            return
+        from action_recognition.rally_spotting.contact_spotter import (
+            ContactSpotter, phase_segments,
+        )
+        from action_recognition.rally_spotting import dense_contacts as dc
+        from action_recognition.rally_spotting.rally_segmentation import (
+            segment_rallies,
+        )
+
+        if getattr(self, "_contact_spotter", None) is None:
+            self._contact_spotter = ContactSpotter.load(checkpoint)
+            log.info(
+                f"Contact spotter: {checkpoint} "
+                f"({len(self._contact_spotter.members)} member(s))"
+            )
+        self._cache_dense_probabilities(self._contact_spotter, checkpoint)
+        calib = self.calibration
+        payload = {
+            "fps": fps,
+            "frame_width": calib.frame_width if calib else 1280,
+            "frame_height": calib.frame_height if calib else 720,
+            "net_y": calib.net_y if calib else 370.0,
+            "frames": stats.frame_annotations,
+        }
+        try:
+            spotted = self._contact_spotter.run(payload)
+        except Exception as error:
+            if isinstance(error, CacheMiss):
+                raise
+            # A failed spotter must not cost the whole analysis; the FSM
+            # events already in ``all_events`` stay as they are.
+            log.warning(f"Contact spotter failed, keeping FSM events: {error}")
+            stats.contact_spotter = {"enabled": True, "error": str(error)}
+            return
+
+        stats.all_events_fsm = list(stats.all_events)
+        events = []
+        for event in spotted.events:
+            events.append({
+                "frame": event["frame"],
+                "time": round(event["frame"] / fps, 2),
+                "type": event["type"],
+                "core_type": event["core_type"],
+                "confidence": event["confidence"],
+                "phase_before": event["phase_before"],
+                "phase_after": event["phase_after"],
+                "source": event["source"],
+                # The spotter does not attribute a contact to a side; these
+                # stay empty rather than carrying a guess.
+                "team": None,
+                "game_state": None,
+                "rally_phase": None,
+            })
+        serve_probability = (
+            spotted.probabilities[:, dc.LABEL_TYPES.index("serve")]
+            if spotted.probabilities is not None else None
+        )
+        segmented = segment_rallies(
+            events, fps,
+            serve_probability=serve_probability,
+            phase_labels=spotted.phase_labels,
+            frame_numbers=spotted.frame_numbers,
+        )
+        # A missed serve recovered from the serve probability is still the
+        # model's evidence, so it joins the event list, marked ``inferred``
+        # with its own source; the review queue reads only decoded contacts.
+        events = sorted(
+            events + segmented["inferred_serves"],
+            key=lambda event: int(event["frame"]),
+        )
+        stats.all_events = events
+        stats.rallies_fsm = list(stats.rallies)
+        stats.service_attempts_fsm = list(stats.service_attempts)
+        stats.rally_lifecycle_fsm = dict(stats.rally_lifecycle)
+        attempts = segmented["service_attempts"]
+        match_segments = getattr(self, "match_segments", None)
+        if match_segments:
+            attempts = filter_non_game_records(
+                attempts, match_segments, frame_field="start_frame",
+            )
+        kept_ids = {attempt["service_attempt_id"] for attempt in attempts}
+        stats.service_attempts = attempts
+        stats.rallies = [
+            rally for rally in segmented["rallies"]
+            if rally["service_attempt_id"] in kept_ids
+        ]
+        lifecycle = dict(segmented["rally_lifecycle"])
+        if match_segments:
+            lifecycle["service_attempts"] = len(attempts)
+            lifecycle["playable_rallies"] = len(stats.rallies)
+            lifecycle["serves_not_played"] = len(attempts) - len(stats.rallies)
+            lifecycle["excluded_as_non_game"] = (
+                len(segmented["service_attempts"]) - len(attempts)
+            )
+        stats.rally_lifecycle = lifecycle
+        by_frame: Dict[int, List[str]] = {}
+        for event in events:
+            by_frame.setdefault(int(event["frame"]), []).append(event["type"])
+        for ann in stats.frame_annotations:
+            frame_index = int(ann["f"])
+            ann["ev_fsm"] = list(ann.get("ev") or [])
+            ann["ev"] = by_frame.get(frame_index, [])
+        phases = phase_segments(spotted.phase_labels, spotted.frame_numbers)
+        stats.contact_spotter = {
+            "enabled": True,
+            "checkpoint": str(checkpoint),
+            "diagnostics": spotted.diagnostics,
+            "phase_segments": phases,
+            "rally_segmentation": {
+                "rules": segmented["rules"],
+                "inferred_serves": len(segmented["inferred_serves"]),
+                "groups_without_serve": segmented["unanchored_groups"],
+            },
+            "replaced": {
+                "all_events": "dense_contact_spotter",
+                "fsm_events_kept_in": "all_events_fsm",
+                "per_frame_fsm_events_kept_in": "ev_fsm",
+                "rallies": "spotter_rallies_v1",
+                "fsm_rallies_kept_in": [
+                    "rallies_fsm", "service_attempts_fsm", "rally_lifecycle_fsm",
+                ],
+            },
+            "not_replaced": ["match_analytics", "attack_heatmap"],
+        }
+        log.info(
+            f"Contact spotter: {len(events)} events "
+            f"({spotted.diagnostics.get('per_type')}, "
+            f"{len(segmented['inferred_serves'])} inferred serves), "
+            f"{len(stats.rallies)} rallies from {len(attempts)} serves, "
+            f"{len(phases)} phase segments, FSM had "
+            f"{len(stats.all_events_fsm)} events / {len(stats.rallies_fsm)} rallies"
+        )
+
+    @staticmethod
+    def _poses_from_annotation(ann: Dict) -> List[PlayerPose]:
+        poses = []
+        for saved in ann.get("poses") or []:
+            bbox = tuple(float(value) for value in saved.get("bb", ()))
+            keypoints = np.asarray(saved.get("kp") or [], dtype=np.float32)
+            if len(bbox) != 4 or keypoints.shape != (17, 3):
+                continue
+            poses.append(PlayerPose(
+                team="team_a" if saved.get("team") in ("a", "team_a") else "team_b",
+                center=((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0),
+                bbox=bbox,
+                keypoints=keypoints,
+                track_id=saved.get("id"),
+                back_facing_score=saved.get("back"),
+                source=saved.get("source", "yolo_pose"),
+                mask_instance_id=saved.get("mask_instance_id"),
+                team_prior=saved.get("team_prior"),
+                player_id=saved.get("player_id"),
+                player_identity_processed="player_id" in saved,
+            ))
+        return poses
 
     def _apply_trajectory_dp(self, stats: "GameStats") -> bool:
         """Replace the gate's per-frame picks with a globally chosen path.
@@ -2018,6 +2605,96 @@ class GameAnalyzer:
 
         return filled
 
+    def _apply_player_identity(self, stats: "GameStats", images, fps: float,
+                               video_path: Optional[Path] = None) -> None:
+        """Separate offline pass: stable IDs never replace tracker/FSM inputs."""
+        if not getattr(self, "enable_player_identity", False):
+            stats.player_identity = {"enabled": False, "status": "disabled"}
+            return
+        from src.models.player_reid_encoder import DEFAULT_ASSETS, OSNetEncoder
+        from src.tracking.player_identity_workflow import METHOD, run_identity_pass
+        started = time.time()
+        side = self.player_identity_side
+        assets = Path(self.player_reid_assets) if self.player_reid_assets else DEFAULT_ASSETS
+        if not assets.is_absolute():
+            assets = _ROOT / assets
+        override = str(assets / "osnet_msmt17.pth") if self.player_reid_assets else None
+        resolved = self._resolve("player_reid", override)
+        cache = getattr(self, '_model_cache', None)
+        if cache is None and video_path is not None and hasattr(self, 'model_cache_dir'):
+            cache = self._model_cache = ModelOutputCache(video_path, self.model_cache_dir, self.require_model_cache)
+        feature_cache = None
+        try:
+            if cache is None:
+                encoder = OSNetEncoder(assets, resolved.path, self.player_reid_device)
+            else:
+                encoder = FrozenOSNet(assets, resolved.path, self.player_reid_device)
+                size = getattr(self, '_cache_frame_size', None)
+                if size is None:
+                    size = (self.calibration.frame_width,self.calibration.frame_height)
+                width,height = size
+                feature_cache = osnet_feature_store(cache, assets, resolved.path, width,height)
+        except FileNotFoundError as exc:
+            if self.player_reid_assets or self.player_identity_seed:
+                raise
+            log.warning(f"Player identity unavailable: {exc}. Run scripts/models/install_player_reid.py")
+            stats.player_identity = {"enabled": True, "status": "model_unavailable", "method": METHOD,
+                                     "side": side, "error": str(exc)}
+            for ann in stats.frame_annotations:
+                for pose in ann.get("poses") or []:
+                    if pose.get("team") in (side, f"team_{side}"):
+                        pose["player_id"] = None
+                        pose["identity"] = {"method": METHOD, "reason": "model_unavailable",
+                                            "label_source": "model", "verified": False}
+        else:
+            def progress(done, total):
+                if done % max(1, int(fps * 2)) == 0 or done == total:
+                    elapsed = max(time.time() - started, .001)
+                    self._emit_progress(phase="player_identity", progress=97.0 + done/max(total, 1),
+                                        frame_current=done, frame_total=total,
+                                        processing_fps=round(done/elapsed, 2),
+                                        eta_sec=round(elapsed/max(done, 1)*(total-done), 1),
+                                        message=f"Assigning stable player IDs {done:,}/{total:,}")
+            seed = Path(self.player_identity_seed) if self.player_identity_seed else None
+            if seed is not None and not seed.is_absolute():
+                seed = _ROOT / seed
+            stats.player_identity = run_identity_pass(
+                stats.frame_annotations, images, fps, encoder, side=side,
+                roster_size=self.max_players_per_team or 6, seed_path=seed,
+                video_path=video_path, progress=progress,
+                feature_cache=feature_cache,
+            )
+            stats.player_identity["model_resolution"] = resolved.as_dict()
+            self.model_provenance["player_reid"].update(encoder.provenance)
+            log.info(f"Player identity: {stats.player_identity['status']}, "
+                     f"{stats.player_identity.get('assigned', 0)} assigned observations")
+        stats.models = dict(self.model_provenance)
+        elapsed = time.time() - started
+        stats.player_identity["processing_time_sec"] = round(elapsed, 3)
+        stats.processing_time_sec += elapsed
+
+    def _draw_saved_annotation(self, frame: np.ndarray, ann: Dict) -> np.ndarray:
+        teams = {"team_a": [], "team_b": []}
+        for saved in ann.get("poses") or []:
+            box = saved.get("bb") or []
+            if len(box) == 4:
+                team = "team_a" if saved.get("team") in ("a", "team_a") else "team_b"
+                teams[team].append(((box[0]+box[2])/2., (box[1]+box[3])/2.))
+        ball = ann.get("ball")
+        drawn = self._draw_frame(
+            frame, (float(ball[0]), float(ball[1])) if ball else None, teams,
+            {"game_state": ann.get("state"), "rally_phase": ann.get("phase"),
+             "lifecycle": ann.get("lifecycle"), "current_team": ann.get("current_team"),
+             "team_contacts": ann.get("contacts", 0)},
+            event_display=ann.get("event_model"), player_poses=self._poses_from_annotation(ann),
+            ball_source=str(ann.get("ball_source") or "detected"),
+            ball_confidence=float(ann.get("ball_confidence") or 0.),
+        )
+        if not ball and ann.get("ball_out_of_frame"):
+            cv2.putText(drawn, "BALL OUT OF FRAME", (20, frame.shape[0]-35),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 165, 255), 3)
+        return drawn
+
     def _render_final_video(
         self,
         video_path: Path,
@@ -2028,7 +2705,7 @@ class GameAnalyzer:
         frame_height: int,
         max_frames: int,
     ) -> bool:
-        """Second pass rendering so post-DP/reconstructed balls reach video."""
+        """Render final trajectories and roster IDs from the exported annotations."""
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             log.warning(f"Final render cannot open source video: {video_path}")
@@ -2047,7 +2724,7 @@ class GameAnalyzer:
             candidate.release()
         if writer is None:
             cap.release()
-            log.warning("Final VideoWriter failed — reconstructed video not saved")
+            log.warning("Final VideoWriter failed — annotated video not saved")
             return False
 
         by_frame = {int(ann["f"]): ann for ann in annotations}
@@ -2063,54 +2740,7 @@ class GameAnalyzer:
                     rendered += 1
                     continue
 
-                player_poses: List[PlayerPose] = []
-                teams: Dict[str, List[Tuple[float, float]]] = {
-                    "team_a": [], "team_b": [],
-                }
-                for saved in ann.get("poses") or []:
-                    bbox = tuple(float(value) for value in saved.get("bb", (0, 0, 0, 0)))
-                    if len(bbox) != 4:
-                        continue
-                    team = "team_a" if saved.get("team") in ("a", "team_a") else "team_b"
-                    center = ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
-                    teams[team].append(center)
-                    keypoints = np.asarray(saved.get("kp") or [], dtype=np.float32)
-                    if keypoints.shape != (17, 3):
-                        continue
-                    player_poses.append(PlayerPose(
-                        team=team,
-                        center=center,
-                        bbox=bbox,
-                        keypoints=keypoints,
-                        track_id=saved.get("id"),
-                        back_facing_score=saved.get("back"),
-                        team_prior=saved.get("team_prior"),
-                    ))
-
-                ball = ann.get("ball")
-                ball_pos = (float(ball[0]), float(ball[1])) if ball else None
-                status = {
-                    "game_state": ann.get("state"),
-                    "rally_phase": ann.get("phase"),
-                    "lifecycle": ann.get("lifecycle"),
-                    "current_team": ann.get("current_team"),
-                    "team_contacts": ann.get("contacts", 0),
-                }
-                drawn = self._draw_frame(
-                    frame,
-                    ball_pos,
-                    teams,
-                    status,
-                    event_display=ann.get("event_model"),
-                    player_poses=player_poses,
-                    ball_source=str(ann.get("ball_source") or "detected"),
-                    ball_confidence=float(ann.get("ball_confidence") or 0.0),
-                )
-                if not ball_pos and ann.get("ball_out_of_frame"):
-                    cv2.putText(
-                        drawn, "BALL OUT OF FRAME", (20, frame_height - 35),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 165, 255), 3,
-                    )
+                drawn = self._draw_saved_annotation(frame, ann)
                 writer.write(drawn)
                 rendered += 1
                 if rendered % max(1, int(fps * 2)) == 0:
@@ -2120,12 +2750,12 @@ class GameAnalyzer:
                         frame_current=rendered,
                         frame_total=max_frames,
                         video_percent=round(100.0 * rendered / max(max_frames, 1), 2),
-                        message=f"Rendering reconstructed video {rendered:,}/{max_frames:,}",
+                        message=f"Rendering final annotated video {rendered:,}/{max_frames:,}",
                     )
         finally:
             cap.release()
             writer.release()
-        log.info(f"Final reconstructed video: {output_path} ({rendered:,} frames)")
+        log.info(f"Final annotated video: {output_path} ({rendered:,} frames)")
         return rendered > 0
 
     # ------------------------------------------------------------------
@@ -2141,6 +2771,9 @@ class GameAnalyzer:
         """Process a video file."""
         vp = local_path_from_uri(video_path)
         od = Path(output_dir)
+        if any((od/f"{vp.stem}{suffix}").exists()
+               for suffix in ("_stats.json", "_annotations.json", "_analyzed.mp4")):
+            raise FileExistsError(f"Analysis result already exists for {vp.stem}; choose a fresh output directory")
         od.mkdir(parents=True, exist_ok=True)
 
         cap = cv2.VideoCapture(str(vp))
@@ -2151,8 +2784,23 @@ class GameAnalyzer:
         total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        recovery = getattr(self, "_person_pose_recovery", None)
+        if recovery is not None:
+            try:
+                recovery.validate_video(vp, fps, w, h)
+            except Exception:
+                cap.release()
+                raise
         max_frames = int(max_duration_sec * fps) if max_duration_sec else total
         max_frames = min(max_frames, total) if total > 0 else max_frames
+        self._cache_full_source_limit = total
+        try:
+            cached_pass = self._prepare_model_cache(vp, fps, w, h, max_frames)
+        except Exception:
+            cap.release()
+            if getattr(self, '_model_cache', None) is not None:
+                self._model_cache.db.close()
+            raise
 
         log.section(f"Video: {vp.name}")
         log.info(f"Resolution={w}x{h}  fps={fps:.1f}  frames={total}  skip={self.skip_frames}")
@@ -2166,9 +2814,15 @@ class GameAnalyzer:
         )
 
         # Auto-detect net tape with SAM if not already in calibration
-        self._maybe_run_sam_net_detection(
-            str(vp), float(w), float(h), refresh_floor=self.refresh_net_floor,
-        )
+        try:
+            self._maybe_run_sam_net_detection(
+                str(vp), float(w), float(h), refresh_floor=self.refresh_net_floor,
+            )
+        except Exception:
+            cap.release()
+            if getattr(self, '_model_cache', None) is not None:
+                self._model_cache.db.close()
+            raise
 
         # Scale calibration to actual frame resolution (e.g., 4K calib on 720p video)
         saved_calib = self.calibration
@@ -2178,7 +2832,8 @@ class GameAnalyzer:
         out_writer = None
         out_path = od / f"{vp.stem}_analyzed.mp4"
         defer_final_render = (
-            self.output_video and self.ball_reconstruction_mode != "off"
+            self.output_video and (self.ball_reconstruction_mode != "off"
+                                   or getattr(self, "enable_player_identity", False))
         )
         if self.output_video and not defer_final_render:
             # Prefer mp4v first to avoid OpenH264 DLL warning on Windows (avc1/H264 need it)
@@ -2205,9 +2860,16 @@ class GameAnalyzer:
         scaled_calib = self.calibration  # already scaled — needed for _save_and_print
         try:
             self._process_frames_iter(
-                frame_iter(), fps, max_frames, stats,
+                self._cached_frame_iterator() if cached_pass and not recovery and out_writer is None else frame_iter(), fps, max_frames, stats,
                 out_writer=out_writer,
             )
+            if getattr(self, "enable_player_identity", False):
+                def identity_images():
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    yield from frame_iter()
+                self._apply_player_identity(stats, identity_images(), fps, vp)
+            else:
+                stats.player_identity = {"enabled": False, "status": "disabled"}
             if defer_final_render:
                 self._render_final_video(
                     vp, out_path, stats.frame_annotations, fps, w, h, max_frames,
@@ -2217,6 +2879,9 @@ class GameAnalyzer:
             if out_writer:
                 out_writer.release()
             self.calibration = saved_calib  # restore original
+            if getattr(self, '_model_cache', None) is not None:
+                stats.model_cache = self._model_cache.summary()
+                self._model_cache.db.close()
 
         self._emit_progress(
             phase="saving",
@@ -2251,14 +2916,27 @@ class GameAnalyzer:
         """Process a directory of JPEG/PNG frames (e.g. for testing)."""
         fd = Path(frames_dir)
         od = Path(output_dir)
+        if (any((od/f"{fd.name}{suffix}").exists() for suffix in ("_stats.json", "_annotations.json"))
+                or (od/"annotated_frames").exists()):
+            raise FileExistsError(f"Frame analysis already exists for {fd.name}; choose a fresh output directory")
         od.mkdir(parents=True, exist_ok=True)
 
         exts = {".jpg", ".jpeg", ".png"}
         frame_files = sorted(p for p in fd.iterdir() if p.suffix.lower() in exts)
+        all_frame_files = frame_files
         if max_frames:
             frame_files = frame_files[:max_frames]
 
         total = len(frame_files)
+        self._cache_full_source_limit = None
+        cached_pass = None
+        if frame_files and hasattr(self, 'model_cache_dir'):
+            first = cv2.imread(str(frame_files[0]))
+            if first is None:
+                raise ValueError('First source frame cannot be read')
+            h,w = first.shape[:2]
+            identity = {'kind':'frames','files': [[p.name,file_digest(p)] for p in all_frame_files]}
+            cached_pass = self._prepare_model_cache(fd, fps, w, h, total, source_identity=identity)
         log.section(f"Frames dir: {fd.name}")
         log.info(f"frames={total}  fps={fps:.1f}")
 
@@ -2274,14 +2952,24 @@ class GameAnalyzer:
                     continue
                 yield idx, frame
 
-        stats = GameStats(video_name=fd.name)
+        stats = GameStats(video_name=fd.name, fps=fps)
         stats.models = dict(self.model_provenance)
         self._process_frames_iter(
-            frame_iter(), fps, total, stats,
-            out_frames_dir=out_frames_dir,
+            self._cached_frame_iterator() if cached_pass and not self.output_video else frame_iter(), fps, total, stats,
+            out_frames_dir=None if getattr(self, "enable_player_identity", False) else out_frames_dir,
         )
 
+        self._apply_player_identity(stats, frame_iter(), fps)
+        if out_frames_dir is not None and getattr(self, "enable_player_identity", False):
+            by_frame = {ann["f"]: ann for ann in stats.frame_annotations}
+            for index, image in frame_iter():
+                if index in by_frame:
+                    cv2.imwrite(str(out_frames_dir/f"frame_{index:05d}.jpg"),
+                                self._draw_saved_annotation(image, by_frame[index]))
+
         self._save_and_print(stats, od, fd.name)
+        if getattr(self, '_model_cache', None) is not None:
+            self._model_cache.db.close()
         return stats
 
     # ------------------------------------------------------------------
@@ -2291,6 +2979,12 @@ class GameAnalyzer:
     def _save_and_print(self, stats: GameStats, output_dir: Path, stem: str,
                         original_video_path: str = "",
                         calibration_override: Optional["CalibrationData"] = None):
+        from src.tracking.player_contacts import build_player_contacts
+        stats.player_contacts = build_player_contacts(
+            stats.all_events, stats.frame_annotations, stats.fps, stats.player_identity,
+        )
+        if getattr(self, '_model_cache', None) is not None:
+            stats.model_cache = self._model_cache.summary()
         out_path = output_dir / f"{stem}_stats.json"
         with open(out_path, "w") as f:
             json.dump(stats.to_dict(), f, indent=2, default=str)
@@ -2326,9 +3020,18 @@ class GameAnalyzer:
                 list(point) for point in calib.court_corners
             ] if calib and calib.court_corners else None,
             "team_divider_prior_counts": team_prior_counts,
+            "player_detection": {
+                "pose_imgsz": getattr(self, "pose_imgsz", None),
+                "sam_guided_recovery": self._person_pose_recovery.summary()
+                    if getattr(self, "_person_pose_recovery", None) is not None else {"enabled": False},
+            },
             "pose_feature_names": POSE_FEATURE_NAMES,
             "attack_heatmap": stats.attack_heatmap,
             "ball_reconstruction": stats.ball_reconstruction,
+            "contact_spotter": stats.contact_spotter,
+            "player_identity": stats.player_identity,
+            "player_contacts": stats.player_contacts,
+            "model_cache": stats.model_cache,
             "frames": stats.frame_annotations,
         }
         with open(ann_path, "w") as f:

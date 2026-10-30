@@ -79,6 +79,10 @@ def main():
     # Output
     parser.add_argument("--output", default="results", metavar="DIR",
                         help="Output directory (default: results/)")
+    parser.add_argument('--model-cache-dir', metavar='DIR',
+                        help='Persistent model-output cache (default data/inference_cache)')
+    parser.add_argument('--require-model-cache', action='store_true',
+                        help='Replay only: fail on missing model outputs instead of running inference')
 
     # Calibration
     parser.add_argument("--calibration", default="court_calibration.json", metavar="PATH",
@@ -119,6 +123,28 @@ def main():
                         help="Override ball detection model path")
     parser.add_argument("--pose-model", default=None, metavar="PATH",
                         help="Override pose estimation model path")
+    parser.add_argument("--pose-imgsz", type=int, default=2560,
+                        help="YOLO-pose input size (default 2560 for small/far 4K players)")
+    parser.add_argument("--person-masks", default=None, metavar="JSONL",
+                        help="Completed SAM people masks for optional crop-based YOLO-pose recovery")
+    parser.add_argument("--no-player-identity", action="store_true",
+                        help="Disable default offline OSNet roster IDs; keep raw tracker IDs")
+    parser.add_argument("--player-identity-side", choices=("a", "b"), default="b",
+                        help="Court side for roster identities (default b, near team)")
+    parser.add_argument("--player-identity-seed", metavar="JSON",
+                        help="Per-video verified seed or roster with confirmed new-player anchors; default initial P1-P6")
+    parser.add_argument("--player-reid-assets", metavar="DIR",
+                        help="Override pinned OSNet bundle (osnet.py + osnet_msmt17.pth)")
+    parser.add_argument("--player-reid-device", choices=("auto", "cpu", "cuda"), default="auto",
+                        help="OSNet inference device (default auto)")
+    parser.add_argument("--contact-spotter", default=None, metavar="CHECKPOINT",
+                        help="Dense contact spotter checkpoint from "
+                             "scripts/models/train_contact_spotter.py. Its typed "
+                             "contacts replace the FSM's in all_events; the FSM's "
+                             "are kept in all_events_fsm. Rallies are rebuilt "
+                             "from them, each opening on its serve (FSM rallies "
+                             "kept in rallies_fsm); score and the attack heatmap "
+                             "stay FSM-derived")
     parser.add_argument("--ball-ensemble", action="store_true",
                         help="Collect ball candidates from a second, tiled detector "
                              "(union recall 0.93 vs 0.72, roughly half the speed)")
@@ -174,8 +200,11 @@ def main():
                         help="Ball YOLO GPU batch size (default: 8; use 4 on low VRAM)")
 
     # Output flags
-    parser.add_argument("--no-video", action="store_true",
-                        help="Skip annotated output (faster, stats only)")
+    video_flags = parser.add_mutually_exclusive_group()
+    video_flags.add_argument('--render-video', action='store_true',
+                             help='Explicitly render annotated video/frames; default JSON + original-video viewer')
+    video_flags.add_argument("--no-video", action="store_true",
+                             help="JSON + original-video viewer (default; kept for compatibility)")
     parser.add_argument("--event-checkpoint", default=None, metavar="PATH",
                         help="Validated event model override (default: four-class "
                              "Transformer trained on both full-video gold datasets)")
@@ -189,6 +218,12 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.person_masks and not args.video:
+        parser.error("--person-masks requires --video for exact source-frame validation")
+    if args.player_identity_seed and (not args.video or args.no_player_identity):
+        parser.error("--player-identity-seed requires --video and enabled player identity")
+    if args.pose_imgsz <= 0:
+        parser.error("--pose-imgsz must be positive")
     if args.video:
         args.video = str(local_path_from_uri(args.video))
         if not Path(args.video).is_file():
@@ -227,7 +262,16 @@ def main():
         calibration_path=args.calibration,
         ball_model_path=args.ball_model,
         pose_model_path=args.pose_model,
-        output_video=not args.no_video,
+        pose_imgsz=args.pose_imgsz,
+        person_masks_path=args.person_masks,
+        enable_player_identity=not args.no_player_identity,
+        player_identity_side=args.player_identity_side,
+        player_identity_seed=args.player_identity_seed,
+        player_reid_assets=args.player_reid_assets,
+        player_reid_device=args.player_reid_device,
+        output_video=args.render_video,
+        model_cache_dir=args.model_cache_dir,
+        require_model_cache=args.require_model_cache,
         skip_frames=args.skip_frames,
         net_y_override=args.net_y,
         event_checkpoint_path=event_ckpt,
@@ -244,6 +288,7 @@ def main():
         ball_smooth_window=args.ball_smooth,
         suppress_static_ball_sources=not args.no_static_suppression,
         use_model_registry=not args.no_model_registry,
+        contact_spotter_path=args.contact_spotter,
     )
 
     if args.video:

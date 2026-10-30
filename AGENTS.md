@@ -1,6 +1,6 @@
 # Volleystat - Agent Context
 
-Updated: 2026-08-10. Code, CLI `--help`, tests, and config files override prose when they disagree.
+Updated: 2026-10-27. Code, CLI `--help`, tests, and config files override prose when they disagree.
 
 ## Mission and priorities
 
@@ -18,12 +18,14 @@ Primary outputs:
 
 ## Non-negotiable data rules
 
-- Authoritative event dataset: `data/event_clips_4k_gold_v1`.
-- Current snapshot: 430 human-labelled clips from three complete 4K videos:
+- Authoritative human labels are the completed sources in `data/full_video_gold`.
+- Verified active checkpoint training dataset: `data/event_clips_three_full_gold_causal_120f_v1` (MLflow manifest/features parameters).
+- Current active snapshot: 414 human-labelled clips, 410 core four-class examples, from three complete 4K videos:
   - `j0gRhgFCgIs_4_4k`
   - `j3BO9GgUFBI_3_4k`
   - `Khe4P8QcJkg_5_4k`
-- `Khe4P8QcJkg_5_4k` is validation source in `split_policy.json`.
+- `Khe4P8QcJkg_5_4k` is the primary validation source. The preserved `data/event_clips_4k_gold_v1/split_policy.json` specifies the same whole-source split.
+- The older 430-clip `data/event_clips_4k_gold_v1` remains unchanged; do not confuse it with the actual current checkpoint training source.
 - Split by complete `source_video`. Never random-split adjacent clips from one video across train/validation/test.
 - Human labels are trusted. FSM/model labels are weak labels and must retain provenance.
 - Reconstructed occluded-ball coordinates are derived data, never detector ground truth. Do not add them as YOLO ball boxes or train detector from them.
@@ -70,6 +72,12 @@ Current high-value analysis options:
 --no-net-detection
 --match-config <JSON>
 --no-model-registry
+--contact-spotter <CHECKPOINT>
+--no-player-identity
+--player-identity-side a|b
+--player-identity-seed <JSON>
+--player-reid-assets <DIR>
+--player-reid-device auto|cpu|cuda
 --no-video
 ```
 
@@ -92,6 +100,8 @@ Video / frame directory
      -> calibrated net/court team divider
      -> clean IntegratedVolleyballFSM replay
      -> event model + match analytics
+     -> offline OSNet + Kalman roster identity (default near side, raw IDs preserved)
+     -> final annotation-based video/frame rendering
   -> *_stats.json
   -> *_annotations.json
   -> *_analyzed.mp4
@@ -125,6 +135,7 @@ Main code:
 - Reconstruction must not affect FSM unless `--reconstruction-affects-fsm`; then only accepted high-confidence points enter clean replay.
 - Original observed values and derived values must remain recoverable in annotations.
 - FSM/events, viewer, Parquet features, and analytics must consume same final accepted trajectory for a run.
+- After clean FSM replay, recompute `pose_f` and event-model predictions from final exported ball coordinates and saved poses with fresh temporal history. Feature reconstruction use does not change `--reconstruction-affects-fsm`. Normalized clip features must preserve missing/off-camera observations and reset velocity at gaps/new tracks; legacy pixel compatibility remains unchanged. Existing feature files/checkpoints require explicit versioned refresh, never implicit rewriting.
 
 Standalone reconstruction review:
 
@@ -160,14 +171,14 @@ serve | reception | pass | attack
 
 Raw `other`, `free_ball`, `dig`, `block`, and richer contact semantics remain in annotations. Collapse rules live in `action_recognition/event_clips/config.py`.
 
-Authoritative dataset paths:
+Verified active model dataset paths:
 
 ```text
-data/event_clips_4k_gold_v1/manifest.json
-data/event_clips_4k_gold_v1/features/
-data/event_clips_4k_gold_v1/features_baseline_raw_v1/
-data/event_clips_4k_gold_v1/features_reconstructed_conservative_v1/
+data/event_clips_three_full_gold_causal_120f_v1/manifest.json
+data/event_clips_three_full_gold_causal_120f_v1/features/
 ```
+
+Older 430-clip gold data remains at `data/event_clips_4k_gold_v1`. Full-video human annotation sources retain authority over derived model/FSM fields.
 
 Feature schema: `resolution_normalized_v2`. Event features contain 10 trajectory + 8 pose channels. Confirm manifest and feature sidecar before training.
 
@@ -175,10 +186,10 @@ Current training command:
 
 ```powershell
 python -m action_recognition.training.train_event_sequence `
-  --manifest data\event_clips_4k_gold_v1\manifest.json `
-  --features-dir data\event_clips_4k_gold_v1\features_reconstructed_conservative_v1 `
-  --model transformer `
-  --sequence-len 60 `
+  --manifest data\event_clips_three_full_gold_causal_120f_v1\manifest.json `
+  --features-dir data\event_clips_three_full_gold_causal_120f_v1\features `
+  --model multiscale `
+  --sequence-len 120 --short-sequence-len 60 `
   --val-stems Khe4P8QcJkg_5_4k `
   --checkpoint-dir action_recognition\models\experiments_4k_gold_transformer `
   --epochs 50 --seed 42
@@ -304,6 +315,19 @@ Warnings about inaccessible `.pytest_cache` do not mean test failure.
 
 ## Working rules
 
+- Every video hypothesis must first reuse existing annotations and model-output
+  caches. For pipeline replay use `--require-model-cache`; for ID-only work use
+  `scripts/apply_player_identity.py apply --require-model-cache` or the frozen
+  roster experiment. Never rerun compatible YOLO/OSNet/SAM inference merely to
+  change tracking, geometry, smoothing, seeds, roster or decoding logic.
+- New source/model inputs are captured automatically by the main workflow in
+  `data/inference_cache`; only missing stages run. If a hypothesis genuinely
+  needs missing model outputs, identify that stage before a capture. Preserve
+  existing caches and never fabricate raw detections from derived annotations.
+- Default output is JSON + original-video viewer. Rendering is separate and
+  explicit (`--render-video`); do not render a full MP4 for each hypothesis.
+- See `docs/model_output_cache.md`. Cache provenance and human-label provenance
+  remain separate. Reconstructed ball data is never detector ground truth.
 - Inspect `git status` before edits. Preserve unrelated user changes.
 - Use `apply_patch` for edits.
 - Prefer `rg`/`rg --files` for search.
@@ -335,6 +359,61 @@ $py=(Get-Content -Raw '.graphify_python').Trim()
 - Incremental update may refuse when shrink guard sees large corpus mismatch. Do not use `--force` without explicit approval; preserve existing graph when update refuses.
 - After changing code, attempt `graphify update .`. Report refusal honestly; graph failure does not invalidate separately passing code tests.
 
+## Per-player contacts (2026-10-30)
+
+- `src/tracking/player_contacts.py` derives `player_contacts_v1` from final
+  saved events, ball, poses and stable roster IDs. Proximity proposals are
+  unverified; both sides and unidentified poses compete. No court projection
+  determines the contact side; no missing/off-camera gap is bridged.
+- Production export computes this report after identity. For an existing
+  result, `scripts/apply_player_contacts.py --annotations ... --output <fresh>`
+  writes paired JSON only; no video read, neural inference or MP4 render.
+- Viewer **Player contacts** selects all roster IDs (including substitutes),
+  highlights the selected skeleton and shows counts plus click-to-seek events.
+  Reception, dig/pass/set, attack and block remain separately counted;
+  original raw contact types are preserved. Unknowns are excluded from totals.
+- Attribution corrections append to `<stem>_player_contact_reviews.jsonl`,
+  bound to SHA256 of BOTH analysis files. They never rewrite source JSON,
+  human gold, event types, identities or team analytics. Changed sources reject
+  old reviews. Human attribution does not verify a model's contact/type.
+- JIZ3 demo: `results/JIZ3exHe3hA_player_contacts_20261030_v1`, based on frozen
+  `JIZ3exHe3hA_identity_roster_20261030_v4_regret010`. P7 is a substitute;
+  initial proposals: 19 assigned, 29 other-side, 55 unresolved, 103 total.
+  These are coverage counts, not attribution accuracy or all true contacts.
+- See `docs/player_contacts.md`; tests `tests/test_player_contacts.py` and
+  `tests/test_player_contacts_ui.cjs`.
+
+## Offline pose completion pilot (2026-10-30)
+
+- `src/tracking/pose_completion.py` produces `temporal_pose_completion_v1`
+  overlays from saved same-roster-ID observations before and after a short
+  occlusion. No neural inference, raw YOLO cache fabrication or training.
+- `scripts/complete_player_poses.py --annotations ... --output <fresh>`
+  adds separate `frames[].pose_estimates` and top-level `pose_completion`.
+  It never changes observed `poses`, IDs, ball, features, events or analytics.
+- Body/leg gaps are bounded to 0.30 s, elbow/wrist gaps to 0.15 s; endpoints
+  need adjacent reliable support. Require overlap evidence, plausible motion,
+  in-frame geometry and the six-person cap. Existing unidentified/rejected
+  poses block duplicate reconstruction; raw track IDs never override ReID.
+- Derived keypoints are `[x,y]` or null with per-joint source-frame evidence;
+  no detector confidence, raw tracker ID or human verification is invented.
+  Viewer shows cyan dashed estimates with an independent **Estimated joints**
+  toggle, current-frame guard and existing roster selection.
+- Estimates do not feed contact attribution, FSM, feature refresh or detector
+  training. Future frames are explicit; this is offline reconstruction, not
+  new image-based detection or accurate recovery of a hidden pass swing.
+- JIZ3 artifact `results/JIZ3exHe3hA_pose_completion_20261030_v1` retains
+  frozen roster-v4-regret010 inputs: 88 missing and 275 partial player-frames,
+  1201 estimated joint-frames. These are coverage counts, not accuracy.
+- `scripts/evaluation/evaluate_pose_completion.py` masks saved model poses
+  in overlap intervals and compares bidirectional estimates, last-pose hold
+  and forward velocity on matched accepted joints. Proxy reference is YOLO,
+  not human keypoint gold. Report rejected-joint coverage, including the
+  out-of-bound 9-frame negative control at 29.97 FPS.
+- See `docs/pose_completion.md`; tests `test_pose_completion.py` and
+  `test_pose_completion_ui.cjs`. Never enable estimated contact evidence merely
+  because the skeleton looks continuous.
+
 ## Repository map
 
 ```text
@@ -357,3 +436,364 @@ tests/
 ```
 
 Read `README.md` for user-facing setup and examples.
+
+## Experimental people masks
+
+- `scripts/evaluation/sam3_people_masks.py` runs offline SAM3 image segmentation
+  in `.sam3_env` against saved final annotations; refuses existing output paths.
+- `src/detection/person_masks.py` owns RLE, one-to-one pose matching, causal
+  adjacent-frame IoU and `person_mask_features_v1` (8 values + 8 validity bits).
+- `scripts/evaluation/compare_sam_yolo_samples.py` independently reruns raw
+  YOLO-pose on five frames at 640/1280 for diagnosis, not source annotation edits.
+- Unmatched court masks are review candidates, not proven YOLO misses or new
+  player identities. Saved poses are already court-filtered. No keypoints/teams
+  are fabricated; no ball, FSM, authoritative dataset or checkpoint is rewritten.
+- Temporal matching is not native SAM3 video propagation or occlusion recovery.
+- See `docs/sam_people_masks.md`; test `tests/test_person_masks.py`.
+
+Player-recall correction: CLI/viewer default pose input is 2560 (CLI override
+`--pose-imgsz`). `GameAnalyzer._validated_net_floor` uses the existing post-spacing
+plausibility gate; an invalid detected divider falls back to the homography
+world-y=0 line before shared runtime calibration is scaled/consumed. Its method
+is `calibrated_court_midline_fallback`, not measured/SAM ground truth. Source
+calibration remains unchanged; plausible detected floor geometry keeps priority.
+Regression tests in `tests/test_player_pose.py` cover both teams surviving the
+six-player cap, slope/scaling and preservation of valid geometry.
+
+Optional `--person-masks <masks.jsonl>` enables `SamGuidedPoseRecovery` from
+`src/detection/sam_pose_recovery.py`: same-video validated SAM proposals guide
+independent YOLO crop inference, never primary ByteTrack callbacks/state.
+Recovered keypoints come only from YOLO; duplicates and weak torso evidence are
+rejected before the normal court gate. Export `source=sam_guided_yolo_pose`,
+`mask_instance_id` and negative mask-track IDs; these are a separate association
+namespace, not identity continuity with positive ByteTrack IDs. Record proposal
+and accepted person-frame counts in annotation `player_detection` provenance.
+SAM feature sidecars tied to old annotations must not silently be reused as
+refreshed features for new recovered poses. Tests: `test_sam_pose_recovery.py`.
+
+
+## Archived research (2026-10-30)
+
+Code for finished, unpromoted experiments was removed from the working tree and
+kept on branch `archive/research-snapshot-2026-10-30` (not for merging). Restore a
+file with `git checkout archive/research-snapshot-2026-10-30 -- <path>`.
+
+- Offline clip-classifier experiments: team/pose features
+  (`resolution_normalized_team_pose_offline_v1`), contact-candidate pooling and
+  the trajectory-change block (`contact_trajectory_before_after_v1`). Best
+  result +0.28 pp macro F1, within seed noise; candidate pooling regressed.
+  `docs/offline_event_training.md` on that branch holds commands and reports.
+  Their checkpoints need `short_window_centered`/`contact_center_pool` model
+  flags that exist only on that branch; never load them from production.
+- STES / continuous RGB event spotting (`third_party/vnl_stes`, author STES,
+  frozen MobileNet + BiGRU): event macro F1 0 and 0.08-0.26. Not usable.
+- In-progress contact-attribution methods (`src/tracking/contact_attribution.py`):
+  geometry and temporal variants reach ~65-66% team-choice accuracy on human
+  labels; a learned classifier was proposed but not started.
+
+Results directories under `results/` are unchanged.
+
+## Dense contact spotting and constrained decoding (2026-10-27)
+
+`scripts/evaluation/run_dense_contact_spotting.py` is the first step of the plan
+in `docs/event_detection_research_2026-10.md`. It trains a dense nine-class
+phase/contact spotter over existing per-frame trajectory features and decodes it
+with `action_recognition/rally_spotting/constrained_decode.py`, whose transition,
+start/end and duration constraints are counted from the training fold only.
+Targets come from `action_recognition/rally_spotting/dense_contacts.py`
+(`dense_phase_contact_targets_v1`): human phases from the exported
+`dense_targets.npz`, verified contact frames from `data/contact_spatial_gold_v1`.
+
+Rules specific to this work:
+
+- Contact frames come from the audited review, not the original annotation
+  frame; they differ for 155 of 410 events. Never silently fall back.
+- Uncertain timing, uncovered non-core touches and ambiguous raw types are
+  masked, never trained as background. `wrong_event` is excluded without masking.
+- Constraints must be estimated on the **unguarded** target copy; the guard ring
+  separates contacts from phases and would forbid every contact.
+- The FSM baseline in `results/gold_v1_ball_reconstruction_conservative` ran
+  without poses (`pose_f` all zero, `p` empty) and with `net_y = 1080.0`. Its
+  0.034 core macro F1 is a floor, never the shipped FSM's quality.
+- Fair FSM baseline, measured 2026-10-28 on the pose-enabled rerun
+  `results/gold_pose_fsm_20261028_v1`: **0.1561** core macro F1 at +/-5 frames
+  (per fold 0.1912 / 0.1529 / 0.1241), recall 0.26-0.29 at precision 0.15-0.20.
+  Quote this number for the FSM, not 0.034. It emits more events than there are
+  contacts and still misses 70%; `serve` F1 is 0.00-0.03.
+- A pose-enabled rerun also changes the ball trajectory (contact-preserving
+  smoothing, median 1.2 px). Never attribute a gain to poses by comparing two
+  different analyses; use the matched control `--zero-pose-channels`, which
+  blanks the eight pose channels on the same analyses.
+- Measured pose effect on the dense spotter: +0.012 core / +0.037 raw macro F1,
+  concentrated almost entirely in `block` (raw F1 ~0.1 -> ~0.4). The peak-picking
+  control's improvement came from the trajectory, not from poses.
+- The counted grammar's margin shrinks as the per-frame model gets more precise
+  (+0.068 on frozen features, +0.002 on the matched control, +0.037 with poses)
+  and it lost the j3 fold of the control. Do not restate it as a uniform win.
+- Calibration for these videos comes from `configs/court_setups.json:setup_1` via
+  `scripts/evaluation/build_setup_calibration.py`. The root
+  `court_calibration.json` was measured on another camera and must not be used
+  for the 4K gold videos. The setup's four corners are the two end lines of the
+  full-court world frame (x in [-4.5, 4.5], y in [-9, 9], y = 0 under the net),
+  not a half court.
+- Detection/typing split measured 2026-10-28 by
+  `scripts/evaluation/score_contact_detection.py` (rescoring only, no training):
+  detection F1 0.8605 type-agnostic (0.8978 excluding `non_game`), typing on
+  located contacts 0.9208 four-class accuracy / 0.9157 macro F1. The halves
+  multiply back to the 0.7897 end-to-end score. Typing is already at
+  clip-classifier level, so do not propose a two-stage detector plus clip
+  classifier; the error is in detection. Detection recall is 0.92-0.96, so the
+  cost is false positives, not misses. See `docs/contact_detection_vs_typing.md`.
+- j3 is not a weak fold. 36 of its 60 false positives are in the warm-up before
+  its first human contact at frame 5012, which the human labelled `non_game`.
+  j3 carries 4958 `non_game` frames against 904 and 613 for the others, so its
+  training fold contains almost no warm-up. Excluding `non_game`, j3 detection
+  goes 0.7612 -> 0.8696. Do not quote j3 as evidence of weak contact detection.
+- Same split on the FSM: detection F1 0.4008 (recall ~0.5, precision ~0.33) and
+  typing accuracy 0.4889 on what it locates, `serve` typing F1 0.00-0.12. Both
+  halves fail independently; threshold tuning cannot fix it.
+- Production path (2026-10-28): `scripts/models/train_contact_spotter.py`
+  final-fits on all three gold videos and writes a `contact_spotter_v1`
+  checkpoint carrying members, normalisation, **decode constraints** and
+  provenance; `action_recognition/rally_spotting/contact_spotter.py` loads it;
+  `analyze_video.py --contact-spotter <path>` runs it. Library dataset
+  assembly lives in `action_recognition/rally_spotting/spotter_dataset.py`.
+  See `docs/production_contact_spotter.md`.
+- The constraints must ship inside the checkpoint. At inference there is no
+  labelled fold to count them from, so a checkpoint without them cannot be
+  decoded at all.
+- A final-fit checkpoint has **no** held-out score. Quote the leave-one-video-out
+  experiment for quality, never a number measured on its own training data.
+  There is also nothing to select an epoch on: best epoch ranged 3-15 across
+  folds and seeds, so the trainer uses a fixed budget plus a seed ensemble and
+  records that as an engineering decision.
+- The spotter replaces `all_events`/`ev`, and (2026-10-30) `rallies`,
+  `service_attempts` and `rally_lifecycle` via
+  `action_recognition/rally_spotting/rally_segmentation.py`
+  (`spotter_rallies_v1`). A rally opens on its serve; a missed serve is
+  recovered only from the spotter's own `serve` probability (peak >= 0.15,
+  0.3-3.5 s before the first contact) and stays marked `inferred`; a serve no
+  contact follows is `serve_not_played`, never a rally, and is not split into
+  ace/fault. Contacts without serve evidence join no rally. FSM output is in
+  `all_events_fsm`/`ev_fsm`/`rallies_fsm`/`service_attempts_fsm`/
+  `rally_lifecycle_fsm`; `match_analytics` and `attack_heatmap` stay
+  FSM-derived. JIZ3 check: 22 rallies all on a serve (8 inferred, visually
+  plausible), not a labelled score. `scripts/apply_spotter_rallies.py`
+  rebuilds a saved result into a fresh directory. Viewer uploads pass
+  `viewer.CONTACT_SPOTTER_PATH` (the shipped checkpoint) when it exists and
+  fall back to FSM events/rallies otherwise. Rally clips show the rally's first
+  frame from `/api/frame/<job_id>/<frame>`, decoded from the original video and
+  cached in memory only; nothing is written to the result directory.
+- Do not build a phase gate for warm-up. Measured: the decoder labels warm-up
+  `rally_live`/`serve_flight`, a surrounding-phase gate catches 1 of 36 and the
+  phase probability margin carries no signal (the contact class takes the mass
+  at a contact frame). Use `--match-config`, or train on more `non_game`.
+- `scripts/evaluation/overlay_calibration_check.py` draws a calibration on a
+  frame. `setup_1` was confirmed visually to fit `xZbD8fx3D4k_1_4k`, which is
+  the same fixed camera as the gold videos and is not in any training set.
+- Calibrations from `scripts/interactive_court_calibration.py` are in a
+  DIFFERENT corner order than `GameAnalyzer._load_calibration` expects: the
+  tool starts at the line nearest the camera and names it `back_line_points`,
+  the loader reads that as the court bottom and expects the far line first. The
+  homography is valid either way, so an overlay looks right while
+  `court_bottom` lands on the far line and the world y axis is reversed. Always
+  run `scripts/normalize_calibration.py` on a freshly clicked calibration, and
+  check `world y=-9 < y=0 < y=+9` in image rows. The tool also accepts a still
+  image as `-i`, which beats a video whose first frame has players on the lines.
+- Contact review for unannotated video:
+  `action_recognition/annotator/contact_review_annotator.py` turns a batch of
+  `--contact-spotter` analyses into a review queue. Records start
+  `label_source: "model"`, `verified: false`; a keystroke makes them
+  `"human"`/true while `predicted_type` keeps the model's answer beside
+  `review.type`. `unsure` stays unverified. Human-added contacts carry
+  `origin: "human"` and no prediction. The queue fingerprints both the
+  annotations and the stats file and refuses a changed analysis. Nothing is
+  promoted into any dataset; that step does not exist. See
+  `docs/contact_review_workflow.md`.
+- Pose effect settled deterministically 2026-10-29, paired over seeds 42/43/44:
+  live 0.7978 mean vs blanked 0.7839, all three pairs favouring poses, but the
+  +0.0139 mean difference is smaller than the 0.0176 spread between seeds and
+  the 3-seed ensembles reverse the order (blanked 0.8064 vs live 0.8014). Treat
+  the four-class pose effect as zero, not as a small gain.
+- Team attribution measured 2026-10-29 against 406 human labels
+  (`data/contact_team_gold_v1/labels.json`, collected with
+  `action_recognition/annotator/team_attribution_annotator.py`): nearest player
+  0.685, its foot side 0.715, ball-vs-divider 0.515 and degenerate,
+  net-crossing chain 0.603. Calibration was ruled out (offset sweep peaks at
+  0 px on all three videos) and so was a side-switch mix-up (accuracy flat at
+  ~70% throughout). The cause is an airborne ball under 2D court geometry, plus
+  net congestion: attack is the worst type at 0.558 and restricting to a player
+  within 60 px makes it worse. Do not propose deriving the side from court
+  geometry again. The spotter writes `team: null`; per-team statistics are not
+  available. Untried: a learned binary classifier on those labels, and the
+  ball's pixel size as a depth cue (annotations store only its centre). See
+  `docs/team_attribution.md`.
+- Reviewed-queue expansion measured 2026-10-29
+  (`scripts/evaluation/run_reviewed_expansion.py`,
+  `results/reviewed_expansion_20261029_v1`): adding the four reviewed
+  new-camera videos as sparse contact-only targets
+  (`action_recognition/rally_spotting/reviewed_contacts.py`, trainer flag
+  `--reviewed`) lifts new-camera recall 0.851 -> 0.946 and serve recall
+  0.708 -> 0.938, but gold detection precision drops 0.828 -> 0.806 (limit
+  0.02), and the model emits 917 events against 414 human contacts on held-out
+  new videos. **Not promoted**; `spotter_20261028_v1` stays. The cause is that
+  the targets have no background. The next step is to review the plus models'
+  extra events for true negatives, not to relax the rule. `new_base`
+  reproduces the shipped checkpoint exactly. See
+  `docs/reviewed_queue_training.md`.
+- Runs: `results/dense_contact_spotting_20261027_v1` (frozen, ball-only),
+  `results/dense_contact_spotting_20261028_v2` (poses live) and
+  `..._v2_nopose` (matched control). Model-selection estimates only; the
+  experimental checkpoints are not production-loadable and nothing is promoted.
+  See `docs/dense_contact_spotting.md`.
+
+## Persistent player identity pilot (2026-10-29)
+
+`scripts/evaluation/run_player_identity_pilot.py` prepares immutable caches from
+saved poses and compares seed raw IDs, motion, and motion + HSV body appearance.
+Core: `src/tracking/player_identity.py`; review:
+`python -m action_recognition.annotator.player_identity_annotator --project <dir>`
+(default port 5063). See `docs/player_identity_pilot.md`.
+
+Predicted `player_id` is separate from source `poses[].id`. All three methods
+use identical saved detections. Automatic initialisation is unverified;
+human seed and independent test checks remain separate. Never consume checks
+as association hints or report coverage as accuracy / sparse checks as IDF1.
+Pilot assumes six fixed roster members on one court side; substitutions,
+side changes, long re-entry and event-to-player attribution remain unsolved.
+Write fresh result directories; never rewrite source annotations/results or
+promote to production automatically. Test: `tests/test_player_identity.py`.
+
+Measured on 100 human checks / 19 frames (4.70–23.52 s) of the hy2S pilot:
+raw IDs 46 correct / 7 wrong / 47 unknown; motion 60/6/34; motion + HSV
+64/16/20. HSV adds four correct but ten wrong IDs; do not call its coverage a
+quality gain. P5 is 0/19 correct, often confused with P3. Pilot permanently
+expires identities after a three-second unmatched gap and cannot recover P5
+after its last assignment at 3.50 s. See docs/player_identity_pilot.md for
+limits and next experiments; no learned ReID/OCR has been validated here.
+
+Follow-up: `scripts/evaluation/run_player_reid_experiment.py` +
+`src/tracking/player_reid.py` use pinned, frozen OSNet-x1.0/MSMT17 weights and
+immutable seed galleries (frames 57–87), crossed with explicit lost-ID recovery.
+On the same 100 development checks: frozen HSV local 74/7/19, HSV recovery
+79/5/16, OSNet local and recovery both **94/1/5** (correct/wrong/unknown).
+No real-clip long-loss recovery activated with OSNet; do not attribute its gain
+to recovery. Separate simulated four-second blackout: post-gap 85 checks,
+OSNet local 0/0/85 versus recovery 76/1/8. Synthetic stress is not real-occlusion
+ground truth. No tuning/training on checks; no production promotion; no OCR.
+Artifacts: `results/player_identity_reid_hy2S_20261029_v1`; completed embeddings
+in `cache_cuda/` (the earlier `cache/` is an interrupted CPU attempt).
+Review accepts optional `--extra-comparison <JSON>` with matching observations
+and seed; checks only rescore frozen predictions. See
+`docs/player_reid_experiment.md`; tests `test_player_reid.py` and
+`test_player_identity.py`. Full-match generalisation remains unverified.
+
+## Main-workflow player identity (user-requested adoption)
+
+OSNet is now default-on in `GameAnalyzer`, CLI and viewer uploads for an initial
+six-person roster on side b. `src/models/player_reid_encoder.py` owns pinned
+assets/loading and shared preprocessing; `src/tracking/player_identity_workflow.py`
+owns the additive pass over final poses. `poses[].id` remains raw; `player_id`
+and `identity` are separate. Unknown is null / P?, never a recycled person ID.
+Both JSON outputs include identity provenance/coverage. Video/frame rendering
+waits for final IDs. Ball/FSM/event features and contacts are unchanged.
+
+Install once: `python scripts/models/install_player_reid.py` (or `--from-dir`
+an existing verified bundle). Logical model `player_reid` resolves weights;
+architecture/license remain in models/player_reid/osnet_msmt17_v1. No runtime
+downloads. Missing default assets yield explicit unavailable status; explicit
+broken assets/seed fail. `--no-player-identity` disables the pass.
+
+`scripts/apply_player_identity.py export-seed` exports verified initial labels
+only, bound to video SHA256 and observed boxes; reruns match boxes by IoU, not
+old indices/track IDs. `apply` writes a fresh paired result from saved poses
+without detector/FSM/event reruns, refusing existing output directories.
+Dense validation with human seed on the existing 100 development checks gives
+96 correct / 0 wrong / 4 unknown for the original EMA v1, not a held-out score.
+Automatic substitution discovery, side-switch identity and contact-to-player statistics are not claimed. See
+`docs/player_identity_workflow.md`; test `tests/test_player_identity_workflow.py`.
+
+Identity motion follow-up (2026-10-30): production method
+`osnet_frozen_gallery_kalman_v2` uses `src/tracking/player_motion.py`, a
+constant-velocity Kalman filter with person-height-scaled process/measurement
+noise, covariance gating and signed seconds for the reverse offline pass.
+Process noise is continuous white acceleration integrated over elapsed time;
+prediction covariance must not depend on the frequency of prediction calls.
+Overlap >=0.6 does not update motion and requires distinct appearance.
+Missing frames never create poses. Frozen galleries, one-to-one assignment,
+three-observation long-loss confirmation and unknown IDs remain mandatory.
+`ReIDParameters` defaults to EMA so old experiment plans reproduce unchanged;
+the production workflow explicitly selects Kalman. Matched sparse-cache check:
+EMA 94/1/5 vs Kalman 94/0/6 on the same 100 development labels. This is error
+rejection, not independent accuracy proof or increased correct coverage.
+Comparison: `scripts/evaluation/compare_player_motion.py`; artifacts
+`results/player_identity_kalman_20261030_v1`. No model training/promotion.
+Viewer video filters must include contacts with unknown team when both A/B are
+selected, displaying `—`. Selecting one team excludes unattributed contacts.
+Never infer a team merely to populate the event list.
+
+Confirmed substitution follow-up (2026-10-30): production method
+`osnet_frozen_gallery_kalman_roster_v3` adds explicit new-person anchors through
+`player_identity_roster_v2` files accepted by `--player-identity-seed`.
+`scripts/apply_player_identity.py add-player` creates the file from a saved
+detector box and the user's explicit new-person confirmation. Preserve separate
+provenance: the person being new is human-confirmed; the appearance anchor and
+first-availability frame are derived, not verified human timing. Initial
+automatic IDs stay unverified. Known roster size can exceed six while the
+court-side detector cap remains six. Returning original players keep old IDs;
+never recycle a departed player's ID for a substitute.
+
+`src/tracking/player_identity_consistency.py` only rejects locally bracketed
+raw-track contradictions or borrowing from a stronger visible-but-ambiguous
+owner. Raw track IDs are weak evidence, not person truth; never apply global
+majority labels to entire tracks. The guard cannot invent a corrected ID or
+update an appearance gallery. Same 100 development checks: Kalman with and
+without the guard both 94 correct / 0 wrong / 6 unknown.
+
+Target video JIZ3exHe3hA: native 3840x2160, 17592 decoded frames. The user
+confirmed a substitution: gray-shirt player receives P7, original black-shirt
+P1 retains her ID on return. `roster_with_P7_v1.json` anchors P7 at frame 4397;
+availability from 3759 is a derived track-entry boundary, not human gold.
+Full v2 source is preserved. Reuse frozen detections/OSNet features with
+`scripts/evaluation/cache_player_reid_features.py` and
+`run_player_roster_experiment.py`; paired comparisons vary only confirmed roster
+expansion and rejection. No target-video identity accuracy exists without
+independent checks. `scripts/render_saved_analysis.py` reuses the production
+renderer without model inference and refuses existing video paths.
+Tests: `tests/test_player_identity_roster.py` plus existing identity groups.
+
+Appearance contradiction follow-up: current default is
+`osnet_frozen_gallery_kalman_roster_v4`. Local association rejects candidates
+whose cosine distance exceeds the best active frozen gallery by more than
+0.04 (`local_appearance_regret_max`). An implausible motion match to the best
+person must yield unknown, not lend a weaker person's ID. Do not change
+immutable galleries or manufacture the best person's position. This prevents
+P5 moving onto a black-shirt player at frame 5500 of JIZ3exHe3hA and restores
+P5 on the visible white-shirt player in that diagnostic frame. The visual
+diagnostic is not independent human gold. Old sparse 100-check result remains
+94/0/6. Development thresholds 0.04/0.06/0.10 give 94/0/6, 90/0/10 and 94/0/6;
+feedback through motion means this is not a monotonic coverage sweep. Selected
+0.04 is an engineering choice favouring rejection, not a held-out optimum.
+Legacy `ReIDParameters` defaults retain no veto; production selects it explicitly.
+
+## Model-output capture and replay (2026-10-30)
+
+`src/models/inference_cache.py` is the shared persistent cache. Video bytes,
+weights, inference/preprocessing settings and backend/runtime signatures bind
+outputs. Main CLI, frame-directory mode and viewer jobs use it automatically.
+Raw ball proposals and YOLO poses are saved before downstream selection/court
+filtering. ByteTrack is replayed on CPU from raw cached poses, with complete
+derived sequences sealed separately; interrupted raw captures can resume.
+OSNet features key by frame and actual pixel crop, never by roster/pose index.
+Compatible detection replay and cached ReID do not decode source video.
+Optional SAM recovery/export may need pixels. Raw event logits and enabled
+contact probabilities are cached before gates/decoding.
+
+Models load lazily on misses for YOLO/OSNet. `--require-model-cache` forbids
+inference and fails on missing required outputs. New weights invalidate only
+the affected stage; post-processing changes must not invalidate raw outputs.
+`scripts/model_cache.py inspect` reads coverage; `import-reid` validates and
+reuses the existing full-video frozen OSNet cache without inference. The old
+JIZ3exHe3hA annotations cannot recreate discarded raw YOLO proposals, but their
+93155 frozen embeddings have been imported and a full cached ID replay took
+about 47 s with OSNet unloaded. See `docs/model_output_cache.md`.

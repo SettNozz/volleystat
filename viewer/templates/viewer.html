@@ -76,7 +76,8 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 .clips-title { font-size: 13px; font-weight: 700; color: var(--muted2); margin-bottom: 8px; }
 .clips-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; }
 .clip-card { width: 150px; flex-shrink: 0; cursor: pointer; }
-.clip-thumb { height: 64px; border-radius: 8px; margin-bottom: 8px; background: var(--court); position: relative; overflow: hidden; border: 1px solid var(--border); }
+.clip-thumb { height: 84px; border-radius: 8px; margin-bottom: 8px; background: var(--court); position: relative; overflow: hidden; border: 1px solid var(--border); }
+.clip-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .clip-thumb .bar { position: absolute; bottom: 0; left: 0; height: 4px; background: var(--primary); }
 .clip-name { font-size: 12.5px; font-weight: 700; }
 .clip-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
@@ -103,6 +104,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 .event-type { flex: 1; font-weight: 600; }
 .event-team { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 4px; }
 .team-a { background: var(--primary-soft); color: var(--primary); }
+.team-none { background: oklch(60% 0 0 / 0.14); color: var(--muted); }
 .team-b { background: oklch(93% 0.03 25); color: var(--red); }
 .rally-sep { display: flex; align-items: center; gap: 8px; padding: 8px 4px 3px; cursor: pointer; }
 .rally-sep-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 700; }
@@ -172,7 +174,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
     <div class="nav-item" data-page="charts" onclick="showPage('charts')">Visual Stats</div>
     <div class="nav-item" data-page="table" onclick="showPage('table')">Match Stats</div>
   </div>
-  <div class="top-meta">{{ job.video_stem }} · {{ stats.viewer_lifecycle.playable_rallies }} {% if stats.viewer_lifecycle.available %}playable {% endif %}rallies · {{ (stats.ball_detection_rate * 100) | round(0) | int }}% ball</div>
+  <div class="top-meta">{{ job.video_stem }} · {{ stats.viewer_lifecycle.playable_rallies }} {% if stats.viewer_lifecycle.available %}playable {% endif %}rallies · {{ (stats.ball_detection_rate * 100) | round(0) | int }}% ball{% if stats.get('player_identity', {}).get('status') == 'completed' %} · player IDs {{ (stats.player_identity.coverage * 100)|round(0)|int }}% coverage{% elif stats.get('player_identity', {}).get('enabled') %} · player IDs unavailable{% endif %}</div>
   <a class="library-btn" href="/library">Library</a>
   <a class="upload-btn" href="/">Upload</a>
 </div>
@@ -215,6 +217,14 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
   </div>
 
   <div class="side-col">
+    <div class="card side-card" id="playerContactsPanel">
+      <div class="card-title">Player contacts</div>
+      <div class="chip-row" id="playerChips" aria-label="Roster player"></div>
+      <p id="playerContactSummary" style="font-size:12px;line-height:1.7"></p>
+      <p id="playerContactStatus" role="status" style="font-size:11px;color:var(--muted)">Loading player contacts…</p>
+      <div class="event-list" id="playerContactList" style="max-height:300px"></div>
+    </div>
+
     <div class="card side-card">
       <div class="card-title">Event type</div>
       <div class="chip-row" id="typeChips"></div>
@@ -228,12 +238,14 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
         <label class="toggle"><input type="checkbox" id="togTrail" checked onchange="redraw()"> Trail</label>
         <label class="toggle"><input type="checkbox" id="togNet" checked onchange="redraw()"> Net</label>
         <label class="toggle"><input type="checkbox" id="togPlayers" checked onchange="redraw()"> Players</label>
+        <label class="toggle"><input type="checkbox" id="togPoseEstimates" checked disabled onchange="redraw()"> Estimated joints</label>
         <label class="toggle"><input type="checkbox" id="togState" checked onchange="redraw()"> FSM State</label>
         <label class="toggle"><input type="checkbox" id="togModel" checked onchange="redraw()"> Model</label>
         <label class="toggle"><input type="checkbox" id="togEvents" checked onchange="redraw()"> Events</label>
         <label class="toggle"><input type="checkbox" id="togAttackHeatmap" onchange="redraw()"> Attack zones</label>
         <label class="toggle"><input type="checkbox" id="togCourt" checked onchange="redraw()"> Court</label>
       </div>
+      <div id="poseEstimateStatus" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
       <div class="cal-row" style="margin-top:8px">ball path
         <select id="ballPathMode" class="ctrl" style="padding:3px 6px;max-width:160px" onchange="redraw()">
           <option value="active">Active output</option>
@@ -431,6 +443,13 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
   </div>
 </div>
 
+<style>
+.player-contact-row { display:grid; grid-template-columns:1fr auto; gap:5px; padding:8px 0; border-bottom:1px solid var(--border); }
+.player-contact-row small { grid-column:1 / -1; color:var(--muted); font-size:10px; }
+.player-contact-jump { text-align:left; white-space:normal; }
+</style>
+<script src="{{ url_for('static', filename='player_contacts.js') }}"></script>
+<script src="{{ url_for('static', filename='pose_completion.js') }}"></script>
 <script>
 const JOB_ID = "{{ job.job_id }}";
 const FPS = {{ stats.fps | default(30) }};
@@ -527,7 +546,12 @@ function initVideoFilters() {
 }
 
 function toggleSet(set, v) { set.has(v) ? set.delete(v) : set.add(v); }
-function evVisible(ev) { return filterState.types.has(ev.type) && filterState.teams.has(ev.team); }
+function evVisible(ev) {
+  const allTeams = filterState.teams.has('team_a') && filterState.teams.has('team_b');
+  const unattributed = ev.team !== 'team_a' && ev.team !== 'team_b';
+  return filterState.types.has(ev.type) &&
+    (filterState.teams.has(ev.team) || (allTeams && unattributed));
+}
 
 function applyEventFilters() {
   renderEventList();
@@ -555,8 +579,8 @@ function renderEventList() {
     el.onclick = () => seekAndPlay(ev.frame);
     el.innerHTML = `<div class="event-dot" style="background:${EV_COLORS[ev.type] || '#888'}"></div>` +
       `<span class="event-time">${ev.time.toFixed(2)}s</span>` +
-      `<span class="event-type">${ev.type.replace(/_/g, ' ')}</span>` +
-      `<span class="event-team ${ev.team === 'team_a' ? 'team-a' : 'team-b'}">${ev.team === 'team_a' ? 'A' : 'B'}</span>`;
+      `<span class="event-type">${ev.type.replace(/_/g, ' ')}${ev.inferred ? ' <span class="c-muted" title="Missed by the decode, recovered from the spotter serve probability">· inferred</span>' : ''}</span>` +
+      `<span class="event-team ${teamClass(ev.team)}">${teamLabel(ev.team)}</span>`;
     box.appendChild(el);
   });
 }
@@ -574,9 +598,11 @@ function renderRallyClips() {
     el.onclick = () => seekAndPlay(rallyStartFrame(r));
     const widthPct = Math.min(100, (r.duration_sec / 15) * 100);
     el.innerHTML =
-      `<div class="clip-thumb"><div class="bar" style="width:${widthPct}%"></div></div>` +
+      // The rally's first frame (its serve), decoded server-side on demand.
+      `<div class="clip-thumb"><img loading="lazy" alt="" src="/api/frame/${JOB_ID}/${rallyStartFrame(r)}" onerror="this.remove()">` +
+      `<div class="bar" style="width:${widthPct}%"></div></div>` +
       `<div class="clip-name">Rally ${i + 1} · ${r.duration_sec}s</div>` +
-      `<div class="clip-meta">A:${r.contacts_team_a} B:${r.contacts_team_b} · <span style="color:${outColor};font-weight:700">${outcome}</span></div>`;
+      `<div class="clip-meta">${rallyContactsLabel(r)} · <span style="color:${outColor};font-weight:700">${outcome.replace(/_/g, ' ')}</span></div>`;
     box.appendChild(el);
   });
 }
@@ -618,6 +644,18 @@ function ballPosNear(frame, tol = 8) {
   return null;
 }
 
+// The contact spotter emits no team, so ``ev.team`` can be null. Rendering
+// that as a side would invent information the pipeline never measured.
+function teamLabel(team) { return team === 'team_a' ? 'A' : (team === 'team_b' ? 'B' : '—'); }
+function teamClass(team) { return team === 'team_a' ? 'team-a' : (team === 'team_b' ? 'team-b' : 'team-none'); }
+// Spotter rallies carry no side split (``contacts_team_a`` is null), so they
+// show the contact count instead of an invented A/B division.
+function rallyContactsLabel(r) {
+  return Number.isFinite(r.contacts_team_a) && Number.isFinite(r.contacts_team_b)
+    ? `A:${r.contacts_team_a} B:${r.contacts_team_b}`
+    : `${(r.events || []).length} contacts`;
+}
+
 function rallyIndexOf(ev) {
   for (let i = 0; i < RALLIES.length; i++) {
     const r = RALLIES[i];
@@ -655,7 +693,8 @@ function renderCourtMap(panelId, evs, opts = {}) {
       const out = ri >= 0 && RALLIES[ri].serve_reception ? RALLIES[ri].serve_reception.outcome : null;
       color = out === 'success' ? GREEN : (out ? RED : INK);
     } else if (opts.colorByTeam) {
-      color = ev.team === 'team_a' ? 'oklch(58% 0.19 265)' : RED;
+      color = ev.team === 'team_a' ? 'oklch(58% 0.19 265)'
+            : (ev.team === 'team_b' ? RED : INK);
     }
     if (opts.approachLines) {
       const from = ballPosNear(ev.frame - 8);
@@ -682,7 +721,7 @@ function renderCourtMap(panelId, evs, opts = {}) {
     const el = document.createElement('div');
     el.className = 'court-dot';
     el.style.cssText = `left:${x}%;top:${y}%;background:${color};cursor:pointer`;
-    el.title = `${ev.type} · ${ev.team === 'team_a' ? 'A' : 'B'} @ ${ev.time.toFixed(1)}s`;
+    el.title = `${ev.type} · ${teamLabel(ev.team)} @ ${ev.time.toFixed(1)}s`;
     el.onclick = () => { showPage('video'); seekAndPlay(ev.frame); };
     panel.appendChild(el);
   }
@@ -871,12 +910,16 @@ function renderSRTable() {
     const rows = [
       ['Service attempts', LIFECYCLE.service_attempts, INK],
       ['Confirmed serves', LIFECYCLE.confirmed_serves, '#eab308'],
+      ['Inferred serves', LIFECYCLE.inferred_serves, '#eab308'],
       ['Playable rallies', LIFECYCLE.playable_rallies, GREEN],
+      ['Serves not played (out / net / untouched)', LIFECYCLE.serves_not_played, 'var(--muted)'],
       ['Aces / no reception', LIFECYCLE.aces_no_reception, '#facc15'],
       ['Reception failed', LIFECYCLE.reception_failed, RED],
       ['Serve faults', LIFECYCLE.serve_faults, 'var(--muted)'],
     ];
     for (const [label, value, color] of rows) {
+      // A counter the producer did not measure is absent, not zero.
+      if (value === null || value === undefined) continue;
       body.insertAdjacentHTML('beforeend',
         `<tr><td style="color:${color};font-weight:700">${label}</td>` +
         `<td class="num">${value}</td><td class="num">${(value / total * 100).toFixed(0)}%</td></tr>`);
@@ -979,17 +1022,17 @@ function renderTables() {
   RALLIES.forEach((r, i) => {
     if (!rallyRowVisible(r, i)) return;
     shown++;
-    sumA += r.contacts_team_a; sumB += r.contacts_team_b; sumEv += (r.events || []).length;
+    sumA += r.contacts_team_a || 0; sumB += r.contacts_team_b || 0; sumEv += (r.events || []).length;
     const sr = r.serve_reception || {};
-    const serveTeam = sr.serve ? (sr.serve.team === 'team_a' ? 'A' : 'B') : '—';
-    const recTeam = sr.reception ? (sr.reception.team === 'team_a' ? 'A' : 'B') : '—';
+    const serveTeam = sr.serve ? teamLabel(sr.serve.team) : '—';
+    const recTeam = sr.reception ? teamLabel(sr.reception.team) : '—';
     const outcome = sr.outcome || '—';
     const oColor = isSuccessfulOutcome(outcome) ? 'c-green' : (isFailedOutcome(outcome) ? 'c-red' : 'c-muted');
     const startFrame = rallyStartFrame(r);
     body.insertAdjacentHTML('beforeend',
       `<tr class="clickable" onclick="showPage('video');seekAndPlay(${startFrame})">` +
       `<td class="strong">${i + 1}</td><td>${formatTime(startFrame / FPS)}</td><td class="num">${r.duration_sec}s</td>` +
-      `<td class="num bl">${r.contacts_team_a}</td><td class="num">${r.contacts_team_b}</td>` +
+      `<td class="num bl">${r.contacts_team_a ?? '—'}</td><td class="num">${r.contacts_team_b ?? '—'}</td>` +
       `<td class="bl">${serveTeam}</td><td>${recTeam}</td><td class="${oColor}" style="font-weight:700">${outcome.replace(/_/g, ' ')}</td>` +
       `<td class="num bl">${(r.events || []).length}</td></tr>`);
   });
@@ -1013,7 +1056,8 @@ function renderTables() {
       `<tr class="clickable" onclick="showPage('video');seekAndPlay(${ev.frame})">` +
       `<td>${ri >= 0 ? ri + 1 : '—'}</td><td>${ev.time.toFixed(2)}s</td>` +
       `<td style="color:${EV_COLORS[ev.type] || '#888'};font-weight:700">${ev.type.replace(/_/g, ' ')}</td>` +
-      `<td>${ev.team === 'team_a' ? 'Team A' : 'Team B'}</td>` +
+      `<td>${ev.team === 'team_a' ? 'Team A'
+            : (ev.team === 'team_b' ? 'Team B' : '—')}</td>` +
       `<td class="c-muted">${(ev.rally_phase || '—').replace(/_/g, ' ')}</td>` +
       `<td class="c-muted">${(ev.game_state || '—').replace(/_/g, ' ')}</td></tr>`);
   });
@@ -1056,6 +1100,7 @@ fetch('/api/annotations/' + JOB_ID)
     annotations = {};
     for (const f of data.frames) annotations[f.f] = f;
     window._annData = data;
+    initPoseEstimates(data);
     courtEditor.originalCorners = Array.isArray(data.court_corners)
       ? JSON.parse(JSON.stringify(data.court_corners)) : null;
     const slider = document.getElementById('netYSlider');
@@ -2173,11 +2218,12 @@ function redraw() {
       [0, 2], [1, 3], [2, 4], [0, 5], [0, 6],
     ];
     for (const pose of (ann.poses || [])) {
+      const hasIdentity = Object.prototype.hasOwnProperty.call(pose, 'player_id');
+      // A roster identity must not follow the legacy last-annotation fallback.
+      if (hasIdentity && Number(ann.f) !== currentFrameIdx) continue;
       const keypoints = pose.kp || [];
       const isNearTeam = pose.team === 'b' || pose.team === 'team_b';
-      const color = isNearTeam ? 'rgba(255, 220, 0, 0.98)' : 'rgba(150, 170, 190, 0.58)';
-      const width = isNearTeam ? 3 : 1.5;
-      const radius = isNearTeam ? 3.5 : 2;
+      const { color, width, radius } = playerPoseStyle(pose);
 
       ctx.strokeStyle = color;
       ctx.lineWidth = width;
@@ -2197,21 +2243,25 @@ function redraw() {
         ctx.arc(px(point[0]), py(point[1]), radius, 0, Math.PI * 2);
         ctx.fill();
       }
-      if (isNearTeam && pose.id != null && keypoints.length) {
-        const head = keypoints[0] || keypoints.find(p => p && p[2] >= 0.2);
-        if (head && head[2] >= 0.2) {
+      if ((isNearTeam || hasIdentity) && (hasIdentity || pose.id != null)) {
+        const head = keypoints.find(p => p && p[2] >= 0.2);
+        const anchor = head || (pose.bb ? [pose.bb[0], pose.bb[1]] : null);
+        if (anchor) {
           ctx.font = `bold ${Math.max(10, Math.round(12 * sx))}px system-ui`;
           ctx.fillStyle = color;
-          ctx.fillText(`#${pose.id}`, px(head[0]) + 5, py(head[1]) - 5);
+          ctx.fillText(hasIdentity ? (pose.player_id || 'P?') : `track #${pose.id}`,
+                       px(anchor[0]) + 5, py(anchor[1]) - 5);
         }
       }
-      if (pose.team_prior && pose.bb) {
+      if (pose.team_prior && pose.bb && (!selectedPlayerId || pose.player_id === selectedPlayerId)) {
         ctx.font = `bold ${Math.max(9, Math.round(10 * sx))}px system-ui`;
         ctx.fillStyle = '#ff42e6';
         ctx.fillText('BACK/NET prior', px(pose.bb[0]), py(pose.bb[1]) - 6);
       }
     }
   }
+
+  if (showPlayers) drawPoseEstimates(ctx, ann, currentFrameIdx, px, py, sx);
 
   let stateY = 70;
   if (showState) {
@@ -2301,7 +2351,7 @@ function redraw() {
       const alpha = Math.pow(1 - dt / FADE_SEC, 1.5);
       const color = EV_COLORS[recentEv.type] || '#ffffff';
       const label = recentEv.type.replace(/_/g, ' ').toUpperCase();
-      const team  = recentEv.team === 'team_a' ? ' · A' : ' · B';
+      const team  = recentEv.team ? ` · ${teamLabel(recentEv.team)}` : '';
       const fs    = Math.round(28 * Math.max(sx, 0.6));
       ctx.font        = `bold ${fs}px system-ui`;
       ctx.shadowColor = '#000';

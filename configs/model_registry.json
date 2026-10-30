@@ -31,6 +31,13 @@
       "fallback": "models/pretrained/yolo11m-pose.pt",
       "note": "stock ultralytics weights; registered so a run records which ones"
     },
+    "player_reid": {
+      "registry_name": "volleystat_player_reid",
+      "alias": "production",
+      "artifact": "osnet_msmt17.pth",
+      "fallback": "models/player_reid/osnet_msmt17_v1/osnet_msmt17.pth",
+      "note": "Pinned frozen OSNet-x1.0/MSMT17. Install matching code/license bundle with scripts/models/install_player_reid.py; raw tracker IDs remain unchanged. Confirmed roster additions supported; no contact attribution."
+    },
     "net_sam": {
       "registry_name": "volleystat_net_sam",
       "alias": "production",
