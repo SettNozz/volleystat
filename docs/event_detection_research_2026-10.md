@@ -155,7 +155,8 @@ CAD keeps the structure and takes the numbers from the human annotations.
   `DATASETS = ["vnl_1.5", "vnl_2.0"]`, so a custom dataset needs a code entry,
   a `class.txt`, `train/val/test.json`, integer-named JPEG frame dirs and an
   undocumented `fps.txt`.
-  This repository already vendors that code at `third_party/vnl_stes` and the
+  That code was vendored at `third_party/vnl_stes` (now on branch
+  `archive/research-snapshot-2026-10-30`) and the
   local pilot (`results/vnl_stes_author_20261027_v1`) reaches mAP@0/1/2/4 of only
   ~0.030 with ImageNet init — consistent with "no VNL pretraining available".
 - **MultiSports** includes volleyball with spatio-temporal action labels
@@ -337,7 +338,8 @@ currently discarding.
 **Pose coverage is the real cost.** 18,187 of 61,822 frames (29.4%) have
 per-frame skeletons: Khe 1,171, j0 8,698, j3 8,318. A continuous dense graph
 model needs all frames, so ~43.6k more frames of YOLO11m-pose at 2560. The
-worker exists (`scripts/evaluation/refresh_team_pose_dataset.py`, segment-based
+worker exists on branch `archive/research-snapshot-2026-10-30`
+(`scripts/evaluation/refresh_team_pose_dataset.py`, segment-based
 with `--resume`), the geometry is frozen in `geometry.json`, and the output
 format (`poses/*_sNNN.jsonl`, one record per frame with `kp`, `bb`, `team`, `id`)
 is already what a graph loader wants. This is a long single GPU job and the only

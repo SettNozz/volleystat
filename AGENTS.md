@@ -1,6 +1,6 @@
 # Volleystat - Agent Context
 
-Updated: 2026-08-10. Code, CLI `--help`, tests, and config files override prose when they disagree.
+Updated: 2026-10-27. Code, CLI `--help`, tests, and config files override prose when they disagree.
 
 ## Mission and priorities
 
@@ -18,12 +18,14 @@ Primary outputs:
 
 ## Non-negotiable data rules
 
-- Authoritative event dataset: `data/event_clips_4k_gold_v1`.
-- Current snapshot: 430 human-labelled clips from three complete 4K videos:
+- Authoritative human labels are the completed sources in `data/full_video_gold`.
+- Verified active checkpoint training dataset: `data/event_clips_three_full_gold_causal_120f_v1` (MLflow manifest/features parameters).
+- Current active snapshot: 414 human-labelled clips, 410 core four-class examples, from three complete 4K videos:
   - `j0gRhgFCgIs_4_4k`
   - `j3BO9GgUFBI_3_4k`
   - `Khe4P8QcJkg_5_4k`
-- `Khe4P8QcJkg_5_4k` is validation source in `split_policy.json`.
+- `Khe4P8QcJkg_5_4k` is the primary validation source. The preserved `data/event_clips_4k_gold_v1/split_policy.json` specifies the same whole-source split.
+- The older 430-clip `data/event_clips_4k_gold_v1` remains unchanged; do not confuse it with the actual current checkpoint training source.
 - Split by complete `source_video`. Never random-split adjacent clips from one video across train/validation/test.
 - Human labels are trusted. FSM/model labels are weak labels and must retain provenance.
 - Reconstructed occluded-ball coordinates are derived data, never detector ground truth. Do not add them as YOLO ball boxes or train detector from them.
@@ -169,14 +171,14 @@ serve | reception | pass | attack
 
 Raw `other`, `free_ball`, `dig`, `block`, and richer contact semantics remain in annotations. Collapse rules live in `action_recognition/event_clips/config.py`.
 
-Authoritative dataset paths:
+Verified active model dataset paths:
 
 ```text
-data/event_clips_4k_gold_v1/manifest.json
-data/event_clips_4k_gold_v1/features/
-data/event_clips_4k_gold_v1/features_baseline_raw_v1/
-data/event_clips_4k_gold_v1/features_reconstructed_conservative_v1/
+data/event_clips_three_full_gold_causal_120f_v1/manifest.json
+data/event_clips_three_full_gold_causal_120f_v1/features/
 ```
+
+Older 430-clip gold data remains at `data/event_clips_4k_gold_v1`. Full-video human annotation sources retain authority over derived model/FSM fields.
 
 Feature schema: `resolution_normalized_v2`. Event features contain 10 trajectory + 8 pose channels. Confirm manifest and feature sidecar before training.
 
@@ -184,10 +186,10 @@ Current training command:
 
 ```powershell
 python -m action_recognition.training.train_event_sequence `
-  --manifest data\event_clips_4k_gold_v1\manifest.json `
-  --features-dir data\event_clips_4k_gold_v1\features_reconstructed_conservative_v1 `
-  --model transformer `
-  --sequence-len 60 `
+  --manifest data\event_clips_three_full_gold_causal_120f_v1\manifest.json `
+  --features-dir data\event_clips_three_full_gold_causal_120f_v1\features `
+  --model multiscale `
+  --sequence-len 120 --short-sequence-len 60 `
   --val-stems Khe4P8QcJkg_5_4k `
   --checkpoint-dir action_recognition\models\experiments_4k_gold_transformer `
   --epochs 50 --seed 42
@@ -469,6 +471,28 @@ and accepted person-frame counts in annotation `player_detection` provenance.
 SAM feature sidecars tied to old annotations must not silently be reused as
 refreshed features for new recovered poses. Tests: `test_sam_pose_recovery.py`.
 
+
+## Archived research (2026-10-30)
+
+Code for finished, unpromoted experiments was removed from the working tree and
+kept on branch `archive/research-snapshot-2026-10-30` (not for merging). Restore a
+file with `git checkout archive/research-snapshot-2026-10-30 -- <path>`.
+
+- Offline clip-classifier experiments: team/pose features
+  (`resolution_normalized_team_pose_offline_v1`), contact-candidate pooling and
+  the trajectory-change block (`contact_trajectory_before_after_v1`). Best
+  result +0.28 pp macro F1, within seed noise; candidate pooling regressed.
+  `docs/offline_event_training.md` on that branch holds commands and reports.
+  Their checkpoints need `short_window_centered`/`contact_center_pool` model
+  flags that exist only on that branch; never load them from production.
+- STES / continuous RGB event spotting (`third_party/vnl_stes`, author STES,
+  frozen MobileNet + BiGRU): event macro F1 0 and 0.08-0.26. Not usable.
+- In-progress contact-attribution methods (`src/tracking/contact_attribution.py`):
+  geometry and temporal variants reach ~65-66% team-choice accuracy on human
+  labels; a learned classifier was proposed but not started.
+
+Results directories under `results/` are unchanged.
+
 ## Dense contact spotting and constrained decoding (2026-10-27)
 
 `scripts/evaluation/run_dense_contact_spotting.py` is the first step of the plan
@@ -622,3 +646,154 @@ Rules specific to this work:
   `..._v2_nopose` (matched control). Model-selection estimates only; the
   experimental checkpoints are not production-loadable and nothing is promoted.
   See `docs/dense_contact_spotting.md`.
+
+## Persistent player identity pilot (2026-10-29)
+
+`scripts/evaluation/run_player_identity_pilot.py` prepares immutable caches from
+saved poses and compares seed raw IDs, motion, and motion + HSV body appearance.
+Core: `src/tracking/player_identity.py`; review:
+`python -m action_recognition.annotator.player_identity_annotator --project <dir>`
+(default port 5063). See `docs/player_identity_pilot.md`.
+
+Predicted `player_id` is separate from source `poses[].id`. All three methods
+use identical saved detections. Automatic initialisation is unverified;
+human seed and independent test checks remain separate. Never consume checks
+as association hints or report coverage as accuracy / sparse checks as IDF1.
+Pilot assumes six fixed roster members on one court side; substitutions,
+side changes, long re-entry and event-to-player attribution remain unsolved.
+Write fresh result directories; never rewrite source annotations/results or
+promote to production automatically. Test: `tests/test_player_identity.py`.
+
+Measured on 100 human checks / 19 frames (4.70–23.52 s) of the hy2S pilot:
+raw IDs 46 correct / 7 wrong / 47 unknown; motion 60/6/34; motion + HSV
+64/16/20. HSV adds four correct but ten wrong IDs; do not call its coverage a
+quality gain. P5 is 0/19 correct, often confused with P3. Pilot permanently
+expires identities after a three-second unmatched gap and cannot recover P5
+after its last assignment at 3.50 s. See docs/player_identity_pilot.md for
+limits and next experiments; no learned ReID/OCR has been validated here.
+
+Follow-up: `scripts/evaluation/run_player_reid_experiment.py` +
+`src/tracking/player_reid.py` use pinned, frozen OSNet-x1.0/MSMT17 weights and
+immutable seed galleries (frames 57–87), crossed with explicit lost-ID recovery.
+On the same 100 development checks: frozen HSV local 74/7/19, HSV recovery
+79/5/16, OSNet local and recovery both **94/1/5** (correct/wrong/unknown).
+No real-clip long-loss recovery activated with OSNet; do not attribute its gain
+to recovery. Separate simulated four-second blackout: post-gap 85 checks,
+OSNet local 0/0/85 versus recovery 76/1/8. Synthetic stress is not real-occlusion
+ground truth. No tuning/training on checks; no production promotion; no OCR.
+Artifacts: `results/player_identity_reid_hy2S_20261029_v1`; completed embeddings
+in `cache_cuda/` (the earlier `cache/` is an interrupted CPU attempt).
+Review accepts optional `--extra-comparison <JSON>` with matching observations
+and seed; checks only rescore frozen predictions. See
+`docs/player_reid_experiment.md`; tests `test_player_reid.py` and
+`test_player_identity.py`. Full-match generalisation remains unverified.
+
+## Main-workflow player identity (user-requested adoption)
+
+OSNet is now default-on in `GameAnalyzer`, CLI and viewer uploads for an initial
+six-person roster on side b. `src/models/player_reid_encoder.py` owns pinned
+assets/loading and shared preprocessing; `src/tracking/player_identity_workflow.py`
+owns the additive pass over final poses. `poses[].id` remains raw; `player_id`
+and `identity` are separate. Unknown is null / P?, never a recycled person ID.
+Both JSON outputs include identity provenance/coverage. Video/frame rendering
+waits for final IDs. Ball/FSM/event features and contacts are unchanged.
+
+Install once: `python scripts/models/install_player_reid.py` (or `--from-dir`
+an existing verified bundle). Logical model `player_reid` resolves weights;
+architecture/license remain in models/player_reid/osnet_msmt17_v1. No runtime
+downloads. Missing default assets yield explicit unavailable status; explicit
+broken assets/seed fail. `--no-player-identity` disables the pass.
+
+`scripts/apply_player_identity.py export-seed` exports verified initial labels
+only, bound to video SHA256 and observed boxes; reruns match boxes by IoU, not
+old indices/track IDs. `apply` writes a fresh paired result from saved poses
+without detector/FSM/event reruns, refusing existing output directories.
+Dense validation with human seed on the existing 100 development checks gives
+96 correct / 0 wrong / 4 unknown for the original EMA v1, not a held-out score.
+Automatic substitution discovery, side-switch identity and contact-to-player statistics are not claimed. See
+`docs/player_identity_workflow.md`; test `tests/test_player_identity_workflow.py`.
+
+Identity motion follow-up (2026-10-30): production method
+`osnet_frozen_gallery_kalman_v2` uses `src/tracking/player_motion.py`, a
+constant-velocity Kalman filter with person-height-scaled process/measurement
+noise, covariance gating and signed seconds for the reverse offline pass.
+Process noise is continuous white acceleration integrated over elapsed time;
+prediction covariance must not depend on the frequency of prediction calls.
+Overlap >=0.6 does not update motion and requires distinct appearance.
+Missing frames never create poses. Frozen galleries, one-to-one assignment,
+three-observation long-loss confirmation and unknown IDs remain mandatory.
+`ReIDParameters` defaults to EMA so old experiment plans reproduce unchanged;
+the production workflow explicitly selects Kalman. Matched sparse-cache check:
+EMA 94/1/5 vs Kalman 94/0/6 on the same 100 development labels. This is error
+rejection, not independent accuracy proof or increased correct coverage.
+Comparison: `scripts/evaluation/compare_player_motion.py`; artifacts
+`results/player_identity_kalman_20261030_v1`. No model training/promotion.
+Viewer video filters must include contacts with unknown team when both A/B are
+selected, displaying `—`. Selecting one team excludes unattributed contacts.
+Never infer a team merely to populate the event list.
+
+Confirmed substitution follow-up (2026-10-30): production method
+`osnet_frozen_gallery_kalman_roster_v3` adds explicit new-person anchors through
+`player_identity_roster_v2` files accepted by `--player-identity-seed`.
+`scripts/apply_player_identity.py add-player` creates the file from a saved
+detector box and the user's explicit new-person confirmation. Preserve separate
+provenance: the person being new is human-confirmed; the appearance anchor and
+first-availability frame are derived, not verified human timing. Initial
+automatic IDs stay unverified. Known roster size can exceed six while the
+court-side detector cap remains six. Returning original players keep old IDs;
+never recycle a departed player's ID for a substitute.
+
+`src/tracking/player_identity_consistency.py` only rejects locally bracketed
+raw-track contradictions or borrowing from a stronger visible-but-ambiguous
+owner. Raw track IDs are weak evidence, not person truth; never apply global
+majority labels to entire tracks. The guard cannot invent a corrected ID or
+update an appearance gallery. Same 100 development checks: Kalman with and
+without the guard both 94 correct / 0 wrong / 6 unknown.
+
+Target video JIZ3exHe3hA: native 3840x2160, 17592 decoded frames. The user
+confirmed a substitution: gray-shirt player receives P7, original black-shirt
+P1 retains her ID on return. `roster_with_P7_v1.json` anchors P7 at frame 4397;
+availability from 3759 is a derived track-entry boundary, not human gold.
+Full v2 source is preserved. Reuse frozen detections/OSNet features with
+`scripts/evaluation/cache_player_reid_features.py` and
+`run_player_roster_experiment.py`; paired comparisons vary only confirmed roster
+expansion and rejection. No target-video identity accuracy exists without
+independent checks. `scripts/render_saved_analysis.py` reuses the production
+renderer without model inference and refuses existing video paths.
+Tests: `tests/test_player_identity_roster.py` plus existing identity groups.
+
+Appearance contradiction follow-up: current default is
+`osnet_frozen_gallery_kalman_roster_v4`. Local association rejects candidates
+whose cosine distance exceeds the best active frozen gallery by more than
+0.04 (`local_appearance_regret_max`). An implausible motion match to the best
+person must yield unknown, not lend a weaker person's ID. Do not change
+immutable galleries or manufacture the best person's position. This prevents
+P5 moving onto a black-shirt player at frame 5500 of JIZ3exHe3hA and restores
+P5 on the visible white-shirt player in that diagnostic frame. The visual
+diagnostic is not independent human gold. Old sparse 100-check result remains
+94/0/6. Development thresholds 0.04/0.06/0.10 give 94/0/6, 90/0/10 and 94/0/6;
+feedback through motion means this is not a monotonic coverage sweep. Selected
+0.04 is an engineering choice favouring rejection, not a held-out optimum.
+Legacy `ReIDParameters` defaults retain no veto; production selects it explicitly.
+
+## Model-output capture and replay (2026-10-30)
+
+`src/models/inference_cache.py` is the shared persistent cache. Video bytes,
+weights, inference/preprocessing settings and backend/runtime signatures bind
+outputs. Main CLI, frame-directory mode and viewer jobs use it automatically.
+Raw ball proposals and YOLO poses are saved before downstream selection/court
+filtering. ByteTrack is replayed on CPU from raw cached poses, with complete
+derived sequences sealed separately; interrupted raw captures can resume.
+OSNet features key by frame and actual pixel crop, never by roster/pose index.
+Compatible detection replay and cached ReID do not decode source video.
+Optional SAM recovery/export may need pixels. Raw event logits and enabled
+contact probabilities are cached before gates/decoding.
+
+Models load lazily on misses for YOLO/OSNet. `--require-model-cache` forbids
+inference and fails on missing required outputs. New weights invalidate only
+the affected stage; post-processing changes must not invalidate raw outputs.
+`scripts/model_cache.py inspect` reads coverage; `import-reid` validates and
+reuses the existing full-video frozen OSNet cache without inference. The old
+JIZ3exHe3hA annotations cannot recreate discarded raw YOLO proposals, but their
+93155 frozen embeddings have been imported and a full cached ID replay took
+about 47 s with OSNet unloaded. See `docs/model_output_cache.md`.
