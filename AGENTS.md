@@ -381,6 +381,37 @@ $py=(Get-Content -Raw '.graphify_python').Trim()
 - See `docs/player_contacts.md`; tests `tests/test_player_contacts.py` and
   `tests/test_player_contacts_ui.cjs`.
 
+## Offline pose completion pilot (2026-10-30)
+
+- `src/tracking/pose_completion.py` produces `temporal_pose_completion_v1`
+  overlays from saved same-roster-ID observations before and after a short
+  occlusion. No neural inference, raw YOLO cache fabrication or training.
+- `scripts/complete_player_poses.py --annotations ... --output <fresh>`
+  adds separate `frames[].pose_estimates` and top-level `pose_completion`.
+  It never changes observed `poses`, IDs, ball, features, events or analytics.
+- Body/leg gaps are bounded to 0.30 s, elbow/wrist gaps to 0.15 s; endpoints
+  need adjacent reliable support. Require overlap evidence, plausible motion,
+  in-frame geometry and the six-person cap. Existing unidentified/rejected
+  poses block duplicate reconstruction; raw track IDs never override ReID.
+- Derived keypoints are `[x,y]` or null with per-joint source-frame evidence;
+  no detector confidence, raw tracker ID or human verification is invented.
+  Viewer shows cyan dashed estimates with an independent **Estimated joints**
+  toggle, current-frame guard and existing roster selection.
+- Estimates do not feed contact attribution, FSM, feature refresh or detector
+  training. Future frames are explicit; this is offline reconstruction, not
+  new image-based detection or accurate recovery of a hidden pass swing.
+- JIZ3 artifact `results/JIZ3exHe3hA_pose_completion_20261030_v1` retains
+  frozen roster-v4-regret010 inputs: 88 missing and 275 partial player-frames,
+  1201 estimated joint-frames. These are coverage counts, not accuracy.
+- `scripts/evaluation/evaluate_pose_completion.py` masks saved model poses
+  in overlap intervals and compares bidirectional estimates, last-pose hold
+  and forward velocity on matched accepted joints. Proxy reference is YOLO,
+  not human keypoint gold. Report rejected-joint coverage, including the
+  out-of-bound 9-frame negative control at 29.97 FPS.
+- See `docs/pose_completion.md`; tests `test_pose_completion.py` and
+  `test_pose_completion_ui.cjs`. Never enable estimated contact evidence merely
+  because the skeleton looks continuous.
+
 ## Repository map
 
 ```text

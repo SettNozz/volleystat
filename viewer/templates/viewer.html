@@ -237,12 +237,14 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
         <label class="toggle"><input type="checkbox" id="togTrail" checked onchange="redraw()"> Trail</label>
         <label class="toggle"><input type="checkbox" id="togNet" checked onchange="redraw()"> Net</label>
         <label class="toggle"><input type="checkbox" id="togPlayers" checked onchange="redraw()"> Players</label>
+        <label class="toggle"><input type="checkbox" id="togPoseEstimates" checked disabled onchange="redraw()"> Estimated joints</label>
         <label class="toggle"><input type="checkbox" id="togState" checked onchange="redraw()"> FSM State</label>
         <label class="toggle"><input type="checkbox" id="togModel" checked onchange="redraw()"> Model</label>
         <label class="toggle"><input type="checkbox" id="togEvents" checked onchange="redraw()"> Events</label>
         <label class="toggle"><input type="checkbox" id="togAttackHeatmap" onchange="redraw()"> Attack zones</label>
         <label class="toggle"><input type="checkbox" id="togCourt" checked onchange="redraw()"> Court</label>
       </div>
+      <div id="poseEstimateStatus" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
       <div class="cal-row" style="margin-top:8px">ball path
         <select id="ballPathMode" class="ctrl" style="padding:3px 6px;max-width:160px" onchange="redraw()">
           <option value="active">Active output</option>
@@ -446,6 +448,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 .player-contact-jump { text-align:left; white-space:normal; }
 </style>
 <script src="{{ url_for('static', filename='player_contacts.js') }}"></script>
+<script src="{{ url_for('static', filename='pose_completion.js') }}"></script>
 <script>
 const JOB_ID = "{{ job.job_id }}";
 const FPS = {{ stats.fps | default(30) }};
@@ -1094,6 +1097,7 @@ fetch('/api/annotations/' + JOB_ID)
     annotations = {};
     for (const f of data.frames) annotations[f.f] = f;
     window._annData = data;
+    initPoseEstimates(data);
     courtEditor.originalCorners = Array.isArray(data.court_corners)
       ? JSON.parse(JSON.stringify(data.court_corners)) : null;
     const slider = document.getElementById('netYSlider');
@@ -2253,6 +2257,8 @@ function redraw() {
       }
     }
   }
+
+  if (showPlayers) drawPoseEstimates(ctx, ann, currentFrameIdx, px, py, sx);
 
   let stateY = 70;
   if (showState) {
