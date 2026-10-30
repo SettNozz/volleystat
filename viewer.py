@@ -11,6 +11,7 @@ Usage:
 """
 
 import json
+import hashlib
 import math
 import mimetypes
 import os
@@ -20,6 +21,7 @@ import threading
 import time
 import urllib.parse
 import uuid
+from functools import lru_cache
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_file, Response
@@ -38,6 +40,9 @@ from src.tracking.court_setups import (
     validate_corners,
 )
 from src.utils.path_utils import local_path_from_uri
+from src.tracking.player_contacts import (
+    apply_reviews, build_player_contacts, source_fingerprint,
+)
 
 app = Flask(__name__, template_folder="viewer/templates", static_folder="viewer/static")
 # Jinja caches compiled templates in memory, so UI edits need a server restart
@@ -427,7 +432,9 @@ def load_existing():
         except Exception:
             pass
 
-    job_id = f"preloaded_{stem}"
+    # Two hypotheses of one video must not replace each other's API inputs.
+    result_key = hashlib.sha256(str(stats_path.resolve()).encode()).hexdigest()[:10]
+    job_id = f"preloaded_{stem}_{result_key}"
     jobs[job_id] = {
         "status": "done",
         "progress": 100,
@@ -500,6 +507,75 @@ def annotations(job_id):
     if not job or job["status"] != "done":
         return jsonify({"error": "Not ready"}), 404
     return send_file(job["annotations_path"], mimetype="application/json")
+
+
+_player_contact_lock = threading.Lock()
+
+
+@lru_cache(maxsize=2)
+def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp):
+    """Cache derived proposals, not the large frame/pose payload."""
+    stats_bytes, ann_bytes = Path(stats_path).read_bytes(), Path(ann_path).read_bytes()
+    stats, payload = json.loads(stats_bytes), json.loads(ann_bytes)
+    if stats.get("video") != payload.get("video") or float(stats["fps"]) != float(payload["fps"]):
+        raise ValueError("Stats and annotations must belong to the same analysis")
+    report = build_player_contacts(stats.get("all_events") or [], payload["frames"],
+                                   payload["fps"], payload.get("player_identity"))
+    return report, source_fingerprint(stats_bytes, ann_bytes)
+
+
+@app.route("/api/player_contacts/<job_id>", methods=["GET", "POST"])
+def player_contacts(job_id):
+    job = _get_job(job_id)
+    if not job or job["status"] != "done":
+        return jsonify({"error": "Results not ready"}), 404
+    try:
+        # Serialize read-modify-append to preserve corrections from two tabs.
+        with _player_contact_lock:
+            stats_path, ann_path = Path(job["stats_path"]), Path(job["annotations_path"])
+            def stamp(path):
+                info = path.stat()
+                return info.st_mtime_ns, info.st_size
+            report, source = _player_contact_inputs(
+                str(stats_path.resolve()), str(ann_path.resolve()), stamp(stats_path), stamp(ann_path))
+            reviews_path = stats_path.with_name(stats_path.name.removesuffix("_stats.json")
+                                               + "_player_contact_reviews.jsonl")
+            reviews = []
+            if reviews_path.exists():
+                for line in reviews_path.read_text(encoding="utf-8").splitlines():
+                    record = json.loads(line)
+                    if record.get("source") != source:
+                        return jsonify({"error": "Analysis changed; saved contact reviews belong to another source"}), 409
+                    reviews.append(record["review"])
+            if request.method == "POST":
+                body = request.get_json(silent=True) or {}
+                if not isinstance(body, dict):
+                    raise ValueError("Expected a JSON object")
+                if body.get("source") != source:
+                    return jsonify({"error": "Analysis changed; reload contacts before reviewing"}), 409
+                if type(body.get("event_index")) is not int:
+                    raise ValueError("event_index must be an integer")
+                if type(body.get("other_side", False)) is not bool or type(body.get("reset", False)) is not bool:
+                    raise ValueError("other_side and reset must be booleans")
+                if body.get("player_id") is not None and not isinstance(body["player_id"], str):
+                    raise ValueError("player_id must be a roster ID or null")
+                review = {k: body[k] for k in ("event_index", "player_id", "other_side", "reset") if k in body}
+                # Validate before writing; original JSON/human labels stay intact.
+                apply_reviews(report, reviews + [review])
+                from datetime import datetime, timezone
+                record = {"schema": "player_contact_review_v1", "source": source,
+                          "saved_at": datetime.now(timezone.utc).isoformat(), "review": review}
+                with reviews_path.open("a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+                reviews.append(review)
+            result = apply_reviews(report, reviews)
+            result["source"] = source
+            result["review_count"] = len(reviews)
+            return jsonify(result)
+    except (ValueError, KeyError, TypeError) as error:
+        return jsonify({"error": str(error)}), 400
+    except OSError as error:
+        return jsonify({"error": str(error)}), 409
 
 
 def _read_annotations(path: str) -> dict:

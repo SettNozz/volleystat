@@ -71,6 +71,11 @@ Current high-value analysis options:
 --match-config <JSON>
 --no-model-registry
 --contact-spotter <CHECKPOINT>
+--no-player-identity
+--player-identity-side a|b
+--player-identity-seed <JSON>
+--player-reid-assets <DIR>
+--player-reid-device auto|cpu|cuda
 --no-video
 ```
 
@@ -93,6 +98,8 @@ Video / frame directory
      -> calibrated net/court team divider
      -> clean IntegratedVolleyballFSM replay
      -> event model + match analytics
+     -> offline OSNet + Kalman roster identity (default near side, raw IDs preserved)
+     -> final annotation-based video/frame rendering
   -> *_stats.json
   -> *_annotations.json
   -> *_analyzed.mp4
@@ -306,6 +313,19 @@ Warnings about inaccessible `.pytest_cache` do not mean test failure.
 
 ## Working rules
 
+- Every video hypothesis must first reuse existing annotations and model-output
+  caches. For pipeline replay use `--require-model-cache`; for ID-only work use
+  `scripts/apply_player_identity.py apply --require-model-cache` or the frozen
+  roster experiment. Never rerun compatible YOLO/OSNet/SAM inference merely to
+  change tracking, geometry, smoothing, seeds, roster or decoding logic.
+- New source/model inputs are captured automatically by the main workflow in
+  `data/inference_cache`; only missing stages run. If a hypothesis genuinely
+  needs missing model outputs, identify that stage before a capture. Preserve
+  existing caches and never fabricate raw detections from derived annotations.
+- Default output is JSON + original-video viewer. Rendering is separate and
+  explicit (`--render-video`); do not render a full MP4 for each hypothesis.
+- See `docs/model_output_cache.md`. Cache provenance and human-label provenance
+  remain separate. Reconstructed ball data is never detector ground truth.
 - Inspect `git status` before edits. Preserve unrelated user changes.
 - Use `apply_patch` for edits.
 - Prefer `rg`/`rg --files` for search.
@@ -336,6 +356,30 @@ $py=(Get-Content -Raw '.graphify_python').Trim()
 - Current graph contains `.runs/` snapshots and third-party nodes. Prefer facts whose `source_file` is current `src/`, `action_recognition/`, `scripts/`, `tests/`, or root config/docs. Ignore duplicate facts from `.runs/` when current source differs.
 - Incremental update may refuse when shrink guard sees large corpus mismatch. Do not use `--force` without explicit approval; preserve existing graph when update refuses.
 - After changing code, attempt `graphify update .`. Report refusal honestly; graph failure does not invalidate separately passing code tests.
+
+## Per-player contacts (2026-10-30)
+
+- `src/tracking/player_contacts.py` derives `player_contacts_v1` from final
+  saved events, ball, poses and stable roster IDs. Proximity proposals are
+  unverified; both sides and unidentified poses compete. No court projection
+  determines the contact side; no missing/off-camera gap is bridged.
+- Production export computes this report after identity. For an existing
+  result, `scripts/apply_player_contacts.py --annotations ... --output <fresh>`
+  writes paired JSON only; no video read, neural inference or MP4 render.
+- Viewer **Player contacts** selects all roster IDs (including substitutes),
+  highlights the selected skeleton and shows counts plus click-to-seek events.
+  Reception, dig/pass/set, attack and block remain separately counted;
+  original raw contact types are preserved. Unknowns are excluded from totals.
+- Attribution corrections append to `<stem>_player_contact_reviews.jsonl`,
+  bound to SHA256 of BOTH analysis files. They never rewrite source JSON,
+  human gold, event types, identities or team analytics. Changed sources reject
+  old reviews. Human attribution does not verify a model's contact/type.
+- JIZ3 demo: `results/JIZ3exHe3hA_player_contacts_20261030_v1`, based on frozen
+  `JIZ3exHe3hA_identity_roster_20261030_v4_regret010`. P7 is a substitute;
+  initial proposals: 19 assigned, 29 other-side, 55 unresolved, 103 total.
+  These are coverage counts, not attribution accuracy or all true contacts.
+- See `docs/player_contacts.md`; tests `tests/test_player_contacts.py` and
+  `tests/test_player_contacts_ui.cjs`.
 
 ## Repository map
 

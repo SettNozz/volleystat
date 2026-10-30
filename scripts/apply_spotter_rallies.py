@@ -100,6 +100,10 @@ def rebuild(annotations_path: Path, output: Path, checkpoint: str | None) -> dic
     ):
         result[key] = rebuilt[key]
     annotations["contact_spotter"] = stats.contact_spotter
+    from src.tracking.player_contacts import build_player_contacts
+    annotations["player_contacts"] = result["player_contacts"] = build_player_contacts(
+        result["all_events"], frames, fps, annotations.get("player_identity"),
+    )
 
     output.mkdir(parents=True)
     for name, payload in (

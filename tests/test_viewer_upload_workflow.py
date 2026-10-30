@@ -8,14 +8,15 @@ import viewer
 
 
 class TestViewerUploadWorkflow(unittest.TestCase):
-    def test_home_page_shows_measured_4k_processing_time(self):
+    def test_home_page_describes_cached_repeats_and_explicit_video_export(self):
         with viewer.app.test_client() as client:
             response = client.get("/")
 
         self.assertEqual(response.status_code, 200)
         page = response.get_data(as_text=True)
-        self.assertIn("57s 4K video takes ~3 min 30s", page)
-        self.assertIn("Every frame + batch 8", page)
+        self.assertIn("first analysis saves model outputs", page)
+        self.assertIn("Compatible repeats reuse", page)
+        self.assertIn("encoded only when explicitly requested", page)
         self.assertIn('id="analysisProgressFill"', page)
         self.assertIn("job.frame_current", page)
         self.assertIn("job.processing_fps", page)
@@ -45,6 +46,10 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertIn("off-frame", template)
         self.assertNotIn("createRadialGradient", template)
         self.assertNotIn('type="video/mp4"', template)
+        self.assertIn("Object.prototype.hasOwnProperty.call(pose, 'player_id')", template)
+        self.assertIn("pose.player_id || 'P?'", template)
+        self.assertIn("Number(ann.f) !== currentFrameIdx", template)
+        self.assertIn("player IDs unavailable", template)
 
     def test_lifecycle_stats_keep_only_confirmed_playable_rallies(self):
         stats = viewer._prepare_viewer_stats({

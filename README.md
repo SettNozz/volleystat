@@ -1,5 +1,30 @@
 # Volleystat
 
+Model outputs are cached automatically for every video/frame analysis. New
+hypotheses reuse them; `--require-model-cache` forbids accidental inference.
+Default outputs are JSON and the original-video viewer. Use `--render-video`
+only for an accepted video export. See [cache/replay workflow](docs/model_output_cache.md).
+
+Stable player IDs now run by default in CLI and viewer analyses: frozen OSNet
+appearance galleries plus a Kalman motion filter and lost-ID recovery. Occluded
+boxes do not update motion; ambiguous overlapping crops stay unknown. Raw tracker IDs remain
+separate; uncertain IDs stay unknown. Install the pinned encoder once and see
+[player identity workflow](docs/player_identity_workflow.md). Default scope is
+six players on the near side. Confirmed substitutes can receive additional
+IDs through a per-video roster file; returning players retain their original
+IDs. Local tracklet contradictions are rejected rather than relabelled.
+Motion cannot assign an ID whose frozen appearance is clearly worse than
+another known person's appearance.
+Full-match accuracy and personal contact attribution remain unverified.
+The viewer's **Player contacts** panel selects a roster ID, highlights only
+that skeleton, and lists its reception, dig/pass/set, attack, block and serve
+events with click-to-seek. Unverified contact proposals use saved ball/pose
+evidence from both sides; ambiguous contacts stay unresolved. Correct an
+attribution in the dropdown; corrections are separate, source-bound records.
+No video/model rerun is needed. See [per-player contacts](docs/player_contacts.md).
+Viewer shows contacts with unknown team as `—` when both teams are selected;
+selecting one team includes only contacts attributed to that team.
+
 Offline volleyball-video analytics for 4K fixed-camera footage. Pipeline detects and reconstructs ball trajectory, tracks player poses, calibrates court and net geometry, segments rallies, derives match analytics, predicts contact events, and exports viewer-ready annotations.
 
 Current production path is `analyze_video.py` -> `GameAnalyzer` -> JSON/video artifacts -> `viewer.py`.
@@ -12,6 +37,8 @@ Current production path is `analyze_video.py` -> `GameAnalyzer` -> JSON/video ar
 | Ball cleanup | Static-source suppression and contact-preserving quadratic smoothing | Stable trajectory without parked false positives |
 | Gap reconstruction | Conservative or contact-aware offline reconstruction | Inferred 2D coordinates with provenance/confidence |
 | Player tracking | YOLO11m-pose + ByteTrack + calibrated court gate | Player boxes, 17 keypoints, track/team IDs |
+| Player identity | Frozen OSNet galleries + Kalman motion | Stable roster IDs; unknowns retained |
+| Model output cache | Source/model/input fingerprints | Replay compatible saved outputs without inference |
 | Court and net | Perspective calibration, SAM net tape, optional SAM3 posts, Hough fallback | Court homography, tape band, net-floor divider |
 | Game logic | Integrated volleyball FSM + clean trajectory replay | Rallies, serves, contacts, attack map |
 | Event model | Four-class causal sequence model | `serve`, `reception`, `pass`, `attack` |
@@ -73,8 +100,17 @@ python analyze_video.py --video game.webm --output results\game_recon `
   --ball-reconstruction compare `
   --reconstruction-contacts data\full_video_gold\full_video_annotations.json
 
-# Stats and annotations only
+# JSON and original-video viewer (default; --no-video remains compatible)
 python analyze_video.py --video game.webm --output results\game --no-video
+
+# Hypothesis replay: fail instead of rerunning models
+python analyze_video.py --video game.webm --output results\game_hypothesis --require-model-cache
+
+# Explicit annotated video export
+python analyze_video.py --video game.webm --output results\game_export --require-model-cache --render-video
+
+# Disable stable identities
+python analyze_video.py --video game.webm --output results\game_tracks --no-player-identity
 
 # Manual set boundaries and stable team identities
 python analyze_video.py --video game.webm --output results\game `
@@ -123,7 +159,7 @@ For input `game.webm` and `--output results/game`:
 |---|---|
 | `results/game/game_stats.json` | Aggregate metrics, rallies, events, reconstruction/model provenance |
 | `results/game/game_annotations.json` | Compact frame-level ball, pose, net, FSM and event data |
-| `results/game/game_analyzed.mp4` | Annotated video; omitted with `--no-video` |
+| `results/game/game_analyzed.mp4` | Optional annotated video; only with `--render-video` |
 
 Annotations distinguish observed and reconstructed ball positions. Reconstruction never becomes detector ground truth. By default it also does not alter FSM events; `--reconstruction-affects-fsm` admits only high-confidence reconstructed points into the clean FSM replay.
 
