@@ -458,6 +458,41 @@ $py=(Get-Content -Raw '.graphify_python').Trim()
   `test_contact_author_experiments.py`, `test_contact_author_mil.py`, and
   `test_contact_author_ui.cjs`.
 
+## Volleyball contact lab (2026-10-30)
+
+- `scripts/evaluation/run_volleyball_contact_lab.py` compares piecewise 2D
+  flight, moving-limb, joint and consensus detection, bounded retiming and
+  forward/backward team attribution. Core: `src/tracking/volleyball_contact_lab.py`.
+  Research adaptations and limits: `docs/volleyball_contact_lab.md`.
+- Keep the independent `codex/contact-author-learning` worktree. Active reviewer
+  output: `results/volleyball_contact_lab_20261030_v3/viewer_result`, port 5054.
+  v1/v2 remain preserved; v3 reuses v2's hash-verified evidence/metrics and
+  isolates sequence side changes from the optional joint actor-ranking ablation.
+- Detection targets are 397 distinct audited timestamps, including ambiguous
+  raw action types; team data are 397 conclusive records plus nine unsure.
+  These sets differ. Derived context groups exact same-frame records with all
+  IDs retained; unsure/uncertain timing resets context. Human sources stay intact.
+- Fold thresholds and team transitions use only the other two whole videos.
+  Cached OOF spotter control must share annotation/phase hashes. Human coverage
+  and `non_game` labels are scoring masks only, never inference gates.
+- Independent detectors lost: F1@5 flight .4643, limbs .3319, joint .4496,
+  consensus .7473 vs spotter .8735. Bounded retiming tied .8735. This is an
+  audited time-only protocol, not a new score for the production checkpoint.
+- On the spotter's predicted times/types, correct team among 365 matched
+  contacts improves 309/365 (.8466) to 341/365 (.9342); joint detection/team F1
+  .7375 to .8138. Known-time/type side control is .8463 to .9320, not .9421
+  from the superseded duplicate-context preliminary run. All are model-selection
+  estimates; zero human person/contact-author labels and no block-team score.
+- Use spotter timing + sequence side evidence for review. The selected variant
+  preserves local actor ranking and source event times/types; joint ranking is
+  a separate unvalidated-person diagnostic. Never claim P1–P7/JIZ3 accuracy.
+- `/load?...&contact_lab=1` restores the read-only lab. A separate source-bound
+  `*_contact_lab.json` may contain novel **untyped** contacts; do not replace
+  `all_events`, rallies/FSM, source poses/IDs or original JSON with these peaks.
+  No model registry promotion, image inference, MP4 render or dataset rewrite.
+- Tests: `test_volleyball_contact_lab.py`, `test_volleyball_contact_lab_viewer.py`,
+  `test_volleyball_contact_lab_ui.cjs`.
+
 ## Repository map
 
 ```text

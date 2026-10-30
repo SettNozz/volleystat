@@ -44,6 +44,7 @@ from src.tracking.player_contacts import (
     apply_reviews, build_player_contacts, source_fingerprint,
 )
 from src.tracking.contact_author_experiments import ExperimentSourceChanged, experiment_path, load_experiment
+from src.tracking.volleyball_contact_lab import load_lab
 
 app = Flask(__name__, template_folder="viewer/templates", static_folder="viewer/static")
 # Jinja caches compiled templates in memory, so UI edits need a server restart
@@ -449,6 +450,8 @@ def load_existing():
         "original_video_path_url": urllib.parse.quote(orig_video, safe=""),
     }
     from flask import redirect
+    if request.args.get("contact_lab") == "1":
+        return redirect(f"/contact-lab/{job_id}")
     return redirect(f"/results/{job_id}")
 
 
@@ -508,6 +511,30 @@ def annotations(job_id):
     if not job or job["status"] != "done":
         return jsonify({"error": "Not ready"}), 404
     return send_file(job["annotations_path"], mimetype="application/json")
+
+
+@app.route("/contact-lab/<job_id>")
+def contact_lab_page(job_id):
+    job = _get_job(job_id)
+    if not job or job.get("status") != "done":
+        return "Result not found", 404
+    return render_template("contact_lab.html", job_id=job_id, job=job)
+
+
+@app.route("/api/contact_lab/<job_id>")
+def contact_lab_data(job_id):
+    job = _get_job(job_id)
+    if not job or job.get("status") != "done":
+        return jsonify({"error": "Result not found"}), 404
+    path = Path(job["stats_path"])
+    lab_path = path.with_name(path.name.removesuffix("_stats.json")+"_contact_lab.json")
+    if not lab_path.is_file():
+        return jsonify({"error": "This result has no volleyball contact experiment"}), 404
+    try:
+        stats_raw, ann_raw = path.read_bytes(), Path(job["annotations_path"]).read_bytes()
+        return jsonify(load_lab(lab_path, source_fingerprint(stats_raw, ann_raw), json.loads(stats_raw)))
+    except (ValueError, KeyError, TypeError, OSError) as error:
+        return jsonify({"error": str(error)}), 409
 
 
 _player_contact_lock = threading.Lock()
