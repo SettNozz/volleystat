@@ -167,6 +167,16 @@ class GameStats:
     rally_lifecycle: Dict[str, int] = field(default_factory=dict)
     match_analytics: Dict[str, Any] = field(default_factory=dict)
     all_events: List[Dict] = field(default_factory=list)
+    # With the dense contact spotter enabled it owns ``all_events``, and the
+    # FSM's own contacts are kept here so nothing is lost by the swap.
+    all_events_fsm: List[Dict] = field(default_factory=list)
+    # Likewise the spotter's serve-anchored rallies replace the FSM's, which
+    # stay here. Empty when the spotter did not run.
+    rallies_fsm: List[Dict] = field(default_factory=list)
+    service_attempts_fsm: List[Dict] = field(default_factory=list)
+    rally_lifecycle_fsm: Dict[str, int] = field(default_factory=dict)
+    # Spotter diagnostics, provenance and decoded rally phases.
+    contact_spotter: Dict[str, Any] = field(default_factory=dict)
     # Per-frame data for HTML viewer overlay (ball pos, players, FSM state)
     frame_annotations: List[Dict] = field(default_factory=list)
     # Trajectory-only contact/attack candidates aggregated into court zones.
@@ -197,6 +207,11 @@ class GameStats:
             "rally_lifecycle": self.rally_lifecycle,
             "match_analytics": self.match_analytics,
             "all_events": self.all_events,
+            "all_events_fsm": self.all_events_fsm,
+            "rallies_fsm": self.rallies_fsm,
+            "service_attempts_fsm": self.service_attempts_fsm,
+            "rally_lifecycle_fsm": self.rally_lifecycle_fsm,
+            "contact_spotter": self.contact_spotter,
             "attack_heatmap": self.attack_heatmap,
             "ball_reconstruction": self.ball_reconstruction,
             "ball_smoothing": self.ball_smoothing,
@@ -257,6 +272,7 @@ class GameAnalyzer:
         suppress_static_ball_sources: bool = True,
         use_model_registry: bool = True,
         person_masks_path: Optional[str] = None,
+        contact_spotter_path: Optional[str] = None,
     ):
         """
         Args:
@@ -326,6 +342,10 @@ class GameAnalyzer:
         )
         self.output_video = output_video
         self.skip_frames = skip_frames
+        # Loaded on first use: a checkpoint is useless until there are final
+        # trajectories and poses to run it over.
+        self.contact_spotter_path = contact_spotter_path
+        self._contact_spotter = None
         self.net_y_override = net_y_override
         self.ball_ensemble = ball_ensemble
         self.ball_trajectory_dp = ball_trajectory_dp
@@ -1636,10 +1656,15 @@ class GameAnalyzer:
         annotate_match_phases(stats.frame_annotations, self.match_segments)
         annotate_score_timeline(stats.frame_annotations, stats.match_analytics)
         self._recompute_features_and_predictions(stats.frame_annotations, fps)
-        if stats.rally_lifecycle.get("service_attempts"):
-            lc = stats.rally_lifecycle
+        # Strictly after the recompute: the spotter reads the same final ball
+        # coordinates and ``pose_f`` the exported annotations carry.
+        self._spot_contacts(stats, fps)
+        # The spotter, when it ran, logged its own rallies; these are the FSM's.
+        fsm_lifecycle = stats.rally_lifecycle_fsm or stats.rally_lifecycle
+        if fsm_lifecycle.get("service_attempts"):
+            lc = fsm_lifecycle
             log.info(
-                "Rally lifecycle: "
+                "FSM rally lifecycle: "
                 f"{lc['service_attempts']} attempts, "
                 f"{lc['confirmed_serves']} crossed net, "
                 f"{lc['playable_rallies']} playable, "
@@ -1728,6 +1753,156 @@ class GameAnalyzer:
             display = overlay.update(raw_display, state, frame_idx)
             if display is not None:
                 ann["event_model"] = display
+
+    def _spot_contacts(self, stats: "GameStats", fps: float) -> None:
+        """Replace the FSM's contact events with the dense spotter's.
+
+        Measured leave-one-video-out on the three gold videos, the spotter puts
+        a typed contact on the right frame far more often than the FSM
+        (0.79 against 0.156 four-class macro F1 at +/-5 frames). The contact
+        events are replaced, and so are rallies and service attempts: they are
+        rebuilt from the spotter's contacts, each rally opening on its serve
+        (see ``rally_segmentation``). Score and match analytics stay
+        FSM-derived; they were computed before this point and need team sides
+        the spotter does not produce.
+
+        The FSM's events, rallies, attempts and counters are kept in their
+        ``*_fsm`` fields so enabling this never loses what the previous path
+        produced.
+        """
+        # Read defensively: tests build an analyzer with ``__new__`` and set
+        # only the attributes the path under test needs, as elsewhere here.
+        checkpoint = getattr(self, "contact_spotter_path", None)
+        if not checkpoint:
+            return
+        from action_recognition.rally_spotting.contact_spotter import (
+            ContactSpotter, phase_segments,
+        )
+        from action_recognition.rally_spotting import dense_contacts as dc
+        from action_recognition.rally_spotting.rally_segmentation import (
+            segment_rallies,
+        )
+
+        if getattr(self, "_contact_spotter", None) is None:
+            self._contact_spotter = ContactSpotter.load(checkpoint)
+            log.info(
+                f"Contact spotter: {checkpoint} "
+                f"({len(self._contact_spotter.members)} member(s))"
+            )
+        calib = self.calibration
+        payload = {
+            "fps": fps,
+            "frame_width": calib.frame_width if calib else 1280,
+            "frame_height": calib.frame_height if calib else 720,
+            "net_y": calib.net_y if calib else 370.0,
+            "frames": stats.frame_annotations,
+        }
+        try:
+            spotted = self._contact_spotter.run(payload)
+        except Exception as error:
+            # A failed spotter must not cost the whole analysis; the FSM
+            # events already in ``all_events`` stay as they are.
+            log.warning(f"Contact spotter failed, keeping FSM events: {error}")
+            stats.contact_spotter = {"enabled": True, "error": str(error)}
+            return
+
+        stats.all_events_fsm = list(stats.all_events)
+        events = []
+        for event in spotted.events:
+            events.append({
+                "frame": event["frame"],
+                "time": round(event["frame"] / fps, 2),
+                "type": event["type"],
+                "core_type": event["core_type"],
+                "confidence": event["confidence"],
+                "phase_before": event["phase_before"],
+                "phase_after": event["phase_after"],
+                "source": event["source"],
+                # The spotter does not attribute a contact to a side; these
+                # stay empty rather than carrying a guess.
+                "team": None,
+                "game_state": None,
+                "rally_phase": None,
+            })
+        serve_probability = (
+            spotted.probabilities[:, dc.LABEL_TYPES.index("serve")]
+            if spotted.probabilities is not None else None
+        )
+        segmented = segment_rallies(
+            events, fps,
+            serve_probability=serve_probability,
+            phase_labels=spotted.phase_labels,
+            frame_numbers=spotted.frame_numbers,
+        )
+        # A missed serve recovered from the serve probability is still the
+        # model's evidence, so it joins the event list, marked ``inferred``
+        # with its own source; the review queue reads only decoded contacts.
+        events = sorted(
+            events + segmented["inferred_serves"],
+            key=lambda event: int(event["frame"]),
+        )
+        stats.all_events = events
+        stats.rallies_fsm = list(stats.rallies)
+        stats.service_attempts_fsm = list(stats.service_attempts)
+        stats.rally_lifecycle_fsm = dict(stats.rally_lifecycle)
+        attempts = segmented["service_attempts"]
+        match_segments = getattr(self, "match_segments", None)
+        if match_segments:
+            attempts = filter_non_game_records(
+                attempts, match_segments, frame_field="start_frame",
+            )
+        kept_ids = {attempt["service_attempt_id"] for attempt in attempts}
+        stats.service_attempts = attempts
+        stats.rallies = [
+            rally for rally in segmented["rallies"]
+            if rally["service_attempt_id"] in kept_ids
+        ]
+        lifecycle = dict(segmented["rally_lifecycle"])
+        if match_segments:
+            lifecycle["service_attempts"] = len(attempts)
+            lifecycle["playable_rallies"] = len(stats.rallies)
+            lifecycle["serves_not_played"] = len(attempts) - len(stats.rallies)
+            lifecycle["excluded_as_non_game"] = (
+                len(segmented["service_attempts"]) - len(attempts)
+            )
+        stats.rally_lifecycle = lifecycle
+        by_frame: Dict[int, List[str]] = {}
+        for event in events:
+            by_frame.setdefault(int(event["frame"]), []).append(event["type"])
+        for ann in stats.frame_annotations:
+            frame_index = int(ann["f"])
+            ann["ev_fsm"] = list(ann.get("ev") or [])
+            ann["ev"] = by_frame.get(frame_index, [])
+        phases = phase_segments(spotted.phase_labels, spotted.frame_numbers)
+        stats.contact_spotter = {
+            "enabled": True,
+            "checkpoint": str(checkpoint),
+            "diagnostics": spotted.diagnostics,
+            "phase_segments": phases,
+            "rally_segmentation": {
+                "rules": segmented["rules"],
+                "inferred_serves": len(segmented["inferred_serves"]),
+                "groups_without_serve": segmented["unanchored_groups"],
+            },
+            "replaced": {
+                "all_events": "dense_contact_spotter",
+                "fsm_events_kept_in": "all_events_fsm",
+                "per_frame_fsm_events_kept_in": "ev_fsm",
+                "rallies": "spotter_rallies_v1",
+                "fsm_rallies_kept_in": [
+                    "rallies_fsm", "service_attempts_fsm", "rally_lifecycle_fsm",
+                ],
+            },
+            "not_replaced": ["match_analytics", "attack_heatmap"],
+        }
+        log.info(
+            f"Contact spotter: {len(events)} events "
+            f"({spotted.diagnostics.get('per_type')}, "
+            f"{len(segmented['inferred_serves'])} inferred serves), "
+            f"{len(stats.rallies)} rallies from {len(attempts)} serves, "
+            f"{len(phases)} phase segments, FSM had "
+            f"{len(stats.all_events_fsm)} events / {len(stats.rallies_fsm)} rallies"
+        )
 
     @staticmethod
     def _poses_from_annotation(ann: Dict) -> List[PlayerPose]:
@@ -2473,6 +2648,7 @@ class GameAnalyzer:
             "pose_feature_names": POSE_FEATURE_NAMES,
             "attack_heatmap": stats.attack_heatmap,
             "ball_reconstruction": stats.ball_reconstruction,
+            "contact_spotter": stats.contact_spotter,
             "frames": stats.frame_annotations,
         }
         with open(ann_path, "w") as f:

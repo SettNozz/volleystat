@@ -67,6 +67,10 @@ _LIFECYCLE_COUNTERS = (
     "aces_no_reception",
     "reception_failed",
     "serve_faults",
+    # Spotter-built rallies: a serve the decode missed but its serve
+    # probability recovered, and serves that no contact followed.
+    "inferred_serves",
+    "serves_not_played",
 )
 
 
@@ -85,10 +89,13 @@ def _prepare_viewer_stats(stats: dict) -> dict:
     lifecycle = stats.get("rally_lifecycle")
     lifecycle_available = isinstance(lifecycle, dict)
     if lifecycle_available:
+        # A counter the producer did not measure stays None: the spotter
+        # cannot tell an ace from a fault, so it must not read as zero aces.
         counters = {
-            key: int(lifecycle.get(key, 0) or 0)
+            key: int(lifecycle.get(key) or 0) if key in lifecycle else None
             for key in _LIFECYCLE_COUNTERS
         }
+        counters["playable_rallies"] = counters["playable_rallies"] or 0
         prepared["rallies"] = [
             rally for rally in prepared["rallies"]
             if isinstance(rally, dict)
@@ -109,6 +116,8 @@ def _prepare_viewer_stats(stats: dict) -> dict:
             "aces_no_reception": None,
             "reception_failed": None,
             "serve_faults": None,
+            "inferred_serves": None,
+            "serves_not_played": None,
         }
         prepared.setdefault("total_rallies", legacy_total)
 

@@ -123,6 +123,14 @@ def main():
                         help="YOLO-pose input size (default 2560 for small/far 4K players)")
     parser.add_argument("--person-masks", default=None, metavar="JSONL",
                         help="Completed SAM people masks for optional crop-based YOLO-pose recovery")
+    parser.add_argument("--contact-spotter", default=None, metavar="CHECKPOINT",
+                        help="Dense contact spotter checkpoint from "
+                             "scripts/models/train_contact_spotter.py. Its typed "
+                             "contacts replace the FSM's in all_events; the FSM's "
+                             "are kept in all_events_fsm. Rallies are rebuilt "
+                             "from them, each opening on its serve (FSM rallies "
+                             "kept in rallies_fsm); score and the attack heatmap "
+                             "stay FSM-derived")
     parser.add_argument("--ball-ensemble", action="store_true",
                         help="Collect ball candidates from a second, tiled detector "
                              "(union recall 0.93 vs 0.72, roughly half the speed)")
@@ -254,6 +262,7 @@ def main():
         ball_smooth_window=args.ball_smooth,
         suppress_static_ball_sources=not args.no_static_suppression,
         use_model_registry=not args.no_model_registry,
+        contact_spotter_path=args.contact_spotter,
     )
 
     if args.video:

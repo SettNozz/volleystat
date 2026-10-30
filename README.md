@@ -365,3 +365,53 @@ identity and keeps recovery inference separate from ByteTrack. Recovered poses
 retain their model provenance and a separate negative SAM-mask ID namespace;
 all poses still pass the existing court gate and six-per-team cap. See the
 [SAM workflow](docs/sam_people_masks.md) for the complete commands and limitations.
+
+## Contact spotting in the pipeline
+
+The dense contact spotter replaces the rally state machine's contact events on
+any video, with no labels needed:
+
+```powershell
+python analyze_video.py --video "C:\path\game.webm" --output "results\game" `
+  --contact-spotter models\contact_spotter\spotter_20261028_v1.pt
+```
+
+Its typed contacts become `all_events` and per-frame `ev`; the FSM's are kept in
+`all_events_fsm` and `ev_fsm`. Rallies and service attempts are rebuilt from
+the spotter's contacts, each opening on its serve (a serve the decode missed
+is recovered from the spotter's serve probability and marked `inferred`); a
+serve nobody touched is a service attempt, not a rally. The FSM's are kept in
+`rallies_fsm`/`service_attempts_fsm`. Score and the attack heatmap stay
+FSM-derived. `scripts/apply_spotter_rallies.py` rebuilds a saved result into a
+fresh directory without rerunning detection. The spotter cannot tell warm-up from play and does
+not attribute a contact to a team, so exclude non-game time with
+`--match-config`. Train a checkpoint with
+`scripts/models/train_contact_spotter.py`. See
+[production contact spotter](docs/production_contact_spotter.md).
+
+## Dense contact spotting with counted structure
+
+An experimental replacement for the hand-written rally state machine: a dense
+per-frame model over the nine phase/contact labels, decoded with a
+constraint-aware Viterbi whose transitions, start/end labels and duration bounds
+are counted from the human annotations instead of written by hand.
+
+```powershell
+python scripts\evaluation\run_dense_contact_spotting.py --help
+```
+
+It uses the audited contact review in `data/contact_spatial_gold_v1`, which
+supplies verified contact frames, and needs no new labelling or extraction. On
+three whole-video folds the counted grammar beats threshold-tuned peak picking
+(core four-class macro F1 at +/-5 frames 0.7528 -> 0.7897 on pose-enabled
+analyses) mainly by removing false positives. The same metric scores the shipped
+FSM at 0.1561 once the pipeline is rerun with poses, so the dense spotter is
+about five times better at putting a contact on the right frame. A matched
+control shows the eight pose channels contribute little outside `block`.
+Rescoring that run into its two halves puts detection at 0.8605 type-agnostic F1
+and typing at 0.9208 accuracy on contacts it located, so the remaining error is
+in finding touches, not naming them. See
+[detection versus typing](docs/contact_detection_vs_typing.md),
+[dense contact spotting](docs/dense_contact_spotting.md) and the
+[landscape review](docs/event_detection_research_2026-10.md). Production models
+and datasets are unchanged.

@@ -70,6 +70,7 @@ Current high-value analysis options:
 --no-net-detection
 --match-config <JSON>
 --no-model-registry
+--contact-spotter <CHECKPOINT>
 --no-video
 ```
 
@@ -392,3 +393,153 @@ namespace, not identity continuity with positive ByteTrack IDs. Record proposal
 and accepted person-frame counts in annotation `player_detection` provenance.
 SAM feature sidecars tied to old annotations must not silently be reused as
 refreshed features for new recovered poses. Tests: `test_sam_pose_recovery.py`.
+
+## Dense contact spotting and constrained decoding (2026-10-27)
+
+`scripts/evaluation/run_dense_contact_spotting.py` is the first step of the plan
+in `docs/event_detection_research_2026-10.md`. It trains a dense nine-class
+phase/contact spotter over existing per-frame trajectory features and decodes it
+with `action_recognition/rally_spotting/constrained_decode.py`, whose transition,
+start/end and duration constraints are counted from the training fold only.
+Targets come from `action_recognition/rally_spotting/dense_contacts.py`
+(`dense_phase_contact_targets_v1`): human phases from the exported
+`dense_targets.npz`, verified contact frames from `data/contact_spatial_gold_v1`.
+
+Rules specific to this work:
+
+- Contact frames come from the audited review, not the original annotation
+  frame; they differ for 155 of 410 events. Never silently fall back.
+- Uncertain timing, uncovered non-core touches and ambiguous raw types are
+  masked, never trained as background. `wrong_event` is excluded without masking.
+- Constraints must be estimated on the **unguarded** target copy; the guard ring
+  separates contacts from phases and would forbid every contact.
+- The FSM baseline in `results/gold_v1_ball_reconstruction_conservative` ran
+  without poses (`pose_f` all zero, `p` empty) and with `net_y = 1080.0`. Its
+  0.034 core macro F1 is a floor, never the shipped FSM's quality.
+- Fair FSM baseline, measured 2026-10-28 on the pose-enabled rerun
+  `results/gold_pose_fsm_20261028_v1`: **0.1561** core macro F1 at +/-5 frames
+  (per fold 0.1912 / 0.1529 / 0.1241), recall 0.26-0.29 at precision 0.15-0.20.
+  Quote this number for the FSM, not 0.034. It emits more events than there are
+  contacts and still misses 70%; `serve` F1 is 0.00-0.03.
+- A pose-enabled rerun also changes the ball trajectory (contact-preserving
+  smoothing, median 1.2 px). Never attribute a gain to poses by comparing two
+  different analyses; use the matched control `--zero-pose-channels`, which
+  blanks the eight pose channels on the same analyses.
+- Measured pose effect on the dense spotter: +0.012 core / +0.037 raw macro F1,
+  concentrated almost entirely in `block` (raw F1 ~0.1 -> ~0.4). The peak-picking
+  control's improvement came from the trajectory, not from poses.
+- The counted grammar's margin shrinks as the per-frame model gets more precise
+  (+0.068 on frozen features, +0.002 on the matched control, +0.037 with poses)
+  and it lost the j3 fold of the control. Do not restate it as a uniform win.
+- Calibration for these videos comes from `configs/court_setups.json:setup_1` via
+  `scripts/evaluation/build_setup_calibration.py`. The root
+  `court_calibration.json` was measured on another camera and must not be used
+  for the 4K gold videos. The setup's four corners are the two end lines of the
+  full-court world frame (x in [-4.5, 4.5], y in [-9, 9], y = 0 under the net),
+  not a half court.
+- Detection/typing split measured 2026-10-28 by
+  `scripts/evaluation/score_contact_detection.py` (rescoring only, no training):
+  detection F1 0.8605 type-agnostic (0.8978 excluding `non_game`), typing on
+  located contacts 0.9208 four-class accuracy / 0.9157 macro F1. The halves
+  multiply back to the 0.7897 end-to-end score. Typing is already at
+  clip-classifier level, so do not propose a two-stage detector plus clip
+  classifier; the error is in detection. Detection recall is 0.92-0.96, so the
+  cost is false positives, not misses. See `docs/contact_detection_vs_typing.md`.
+- j3 is not a weak fold. 36 of its 60 false positives are in the warm-up before
+  its first human contact at frame 5012, which the human labelled `non_game`.
+  j3 carries 4958 `non_game` frames against 904 and 613 for the others, so its
+  training fold contains almost no warm-up. Excluding `non_game`, j3 detection
+  goes 0.7612 -> 0.8696. Do not quote j3 as evidence of weak contact detection.
+- Same split on the FSM: detection F1 0.4008 (recall ~0.5, precision ~0.33) and
+  typing accuracy 0.4889 on what it locates, `serve` typing F1 0.00-0.12. Both
+  halves fail independently; threshold tuning cannot fix it.
+- Production path (2026-10-28): `scripts/models/train_contact_spotter.py`
+  final-fits on all three gold videos and writes a `contact_spotter_v1`
+  checkpoint carrying members, normalisation, **decode constraints** and
+  provenance; `action_recognition/rally_spotting/contact_spotter.py` loads it;
+  `analyze_video.py --contact-spotter <path>` runs it. Library dataset
+  assembly lives in `action_recognition/rally_spotting/spotter_dataset.py`.
+  See `docs/production_contact_spotter.md`.
+- The constraints must ship inside the checkpoint. At inference there is no
+  labelled fold to count them from, so a checkpoint without them cannot be
+  decoded at all.
+- A final-fit checkpoint has **no** held-out score. Quote the leave-one-video-out
+  experiment for quality, never a number measured on its own training data.
+  There is also nothing to select an epoch on: best epoch ranged 3-15 across
+  folds and seeds, so the trainer uses a fixed budget plus a seed ensemble and
+  records that as an engineering decision.
+- The spotter replaces `all_events`/`ev`, and (2026-10-30) `rallies`,
+  `service_attempts` and `rally_lifecycle` via
+  `action_recognition/rally_spotting/rally_segmentation.py`
+  (`spotter_rallies_v1`). A rally opens on its serve; a missed serve is
+  recovered only from the spotter's own `serve` probability (peak >= 0.15,
+  0.3-3.5 s before the first contact) and stays marked `inferred`; a serve no
+  contact follows is `serve_not_played`, never a rally, and is not split into
+  ace/fault. Contacts without serve evidence join no rally. FSM output is in
+  `all_events_fsm`/`ev_fsm`/`rallies_fsm`/`service_attempts_fsm`/
+  `rally_lifecycle_fsm`; `match_analytics` and `attack_heatmap` stay
+  FSM-derived. JIZ3 check: 22 rallies all on a serve (8 inferred, visually
+  plausible), not a labelled score. `scripts/apply_spotter_rallies.py`
+  rebuilds a saved result into a fresh directory.
+- Do not build a phase gate for warm-up. Measured: the decoder labels warm-up
+  `rally_live`/`serve_flight`, a surrounding-phase gate catches 1 of 36 and the
+  phase probability margin carries no signal (the contact class takes the mass
+  at a contact frame). Use `--match-config`, or train on more `non_game`.
+- `scripts/evaluation/overlay_calibration_check.py` draws a calibration on a
+  frame. `setup_1` was confirmed visually to fit `xZbD8fx3D4k_1_4k`, which is
+  the same fixed camera as the gold videos and is not in any training set.
+- Calibrations from `scripts/interactive_court_calibration.py` are in a
+  DIFFERENT corner order than `GameAnalyzer._load_calibration` expects: the
+  tool starts at the line nearest the camera and names it `back_line_points`,
+  the loader reads that as the court bottom and expects the far line first. The
+  homography is valid either way, so an overlay looks right while
+  `court_bottom` lands on the far line and the world y axis is reversed. Always
+  run `scripts/normalize_calibration.py` on a freshly clicked calibration, and
+  check `world y=-9 < y=0 < y=+9` in image rows. The tool also accepts a still
+  image as `-i`, which beats a video whose first frame has players on the lines.
+- Contact review for unannotated video:
+  `action_recognition/annotator/contact_review_annotator.py` turns a batch of
+  `--contact-spotter` analyses into a review queue. Records start
+  `label_source: "model"`, `verified: false`; a keystroke makes them
+  `"human"`/true while `predicted_type` keeps the model's answer beside
+  `review.type`. `unsure` stays unverified. Human-added contacts carry
+  `origin: "human"` and no prediction. The queue fingerprints both the
+  annotations and the stats file and refuses a changed analysis. Nothing is
+  promoted into any dataset; that step does not exist. See
+  `docs/contact_review_workflow.md`.
+- Pose effect settled deterministically 2026-10-29, paired over seeds 42/43/44:
+  live 0.7978 mean vs blanked 0.7839, all three pairs favouring poses, but the
+  +0.0139 mean difference is smaller than the 0.0176 spread between seeds and
+  the 3-seed ensembles reverse the order (blanked 0.8064 vs live 0.8014). Treat
+  the four-class pose effect as zero, not as a small gain.
+- Team attribution measured 2026-10-29 against 406 human labels
+  (`data/contact_team_gold_v1/labels.json`, collected with
+  `action_recognition/annotator/team_attribution_annotator.py`): nearest player
+  0.685, its foot side 0.715, ball-vs-divider 0.515 and degenerate,
+  net-crossing chain 0.603. Calibration was ruled out (offset sweep peaks at
+  0 px on all three videos) and so was a side-switch mix-up (accuracy flat at
+  ~70% throughout). The cause is an airborne ball under 2D court geometry, plus
+  net congestion: attack is the worst type at 0.558 and restricting to a player
+  within 60 px makes it worse. Do not propose deriving the side from court
+  geometry again. The spotter writes `team: null`; per-team statistics are not
+  available. Untried: a learned binary classifier on those labels, and the
+  ball's pixel size as a depth cue (annotations store only its centre). See
+  `docs/team_attribution.md`.
+- Reviewed-queue expansion measured 2026-10-29
+  (`scripts/evaluation/run_reviewed_expansion.py`,
+  `results/reviewed_expansion_20261029_v1`): adding the four reviewed
+  new-camera videos as sparse contact-only targets
+  (`action_recognition/rally_spotting/reviewed_contacts.py`, trainer flag
+  `--reviewed`) lifts new-camera recall 0.851 -> 0.946 and serve recall
+  0.708 -> 0.938, but gold detection precision drops 0.828 -> 0.806 (limit
+  0.02), and the model emits 917 events against 414 human contacts on held-out
+  new videos. **Not promoted**; `spotter_20261028_v1` stays. The cause is that
+  the targets have no background. The next step is to review the plus models'
+  extra events for true negatives, not to relax the rule. `new_base`
+  reproduces the shipped checkpoint exactly. See
+  `docs/reviewed_queue_training.md`.
+- Runs: `results/dense_contact_spotting_20261027_v1` (frozen, ball-only),
+  `results/dense_contact_spotting_20261028_v2` (poses live) and
+  `..._v2_nopose` (matched control). Model-selection estimates only; the
+  experimental checkpoints are not production-loadable and nothing is promoted.
+  See `docs/dense_contact_spotting.md`.
