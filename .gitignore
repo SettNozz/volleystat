@@ -114,7 +114,8 @@ models/_registry_cache/
 
 # Vendored SAM3 checkout (133 MB). Clone it next to the repo instead:
 #   git clone https://github.com/facebookresearch/sam3 third_party/sam3
-third_party/
+third_party/*
+!third_party/vnl_stes/
 
 # Knowledge graph output — rebuilt from the code with `graphify update .`
 graphify-out/

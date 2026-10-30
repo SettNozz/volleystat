@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Чия команда торкнулась</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --ink: #e8eaed; --muted: #9aa3af;
+    --a: #c026d3; --b: #0ea5e9; --ok: #22c55e; --bad: #ef4444; --line: #2a2f3a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 18px; padding: 10px 18px;
+    border-bottom: 1px solid var(--line); position: sticky; top: 0;
+    background: var(--bg); z-index: 5;
+  }
+  .title { font-weight: 700; }
+  .meta { color: var(--muted); font-size: 13px; }
+  .bar { flex: 1; height: 8px; background: var(--panel); border-radius: 999px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--ok); width: 0; transition: width .15s; }
+  main { display: grid; grid-template-columns: 1fr 300px; gap: 16px; padding: 16px; align-items: start; }
+  .stage { background: var(--panel); border-radius: 12px; padding: 10px; }
+  .stage img { width: 100%; display: block; border-radius: 8px; background: #000; }
+  .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  button.choice {
+    font: inherit; font-weight: 700; font-size: 17px; padding: 16px 10px;
+    border-radius: 10px; border: 2px solid transparent; cursor: pointer;
+    color: #fff; background: #333;
+  }
+  button.choice.a { background: var(--a); }
+  button.choice.b { background: var(--b); }
+  button.choice kbd {
+    display: inline-block; margin-right: 8px; padding: 1px 8px; border-radius: 5px;
+    background: rgba(0,0,0,.35); font: inherit; font-size: 14px;
+  }
+  .side { display: grid; gap: 12px; }
+  .card { background: var(--panel); border-radius: 12px; padding: 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+  .row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; }
+  .row b { font-variant-numeric: tabular-nums; }
+  .verdict { font-weight: 700; padding: 10px; border-radius: 8px; text-align: center; }
+  .verdict.ok { background: rgba(34,197,94,.15); color: var(--ok); }
+  .verdict.bad { background: rgba(239,68,68,.15); color: var(--bad); }
+  .verdict.none { background: rgba(154,163,175,.12); color: var(--muted); }
+  .keys { color: var(--muted); font-size: 13px; }
+  .keys kbd { background: #222733; border-radius: 4px; padding: 1px 6px; }
+  .hidden { display: none; }
+  .warn { color: #fbbf24; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">Чия команда торкнулась</span>
+  <span class="meta" id="position">—</span>
+  <span class="bar"><i id="progress"></i></span>
+  <span class="meta" id="counts">—</span>
+</header>
+
+<main>
+  <section class="stage">
+    <img id="frame" alt="кадр контакту">
+    <div class="choices">
+      <button class="choice a" id="btnA"><kbd>A</kbd>Дальня половина</button>
+      <button class="choice b" id="btnB"><kbd>B</kbd>Ближня половина</button>
+    </div>
+    <p class="keys">
+      <kbd>A</kbd> дальня · <kbd>B</kbd> ближня · <kbd>S</kbd> не певен ·
+      <kbd>Z</kbd> назад · <kbd>←</kbd> <kbd>→</kbd> рух без відповіді
+    </p>
+  </section>
+
+  <aside class="side">
+    <div class="card">
+      <h2>Контакт</h2>
+      <div class="row"><span>Відео</span><b id="video">—</b></div>
+      <div class="row"><span>Кадр</span><b id="frameNo">—</b></div>
+      <div class="row"><span>Тип</span><b id="type">—</b></div>
+      <div class="row"><span>М'яч</span><b id="ballStatus">—</b></div>
+      <p class="warn hidden" id="noBall">М'яч не видно — познач, якщо впізнаєш дію, інакше <kbd>S</kbd>.</p>
+    </div>
+
+    <div class="card" id="revealCard">
+      <h2>Геометрія</h2>
+      <p class="keys" id="revealHint">Показую тільки після твоєї відповіді.</p>
+      <div id="reveal" class="hidden">
+        <div class="verdict none" id="verdict">—</div>
+        <div class="row"><span>Найближчий гравець</span><b id="gNearest">—</b></div>
+        <div class="row"><span>Відрив, px</span><b id="gMargin">—</b></div>
+        <div class="row"><span>Сторона м'яча</span><b id="gSide">—</b></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Збіг на розмічених</h2>
+      <div id="agreement" class="keys">поки нема даних</div>
+    </div>
+  </aside>
+</main>
+
+<script>
+const state = { items: [], labels: {}, index: 0, videos: {} };
+const $ = (id) => document.getElementById(id);
+
+function teamWord(team) {
+  return team === 'team_a' ? 'A · дальня' : (team === 'team_b' ? 'B · ближня' : '—');
+}
+
+async function load() {
+  const data = await (await fetch('/api/project')).json();
+  state.items = data.items;
+  state.labels = data.labels;
+  state.videos = data.videos;
+  state.index = Math.min(
+    state.items.findIndex((item) => !state.labels[item.id]) === -1
+      ? state.items.length - 1
+      : state.items.findIndex((item) => !state.labels[item.id]),
+    state.items.length - 1,
+  );
+  render();
+  refreshAgreement();
+}
+
+// Decoding a 4K frame takes a moment, so the next few are fetched while the
+// current one is being judged. The browser cache serves them instantly when
+// the index moves on.
+const prefetched = new Set();
+function prefetch(from, count) {
+  for (let i = from; i < Math.min(from + count, state.items.length); i++) {
+    const id = state.items[i].id;
+    if (prefetched.has(id)) continue;
+    prefetched.add(id);
+    new Image().src = `/api/frame/${encodeURIComponent(id)}`;
+  }
+}
+
+function render() {
+  const item = state.items[state.index];
+  if (!item) return;
+  $('frame').src = `/api/frame/${encodeURIComponent(item.id)}`;
+  prefetch(state.index + 1, 3);
+  $('video').textContent = item.video_id;
+  $('frameNo').textContent = item.frame;
+  $('type').textContent = item.contact_type || '—';
+  $('ballStatus').textContent = item.ball_status || '—';
+  $('noBall').classList.toggle('hidden', Boolean(item.ball));
+  $('position').textContent = `${state.index + 1} / ${state.items.length}`;
+  const done = Object.keys(state.labels).length;
+  $('counts').textContent = `${done} розмічено`;
+  $('progress').style.width = `${(done / state.items.length) * 100}%`;
+
+  const saved = state.labels[item.id];
+  if (saved && item.attribution) {
+    showReveal(item.attribution, saved.team);
+  } else {
+    $('reveal').classList.add('hidden');
+    $('revealHint').classList.remove('hidden');
+  }
+}
+
+function showReveal(attribution, human) {
+  $('revealHint').classList.add('hidden');
+  $('reveal').classList.remove('hidden');
+  const predicted = attribution.prediction;
+  const verdict = $('verdict');
+  if (!predicted) {
+    verdict.className = 'verdict none';
+    verdict.textContent = 'геометрія не дала відповіді';
+  } else if (human === 'unsure') {
+    verdict.className = 'verdict none';
+    verdict.textContent = `геометрія каже ${teamWord(predicted)}`;
+  } else {
+    const ok = predicted === human;
+    verdict.className = `verdict ${ok ? 'ok' : 'bad'}`;
+    verdict.textContent = ok ? 'геометрія вгадала' : `геометрія помилилась: ${teamWord(predicted)}`;
+  }
+  const nearest = attribution.nearest_player || {};
+  const side = attribution.ball_side || {};
+  $('gNearest').textContent = teamWord(nearest.team);
+  $('gMargin').textContent = nearest.margin_px == null ? '—' : nearest.margin_px.toFixed(0);
+  $('gSide').textContent = teamWord(side.team);
+}
+
+async function choose(team) {
+  const item = state.items[state.index];
+  if (!item) return;
+  const response = await fetch('/api/label', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: item.id, team }),
+  });
+  if (!response.ok) return;
+  const result = await response.json();
+  state.labels[item.id] = { team };
+  item.attribution = result.attribution;
+  showReveal(result.attribution, team);
+  const done = Object.keys(state.labels).length;
+  $('counts').textContent = `${done} розмічено`;
+  $('progress').style.width = `${(done / state.items.length) * 100}%`;
+  // Straight on: one key per contact is the whole point. The reveal for this
+  // contact stays visible until the next frame paints.
+  setTimeout(() => move(1), 110);
+  if (done % 20 === 0) refreshAgreement();
+}
+
+function move(step) {
+  const next = state.index + step;
+  if (next < 0 || next >= state.items.length) return;
+  state.index = next;
+  render();
+}
+
+async function refreshAgreement() {
+  const data = await (await fetch('/api/agreement')).json();
+  if (!data.comparable) {
+    $('agreement').textContent = 'поки нема даних';
+    return;
+  }
+  $('agreement').innerHTML = data.methods.map((m) => {
+    const pct = (m.accuracy_where_predicted * 100).toFixed(1);
+    const cov = (m.coverage * 100).toFixed(0);
+    return `<div class="row"><span>${m.method}</span><b>${pct}% <span class="keys">(${cov}% покр.)</span></b></div>`;
+  }).join('') + `<div class="keys" style="margin-top:6px">на ${data.comparable} контактах</div>`;
+}
+
+document.addEventListener('keydown', (event) => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  const key = event.key.toLowerCase();
+  if (key === 'a') { event.preventDefault(); choose('team_a'); }
+  else if (key === 'b') { event.preventDefault(); choose('team_b'); }
+  else if (key === 's') { event.preventDefault(); choose('unsure'); }
+  else if (key === 'z') { event.preventDefault(); move(-1); }
+  else if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1); }
+  else if (event.key === 'ArrowRight') { event.preventDefault(); move(1); }
+});
+$('btnA').addEventListener('click', () => choose('team_a'));
+$('btnB').addEventListener('click', () => choose('team_b'));
+load();
+</script>
+</body>
+</html>

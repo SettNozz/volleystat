@@ -30,6 +30,28 @@ unchanged until the estimates have been independently validated.
 Viewer shows contacts with unknown team as `—` when both teams are selected;
 selecting one team includes only contacts attributed to that team.
 
+The [frozen OSNet follow-up](docs/player_reid_experiment.md) compares learned
+appearance and explicit lost-ID recovery on those same detections, with the
+existing human checks and a separate simulated detection blackout.
+
+The [author STES temporal experiment](docs/author_stes.md) fine-tunes the pinned
+RegNet-Y/GSM/three-layer BiGRU implementation separately from production.
+
+The experimental continuous RGB event spotter predicts contact times and
+background without FSM filtering. It uses frozen MobileNet features and a
+bidirectional GRU as a simplified STES-inspired baseline; see
+[RGB spotting experiment](docs/rgb_event_spotting.md). It is not a production
+model or an exact reproduction of VNL-STES.
+
+Event predictions suppress serve during an active rally and outside an FSM
+serving episode. A restart within 3 seconds produces a warning by default:
+FSM end times are estimates, and this heuristic has not been validated against
+human boundaries. Optional `enforce_restart_pause=True` restores strict pause
+enforcement, including blocking an early episode until a later restart.
+Missing balls do not end rallies. Raw predictions, suppression and warning
+reasons are retained in `event_model_decision`; configure the pause through
+`StreamingEventPredictor(..., serve_restart_seconds=3.0)`.
+
 Offline volleyball-video analytics for 4K fixed-camera footage. Pipeline detects and reconstructs ball trajectory, tracks player poses, calibrates court and net geometry, segments rallies, derives match analytics, predicts contact events, and exports viewer-ready annotations.
 
 Current production path is `analyze_video.py` -> `GameAnalyzer` -> JSON/video artifacts -> `viewer.py`.
@@ -42,8 +64,8 @@ Current production path is `analyze_video.py` -> `GameAnalyzer` -> JSON/video ar
 | Ball cleanup | Static-source suppression and contact-preserving quadratic smoothing | Stable trajectory without parked false positives |
 | Gap reconstruction | Conservative or contact-aware offline reconstruction | Inferred 2D coordinates with provenance/confidence |
 | Player tracking | YOLO11m-pose + ByteTrack + calibrated court gate | Player boxes, 17 keypoints, track/team IDs |
-| Player identity | Frozen OSNet galleries + Kalman motion | Stable roster IDs; unknowns retained |
-| Model output cache | Source/model/input fingerprints | Replay compatible saved outputs without inference |
+| Player identity | Offline frozen OSNet galleries + Kalman motion + lost-ID recovery | Roster IDs, confirmed substitutes and provenance; unknowns preserved |
+| Model output cache | Persistent source/model/input fingerprints; raw detections, poses, embeddings and logits | Replay hypotheses without repeating compatible neural inference |
 | Court and net | Perspective calibration, SAM net tape, optional SAM3 posts, Hough fallback | Court homography, tape band, net-floor divider |
 | Game logic | Integrated volleyball FSM + clean trajectory replay | Rallies, serves, contacts, attack map |
 | Event model | Four-class causal sequence model | `serve`, `reception`, `pass`, `attack` |
@@ -69,6 +91,9 @@ pip install -r requirements.txt
 
 # Viewer, annotators and Parquet feature files
 pip install flask flask-cors pyarrow
+
+# Pinned offline player-identity encoder (new directory, no model replacement)
+python scripts/models/install_player_reid.py
 ```
 
 `data/`, `models/`, `results/`, local MLflow storage and `court_calibration*.json` are gitignored. They must be provisioned separately.
@@ -108,13 +133,13 @@ python analyze_video.py --video game.webm --output results\game_recon `
 # JSON and original-video viewer (default; --no-video remains compatible)
 python analyze_video.py --video game.webm --output results\game --no-video
 
-# Hypothesis replay: fail instead of rerunning models
+# Hypothesis replay: fail on missing model outputs instead of running inference
 python analyze_video.py --video game.webm --output results\game_hypothesis --require-model-cache
 
-# Explicit annotated video export
+# Explicitly encode an annotated video
 python analyze_video.py --video game.webm --output results\game_export --require-model-cache --render-video
 
-# Disable stable identities
+# Raw tracking only, without the default offline player-identity pass
 python analyze_video.py --video game.webm --output results\game_tracks --no-player-identity
 
 # Manual set boundaries and stable team identities
@@ -220,13 +245,13 @@ Use `--posts-only` to keep saved tape bounds and refresh only posts/team divider
 
 ## Authoritative 4K event dataset
 
-Current curated clip dataset:
+Verified active checkpoint dataset:
 
 ```text
-data/event_clips_4k_gold_v1
+data/event_clips_three_full_gold_causal_120f_v1
 ```
 
-Current local snapshot contains 430 human-labelled clips from three complete 4K videos:
+The active checkpoint uses `data/event_clips_three_full_gold_causal_120f_v1`: 414 human-labelled clips (410 core examples) from three complete 4K videos. This was verified against its MLflow parameters. The older 430-clip `data/event_clips_4k_gold_v1` remains available unchanged. Sources:
 
 - `j0gRhgFCgIs_4_4k`
 - `j3BO9GgUFBI_3_4k`
@@ -248,10 +273,10 @@ Train current four-class causal event model:
 
 ```powershell
 python -m action_recognition.training.train_event_sequence `
-  --manifest data\event_clips_4k_gold_v1\manifest.json `
-  --features-dir data\event_clips_4k_gold_v1\features_reconstructed_conservative_v1 `
-  --model transformer `
-  --sequence-len 60 `
+  --manifest data\event_clips_three_full_gold_causal_120f_v1\manifest.json `
+  --features-dir data\event_clips_three_full_gold_causal_120f_v1\features `
+  --model multiscale `
+  --sequence-len 120 --short-sequence-len 60 `
   --val-stems Khe4P8QcJkg_5_4k `
   --checkpoint-dir action_recognition\models\experiments_4k_gold_transformer `
   --epochs 50 `
@@ -406,6 +431,54 @@ identity and keeps recovery inference separate from ByteTrack. Recovered poses
 retain their model provenance and a separate negative SAM-mask ID namespace;
 all poses still pass the existing court gate and six-per-team cap. See the
 [SAM workflow](docs/sam_people_masks.md) for the complete commands and limitations.
+
+
+## Offline event training with teams and skeletons
+
+The user-authorized offline experiment uses the same 414 human clips with
+fixed contact-centred context (60 frames before and 59 after), fresh 4K poses,
+per-team anatomical contact features and explicit missing-observation flags.
+It compares three feature groups across three whole-video folds, preserves
+old data/checkpoints, and leaves production unchanged. See
+[offline event experiment](docs/offline_event_training.md) for commands and results.
+
+## Contact-candidate offline follow-up
+
+The isolated follow-up reuses frozen skeletons, binds each side's contact
+features to one anatomical candidate and tests central-frame classification
+while retaining future context. See `docs/offline_event_training.md` and
+`python scripts/evaluation/run_contact_candidate_experiment.py --help`.
+Existing datasets, checkpoints and production defaults remain preserved.
+
+## Offline trajectory-change experiment
+
+`python scripts/evaluation/run_trajectory_contact_experiment.py --help` runs
+matched old-input controls against a small block of ball motion before/after
+contact, with three seeds and whole-video folds. See
+[experiment details](docs/offline_event_training.md). Original data and
+production models are preserved.
+
+### Spatial contact review
+
+Run `start_contact_review.cmd` and open http://127.0.0.1:5062.
+[Ukrainian annotation guide](docs/contact_spatial_annotation_uk.md).
+
+## Reviewing spotted contacts on new video
+
+After running a video through `--contact-spotter`, review the predictions one
+keystroke at a time:
+
+```powershell
+python -m action_recognition.annotator.contact_review_annotator --annotations-dir results\batch
+# http://localhost:5059
+```
+
+Type with `1`-`6`, side with `A`/`B`, `X` rejects a false positive, `+` inserts
+one the model missed. Records stay `label_source: "model"`, `verified: false`
+until a keystroke makes them human, and the model's own prediction is kept
+beside the correction. Calibrate a new camera first and run
+`scripts/normalize_calibration.py` on the result. See
+[contact review workflow](docs/contact_review_workflow.md).
 
 ## Contact spotting in the pipeline
 

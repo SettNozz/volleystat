@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Experiment outputs and checkpoints
+exp/
+
+# Data directory (symlinks to local datasets)
+data/
+
+# Weights & Biases
+wandb/
+
+# Gradio cache
+.gradio/
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+work_dir/
+tmp/
+*.ipynb
+debug.py

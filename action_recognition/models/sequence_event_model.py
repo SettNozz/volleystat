@@ -66,8 +66,9 @@ class _TemporalTransformerBranch(nn.Module):
 
     def __init__(self, input_dim: int, d_model: int = 96, nhead: int = 4,
                  num_layers: int = 3, dropout: float = 0.2,
-                 max_len: int = 256):
+                 max_len: int = 256, contact_center_pool: bool = False):
         super().__init__()
+        self.contact_center_pool = bool(contact_center_pool)
         self.norm = nn.LayerNorm(input_dim)
         self.proj = nn.Linear(input_dim, d_model)
         self.pos = nn.Parameter(torch.zeros(1, max_len, d_model))
@@ -78,6 +79,7 @@ class _TemporalTransformerBranch(nn.Module):
         self.encoder = nn.TransformerEncoder(layer, num_layers=num_layers)
         self.attn_pool = nn.Linear(d_model, 1)
 
+
     def forward(self, x):
         if x.shape[1] > self.pos.shape[1]:
             raise ValueError(
@@ -87,6 +89,8 @@ class _TemporalTransformerBranch(nn.Module):
         h = self.proj(self.norm(x)) + self.pos[:, :x.shape[1]]
         h = self.encoder(h)
         weights = torch.softmax(self.attn_pool(h), dim=1)
+        if self.contact_center_pool:
+            return h[:, x.shape[1] // 2]
         return (h * weights).sum(dim=1)
 
 
@@ -96,19 +100,25 @@ class MultiScaleEventTransformer(nn.Module):
     def __init__(self, input_dim: int = NUM_FEATURES,
                  short_sequence_len: int = 60, d_model: int = 96,
                  dropout: float = 0.2, num_classes: int = NUM_CLASSES,
-                 max_len: int = 256):
+                 max_len: int = 256, short_window_centered: bool = False,
+                 contact_center_pool: bool = False):
         super().__init__()
         if num_classes != 4 or EVENT_TYPES != ["serve", "reception", "pass", "attack"]:
             raise ValueError("multi-scale model requires the four-class core taxonomy")
         if short_sequence_len <= 0:
             raise ValueError("short_sequence_len must be positive")
         self.short_sequence_len = int(short_sequence_len)
+        self.short_window_centered = bool(short_window_centered)
+        self.contact_center_pool = bool(contact_center_pool)
+        if self.contact_center_pool and not self.short_window_centered:
+            raise ValueError('Contact-centre pooling requires centred offline windows')
         self.long_branch = _TemporalTransformerBranch(
-            input_dim, d_model=d_model, dropout=dropout, max_len=max_len
+            input_dim, d_model=d_model, dropout=dropout, max_len=max_len,
+            contact_center_pool=self.contact_center_pool,
         )
         self.short_branch = _TemporalTransformerBranch(
             input_dim, d_model=d_model, dropout=dropout,
-            max_len=self.short_sequence_len,
+            max_len=self.short_sequence_len, contact_center_pool=self.contact_center_pool,
         )
         self.long_head = nn.Sequential(nn.Dropout(dropout), nn.Linear(d_model, 2))
         self.short_head = nn.Sequential(nn.Dropout(dropout), nn.Linear(d_model, 2))
@@ -119,7 +129,11 @@ class MultiScaleEventTransformer(nn.Module):
                 f"multi-scale input needs at least {self.short_sequence_len} frames"
             )
         long_logits = self.long_head(self.long_branch(x))
-        short_context = x[:, -self.short_sequence_len:]
+        if self.short_window_centered:
+            start = (x.shape[1] - self.short_sequence_len) // 2
+            short_context = x[:, start:start + self.short_sequence_len]
+        else:
+            short_context = x[:, -self.short_sequence_len:]
         short_logits = self.short_head(self.short_branch(short_context))
         return torch.cat((long_logits, short_logits), dim=1)
 
@@ -157,7 +171,9 @@ class DualStreamProjectedLSTM(nn.Module):
 def build_model(model_type: str, input_dim: int = NUM_FEATURES,
                 num_classes: int = NUM_CLASSES,
                 short_sequence_len: int = 60,
-                sequence_len: int = 60) -> nn.Module:
+                sequence_len: int = 60,
+                short_window_centered: bool = False,
+                contact_center_pool: bool = False) -> nn.Module:
     if model_type == "lstm":
         return SequenceEventLSTM(input_dim=input_dim, num_classes=num_classes)
     if model_type == "transformer":
@@ -168,6 +184,8 @@ def build_model(model_type: str, input_dim: int = NUM_FEATURES,
             short_sequence_len=short_sequence_len,
             num_classes=num_classes,
             max_len=max(256, sequence_len),
+            short_window_centered=short_window_centered,
+            contact_center_pool=contact_center_pool,
         )
     if model_type == "dual":
         return DualStreamProjectedLSTM(traj_dim=input_dim, num_classes=num_classes)
@@ -197,6 +215,8 @@ def load_checkpoint(path, device="cpu"):
         num_classes=len(checkpoint_event_types),
         short_sequence_len=int(ckpt.get("short_sequence_len", 60)),
         sequence_len=int(ckpt.get("sequence_len", 60)),
+        short_window_centered=bool(ckpt.get("short_window_centered", False)),
+        contact_center_pool=bool(ckpt.get("contact_center_pool", False)),
     )
     ckpt["event_types"] = checkpoint_event_types
     model.load_state_dict(ckpt["state_dict"])
