@@ -414,6 +414,119 @@ $py=(Get-Content -Raw '.graphify_python').Trim()
   `test_pose_completion_ui.cjs`. Never enable estimated contact evidence merely
   because the skeleton looks continuous.
 
+## Isolated contact-author learning (2026-10-30)
+
+- User authorized CPU learning in an independent worktree/branch. The active
+  experiment is `codex/contact-author-learning`, based on `202bd7a`; never
+  switch or stage files in the shared checkout used by another process.
+- `scripts/evaluation/run_contact_author_learning.py` creates a fresh manifest,
+  frozen features and comparison for 397 human team labels (205 far, 192 near),
+  three whole source videos, no person labels. Print/verify manifest, feature
+  path, source hashes, provenance, schema, split and counts before fitting.
+- `contact_author_side_frozen_v1` uses only saved ball/observed poses, normalized
+  body/hand geometry and offline motion. Human ball xy, raw/player IDs, video
+  names and absolute match times are excluded from numeric model inputs.
+  Fold scalers fit training videos only. Audited event timing/type is given
+  in the gold comparison; JIZ3 supplies model-predicted timing/type.
+- Fixed logistic/ExtraTrees/HistGradient candidates compare geometry, typed and
+  layout feature views. Layout is diagnostic, excluded from automatic choice
+  because gold videos share a camera. No random clip split, early-stopping
+  holdout, production checkpoint/registry update or image-model inference.
+- Best review candidate: ExtraTrees typed, leave-one-video-out team accuracy
+  0.84635 / macro F1 0.84596. Score >=0.65 or <=0.35 gives 0.92617 accuracy at
+  0.75063 coverage. Scores are uncalibrated. These are selection estimates,
+  not an untouched test set, final-fit score or individual-player accuracy.
+- `run_contact_author_mil.py` trains a shared latent actor scorer from team
+  bags only, seeds 42/43/44, fixed 140 epochs, CPU/two threads. Geometry MIL
+  reaches 0.79093 team accuracy; typed MIL 0.77330, so neither is selected.
+  Latent actors are never human person labels or detector ground truth.
+- Experimental weights/data stay under the worktree's fresh `results/` dirs.
+  Completed flat run: `contact_author_learning_20261030_v3`; MIL/review run:
+  `contact_author_mil_20261030_v1`. No source annotations/events/IDs/ball/features,
+  trained spotter/ReID or another worktree is rewritten.
+- `<stem>_player_contact_experiment.json` binds every frozen proposal report to
+  SHA256 of both byte-identical source JSON files. Viewer validates event
+  indices/frames/types and rejects changed sources or fake human verification.
+  Human attribution corrections remain separate and shared across approaches.
+- Independent viewer port 5053 offers 11 comparison approaches. Chosen JIZ3
+  result: 24 assigned, 21 other-side, 58 unresolved from the SAME 103 events.
+  Uncertain suggestions are excluded from totals; human overrides suppress old
+  conflicting suggestions. A paused amber box marks the proposed actor only
+  at the exact evidence frame and never rewrites source pose identities.
+- No block contacts have human side labels in this training set; do not quote
+  the measured team accuracy as block or per-person performance. JIZ3 and its
+  camera are unlabelled transfer; the user will visually validate it.
+- See `docs/contact_author_learning.md`; tests `test_contact_author_learning.py`,
+  `test_contact_author_experiments.py`, `test_contact_author_mil.py`, and
+  `test_contact_author_ui.cjs`.
+
+## Volleyball contact lab (2026-10-30)
+
+- `scripts/evaluation/run_volleyball_contact_lab.py` compares piecewise 2D
+  flight, moving-limb, joint and consensus detection, bounded retiming and
+  forward/backward team attribution. Core: `src/tracking/volleyball_contact_lab.py`.
+  Research adaptations and limits: `docs/volleyball_contact_lab.md`.
+- Keep the independent `codex/contact-author-learning` worktree. Active reviewer
+  output: `results/volleyball_contact_lab_20261030_v3/viewer_result`, port 5054.
+  v1/v2 remain preserved; v3 reuses v2's hash-verified evidence/metrics and
+  isolates sequence side changes from the optional joint actor-ranking ablation.
+- Detection targets are 397 distinct audited timestamps, including ambiguous
+  raw action types; team data are 397 conclusive records plus nine unsure.
+  These sets differ. Derived context groups exact same-frame records with all
+  IDs retained; unsure/uncertain timing resets context. Human sources stay intact.
+- Fold thresholds and team transitions use only the other two whole videos.
+  Cached OOF spotter control must share annotation/phase hashes. Human coverage
+  and `non_game` labels are scoring masks only, never inference gates.
+- Independent detectors lost: F1@5 flight .4643, limbs .3319, joint .4496,
+  consensus .7473 vs spotter .8735. Bounded retiming tied .8735. This is an
+  audited time-only protocol, not a new score for the production checkpoint.
+- On the spotter's predicted times/types, correct team among 365 matched
+  contacts improves 309/365 (.8466) to 341/365 (.9342); joint detection/team F1
+  .7375 to .8138. Known-time/type side control is .8463 to .9320, not .9421
+  from the superseded duplicate-context preliminary run. All are model-selection
+  estimates; zero human person/contact-author labels and no block-team score.
+- Use spotter timing + sequence side evidence for review. The selected variant
+  preserves local actor ranking and source event times/types; joint ranking is
+  a separate unvalidated-person diagnostic. Never claim P1–P7/JIZ3 accuracy.
+- `/load?...&contact_lab=1` restores the read-only lab. A separate source-bound
+  `*_contact_lab.json` may contain novel **untyped** contacts; do not replace
+  `all_events`, rallies/FSM, source poses/IDs or original JSON with these peaks.
+  No model registry promotion, image inference, MP4 render or dataset rewrite.
+- Tests: `test_volleyball_contact_lab.py`, `test_volleyball_contact_lab_viewer.py`,
+  `test_volleyball_contact_lab_ui.cjs`.
+
+## P4 case corrections (2026-10-30)
+
+- Human feedback is in `configs/contact_case_reviews/JIZ3exHe3hA_P4_20261030_v1.json`,
+  bound to the exact analysis pair. Three author exclusions (384/1051/11223),
+  one positive P4 identity/contact reference (4915), one identity exclusion
+  (6376 raw 1262), and opponent-team confirmation at 11223. The latter does not
+  name the opponent. The 6376 exclusion does not rule out P4 on another skeleton.
+- Replay: `scripts/evaluation/refine_contact_actor_cases.py`; core:
+  `src/tracking/contact_actor_context.py`; docs: `docs/P4_contact_case_corrections.md`.
+  Current isolated reviewer output is `results/P4_action_context_20261030_v4`.
+  Preserve previous runs; v1 failed the positive reception check; v2/v3 still
+  showed an insufficiently supported replacement blocker at f384.
+- Use same-arm hand contact, shoulder-relative arm motion, two-sided raw-track
+  identity through jumps and observed standing/landing anchors. Never infer
+  rotational eligibility or the ball's team from court/airborne-foot geometry.
+  Backcourt attacks remain allowed. Ground depth is a soft positional cue.
+- Only the positive f4915 identity reference enters appearance inference.
+  Negative case answers are evaluation checks, not timestamp-specific vetoes.
+  Reuse existing OSNet embeddings; validate cache hashes and every key/raw ID/bbox.
+  No training, fresh image inference, gallery contamination or source rewrites.
+- Source P4 on receiving track 1262 is rejected; blocking track 1267 is a derived
+  P4 proposal. f384 author remains unresolved after visual inspection, not P1.
+  f1051 proposes P1; f4915 retains P4; f11223 proposes an opponent. Do not claim
+  user verified the new track-1267 or P1 labels, or the interpolated ball at4915.
+- Read-only viewer context labels are `P4*` (derived correction), `ID?` (source
+  P4 rejected). Rejected contact candidates must not draw as accepted authors.
+  Five review buttons display exact user frames with evidence times separate.
+- Five passing case conditions are development regression checks, not held-out
+  person accuracy. Older team metrics do not validate this actor/identity path.
+  Tests: `test_contact_actor_context.py`, `test_contact_actor_case_cache.py`, and
+  extended `test_volleyball_contact_lab_ui.cjs`.
+
 ## Repository map
 
 ```text

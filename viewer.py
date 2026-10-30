@@ -44,6 +44,8 @@ from src.utils.path_utils import local_path_from_uri
 from src.tracking.player_contacts import (
     apply_reviews, build_player_contacts, source_fingerprint,
 )
+from src.tracking.contact_author_experiments import ExperimentSourceChanged, experiment_path, load_experiment
+from src.tracking.volleyball_contact_lab import load_lab
 
 app = Flask(__name__, template_folder="viewer/templates", static_folder="viewer/static")
 # Jinja caches compiled templates in memory, so UI edits need a server restart
@@ -456,6 +458,8 @@ def load_existing():
         "original_video_path_url": urllib.parse.quote(orig_video, safe=""),
     }
     from flask import redirect
+    if request.args.get("contact_lab") == "1":
+        return redirect(f"/contact-lab/{job_id}")
     return redirect(f"/results/{job_id}")
 
 
@@ -517,19 +521,48 @@ def annotations(job_id):
     return send_file(job["annotations_path"], mimetype="application/json")
 
 
+@app.route("/contact-lab/<job_id>")
+def contact_lab_page(job_id):
+    job = _get_job(job_id)
+    if not job or job.get("status") != "done":
+        return "Result not found", 404
+    return render_template("contact_lab.html", job_id=job_id, job=job)
+
+
+@app.route("/api/contact_lab/<job_id>")
+def contact_lab_data(job_id):
+    job = _get_job(job_id)
+    if not job or job.get("status") != "done":
+        return jsonify({"error": "Result not found"}), 404
+    path = Path(job["stats_path"])
+    lab_path = path.with_name(path.name.removesuffix("_stats.json")+"_contact_lab.json")
+    if not lab_path.is_file():
+        return jsonify({"error": "This result has no volleyball contact experiment"}), 404
+    try:
+        stats_raw, ann_raw = path.read_bytes(), Path(job["annotations_path"]).read_bytes()
+        return jsonify(load_lab(lab_path, source_fingerprint(stats_raw, ann_raw), json.loads(stats_raw)))
+    except (ValueError, KeyError, TypeError, OSError) as error:
+        return jsonify({"error": str(error)}), 409
+
+
 _player_contact_lock = threading.Lock()
 
 
 @lru_cache(maxsize=2)
-def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp):
+def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp, experiment_stamp=None):
     """Cache derived proposals, not the large frame/pose payload."""
     stats_bytes, ann_bytes = Path(stats_path).read_bytes(), Path(ann_path).read_bytes()
-    stats, payload = json.loads(stats_bytes), json.loads(ann_bytes)
+    stats = json.loads(stats_bytes)
+    source = source_fingerprint(stats_bytes, ann_bytes)
+    if experiment_stamp is not None:
+        bundle = load_experiment(experiment_path(stats_path), source, stats)
+        return bundle["reports"][bundle["selected_method"]], source, bundle
+    payload = json.loads(ann_bytes)
     if stats.get("video") != payload.get("video") or float(stats["fps"]) != float(payload["fps"]):
         raise ValueError("Stats and annotations must belong to the same analysis")
     report = build_player_contacts(stats.get("all_events") or [], payload["frames"],
                                    payload["fps"], payload.get("player_identity"))
-    return report, source_fingerprint(stats_bytes, ann_bytes)
+    return report, source, None
 
 
 @app.route("/api/player_contacts/<job_id>", methods=["GET", "POST"])
@@ -544,8 +577,20 @@ def player_contacts(job_id):
             def stamp(path):
                 info = path.stat()
                 return info.st_mtime_ns, info.st_size
-            report, source = _player_contact_inputs(
-                str(stats_path.resolve()), str(ann_path.resolve()), stamp(stats_path), stamp(ann_path))
+            path = experiment_path(stats_path)
+            report, source, bundle = _player_contact_inputs(
+                str(stats_path.resolve()), str(ann_path.resolve()), stamp(stats_path), stamp(ann_path),
+                stamp(path) if path.exists() else None)
+            body = request.get_json(silent=True) or {} if request.method == "POST" else {}
+            if not isinstance(body, dict):
+                raise ValueError("Expected a JSON object")
+            method = body.get("method") or request.args.get("method") or (bundle["selected_method"] if bundle else "body_baseline")
+            if bundle:
+                if method not in bundle["reports"]:
+                    raise ValueError("Unknown experimental contact method")
+                report = bundle["reports"][method]
+            elif method != "body_baseline":
+                raise ValueError("This result has no contact-method experiment")
             reviews_path = stats_path.with_name(stats_path.name.removesuffix("_stats.json")
                                                + "_player_contact_reviews.jsonl")
             reviews = []
@@ -556,9 +601,6 @@ def player_contacts(job_id):
                         return jsonify({"error": "Analysis changed; saved contact reviews belong to another source"}), 409
                     reviews.append(record["review"])
             if request.method == "POST":
-                body = request.get_json(silent=True) or {}
-                if not isinstance(body, dict):
-                    raise ValueError("Expected a JSON object")
                 if body.get("source") != source:
                     return jsonify({"error": "Analysis changed; reload contacts before reviewing"}), 409
                 if type(body.get("event_index")) is not int:
@@ -579,7 +621,12 @@ def player_contacts(job_id):
             result = apply_reviews(report, reviews)
             result["source"] = source
             result["review_count"] = len(reviews)
+            result["method_id"] = method
+            result["methods"] = bundle["methods"] if bundle else {}
+            result["experiment_selection"] = bundle.get("selection") if bundle else None
             return jsonify(result)
+    except ExperimentSourceChanged as error:
+        return jsonify({"error": str(error)}), 409
     except (ValueError, KeyError, TypeError) as error:
         return jsonify({"error": str(error)}), 400
     except OSError as error:
