@@ -1,10 +1,35 @@
 # Volleystat - Agent Context
 
-Updated: 2026-08-10. Code, CLI `--help`, tests, and config files override prose when they disagree.
+Updated: 2026-10-31. Code, CLI `--help`, tests, and config files override prose when they disagree.
 
 ## Mission and priorities
 
 Volleystat is an offline-first volleyball analytics pipeline for fixed-camera 4K video. Accuracy matters more than runtime; target workstation has RTX 3080. Current work stays in 2D image/court coordinates.
+
+## Human contact-author annotation (2026-10-31)
+
+- Prepare a fresh project with `scripts/evaluation/prepare_contact_author_annotation.py`
+  from the active 414-clip human manifest, `contact_spatial_gold_v1/reviews.json`
+  and existing pose-enabled analyses. Current queue: 403 items (seven duplicate
+  clips collapsed, four audited wrong events excluded), across three full videos.
+- UI: `python -m action_recognition.annotator.contact_author_annotator --project <dir>`
+  (localhost port 5066). Core: `contact_author_dataset.py` in the same package.
+  No inference, feature refresh, training or source annotation mutation.
+- Six initial photo cards are model-derived proposals from a complete near-side
+  cached frame, never verified persistent identities. The human confirms/repairs
+  them before assigning contacts. Add substitutions explicitly as P7/P8; never
+  recycle an ID or replace a confirmed person's original reference. Additional
+  views require same-person confirmation. IDs are scoped to source video.
+- SQLite autosaves decisions with optimistic revision checks and an append-only
+  history. Immutable project/source fingerprints reject changed inputs. Author
+  labels start empty; predictions are not prefilled. `unsure` stays unverified.
+- Export `human_contact_author_dataset_v1` keeps queue/audit/provenance and all
+  decisions; eligible contacts contain only verified player/other-team labels.
+  Author verification does not verify type/timing. No automatic training promotion.
+  These event-model training videos are author-development data, not an independent
+  event-model test. Split future evaluations by complete source video.
+- See `docs/contact_author_annotation.md`; tests: `test_contact_author_annotator.py`
+  and `test_contact_author_annotation_ui.cjs`.
 
 Primary outputs:
 

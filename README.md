@@ -16,6 +16,12 @@ IDs. Local tracklet contradictions are rejected rather than relabelled.
 Motion cannot assign an ID whose frozen appearance is clearly worse than
 another known person's appearance.
 Full-match accuracy and personal contact attribution remain unverified.
+The [human contact-author annotator](docs/contact_author_annotation.md) collects
+person-level reference labels: video on the left, confirmed player photo cards
+on the right, plus other-team/unsure/not-contact decisions. It reuses the active
+414-clip human event dataset and audited contact times (403 review items after
+duplicate grouping and known-error exclusion). Substitutes get new IDs;
+progress, revisions and JSON export remain separate from model predictions.
 The viewer's **Player contacts** panel selects a roster ID, highlights only
 that skeleton, and lists its reception, dig/pass/set, attack, block and serve
 events with click-to-seek. Unverified contact proposals use saved ball/pose
