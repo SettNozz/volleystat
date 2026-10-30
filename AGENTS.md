@@ -493,6 +493,38 @@ $py=(Get-Content -Raw '.graphify_python').Trim()
 - Tests: `test_volleyball_contact_lab.py`, `test_volleyball_contact_lab_viewer.py`,
   `test_volleyball_contact_lab_ui.cjs`.
 
+## P4 case corrections (2026-10-30)
+
+- Human feedback is in `configs/contact_case_reviews/JIZ3exHe3hA_P4_20261030_v1.json`,
+  bound to the exact analysis pair. Three author exclusions (384/1051/11223),
+  one positive P4 identity/contact reference (4915), one identity exclusion
+  (6376 raw 1262), and opponent-team confirmation at 11223. The latter does not
+  name the opponent. The 6376 exclusion does not rule out P4 on another skeleton.
+- Replay: `scripts/evaluation/refine_contact_actor_cases.py`; core:
+  `src/tracking/contact_actor_context.py`; docs: `docs/P4_contact_case_corrections.md`.
+  Current isolated reviewer output is `results/P4_action_context_20261030_v4`.
+  Preserve previous runs; v1 failed the positive reception check; v2/v3 still
+  showed an insufficiently supported replacement blocker at f384.
+- Use same-arm hand contact, shoulder-relative arm motion, two-sided raw-track
+  identity through jumps and observed standing/landing anchors. Never infer
+  rotational eligibility or the ball's team from court/airborne-foot geometry.
+  Backcourt attacks remain allowed. Ground depth is a soft positional cue.
+- Only the positive f4915 identity reference enters appearance inference.
+  Negative case answers are evaluation checks, not timestamp-specific vetoes.
+  Reuse existing OSNet embeddings; validate cache hashes and every key/raw ID/bbox.
+  No training, fresh image inference, gallery contamination or source rewrites.
+- Source P4 on receiving track 1262 is rejected; blocking track 1267 is a derived
+  P4 proposal. f384 author remains unresolved after visual inspection, not P1.
+  f1051 proposes P1; f4915 retains P4; f11223 proposes an opponent. Do not claim
+  user verified the new track-1267 or P1 labels, or the interpolated ball at4915.
+- Read-only viewer context labels are `P4*` (derived correction), `ID?` (source
+  P4 rejected). Rejected contact candidates must not draw as accepted authors.
+  Five review buttons display exact user frames with evidence times separate.
+- Five passing case conditions are development regression checks, not held-out
+  person accuracy. Older team metrics do not validate this actor/identity path.
+  Tests: `test_contact_actor_context.py`, `test_contact_actor_case_cache.py`, and
+  extended `test_volleyball_contact_lab_ui.cjs`.
+
 ## Repository map
 
 ```text

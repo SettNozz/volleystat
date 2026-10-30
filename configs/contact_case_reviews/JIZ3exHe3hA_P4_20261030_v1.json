@@ -1,0 +1,67 @@
+{
+  "schema": "player_contact_case_review_v1",
+  "video": "JIZ3exHe3hA_4k",
+  "label_source": "human",
+  "source": {
+    "stats_sha256": "00b724b48c62af02be6c315a586c287fbbfe7bf345e35d22e5a018b7150facd4",
+    "annotations_sha256": "d7cd3eb667b6cf2e336a0b4dd148df3632a2adbd84cb286a2c7a78ecb417c036"
+  },
+  "scope": "Five user-reviewed P4 examples. Negative author labels do not identify the actual hitter. Identity exclusion at 6376 does not exclude P4 on a different skeleton.",
+  "cases": [
+    {
+      "id": "P4_block_384",
+      "review_frame": 384,
+      "event_index": 5,
+      "source_frame": 387,
+      "type": "block",
+      "author_excluded": "P4",
+      "verified": true,
+      "note": "P4 стоїть у другій лінії в прийомі; блокує центральний гравець першої лінії.",
+      "screenshot_sha256": "f39ceb249cf98b41a8500abb5428adf52391cc3e57da5e91f2d6c4ed140aef93"
+    },
+    {
+      "id": "P4_attack_1051",
+      "review_frame": 1051,
+      "event_index": 8,
+      "source_frame": 1053,
+      "type": "attack",
+      "author_excluded": "P4",
+      "verified": true,
+      "note": "P4 стоїть у другій лінії; атакує гравець першої лінії.",
+      "screenshot_sha256": "29764ee7cc7a3bcdedcd8b6bc42b340c95cd3adba98a25cca3192a1239f55ce7"
+    },
+    {
+      "id": "P4_reception_4915",
+      "review_frame": 4915,
+      "event_index": 31,
+      "source_frame": 4915,
+      "type": "reception",
+      "author_confirmed": "P4",
+      "identity_anchor": {"frame": 4915, "pose_index": 1, "raw_track_id": 985, "player_id": "P4"},
+      "verified": true,
+      "note": "Користувач підтвердив: тут все класно. Підтвердження автора не верифікує інтерпольовані координати м'яча."
+    },
+    {
+      "id": "P4_identity_block_6376",
+      "review_frame": 6376,
+      "event_index": 41,
+      "source_frame": 6376,
+      "type": "block",
+      "identity_excluded": {"frame": 6376, "pose_index": 1, "raw_track_id": 1262, "player_id": "P4"},
+      "verified": true,
+      "note": "P4 помилково перейшов іншій людині. Виділений гравець стоїть у прийомі, блокує гравець першої лінії. Справжній ID блокуючого користувач не назвав.",
+      "screenshot_sha256": "5e3cd45facdf881dcd015f6059ee4a8fcdcb796686814bd05cc0fcb7b4a43aac"
+    },
+    {
+      "id": "P4_attack_11223",
+      "review_frame": 11223,
+      "event_index": 66,
+      "source_frame": 11223,
+      "type": "attack",
+      "author_excluded": "P4",
+      "team_confirmed": "a",
+      "verified": true,
+      "note": "P4 стоїть у захисті; м'яч і атака в іншої команди."
+    }
+  ]
+}

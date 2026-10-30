@@ -31,6 +31,10 @@ The [volleyball contact lab](docs/volleyball_contact_lab.md) additionally compar
 independent flight/limb detectors, bounded retiming and learned team sequences.
 Its read-only viewer exposes new untyped peaks and author changes on the same
 frozen JIZ3 video, with whole-video held-out timing/team comparisons.
+The [P4 case corrections](docs/P4_contact_case_corrections.md) use observed arm
+actions, ground/landing context and the user-confirmed P4 reference to reject
+inactive defenders and separate a confused identity. Five source-bound review
+buttons compare the exact examples; these development checks are not accuracy.
 For short skeleton dropouts, the experimental
 [offline pose completion](docs/pose_completion.md) uses the same person's past
 and future observed joints. Hidden joints appear as cyan dashed estimates,

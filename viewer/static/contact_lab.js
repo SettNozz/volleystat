@@ -7,6 +7,9 @@ const LAB_LABELS = {
   interaction: 'Moving hands / forearms',
   joint: 'Flight + limb interaction',
   consensus: 'Spotter + extra joint candidates',
+  action_only: 'Action evidence, original identities',
+  action_temporal: 'Action + identity through jumps',
+  action_P4_reference: 'Action + jump context + confirmed P4 reference',
 };
 let labBundle, labAnnotations, labFrames, labMethod, labPlayer = null, labActive = null, labLastFrame = -1;
 const labNode = id => document.getElementById(id);
@@ -19,19 +22,62 @@ function labChanged(event) {
   const old = event.source_event_index == null ? null : labOriginal(event);
   return Boolean(old && (old.player_id !== event.player_id || old.side_proposal !== event.side_proposal));
 }
-function labSeek(event) {
+function labPoseIdentity(pose,index,frame) {
+  const key = labBundle.methods[labMethod].pose_context_key;
+  const rows = key && labBundle.pose_contexts && labBundle.pose_contexts[key] && labBundle.pose_contexts[key][String(frame)];
+  const update = rows && rows.find(v => v.pose_index === index && v.raw_track_id === pose.id);
+  return update ? {player_id:update.player_id,side:update.side,changed:true,method:update.method}
+    : {player_id:pose.player_id,side:(pose.team === 'b' || pose.team === 'team_b') ? 'b' : 'a',changed:false};
+}
+function labEvidenceCandidate(row,frame) {
+  const candidate = labActive && (labActive.candidates || [])[0];
+  if (!candidate) return null;
+  if (labBundle.methods[labMethod].validation_scope === 'P4_cases' && !labActive.side_accepted) return null;
+  if (candidate.frame === frame) return candidate;
+  if (labBundle.methods[labMethod].validation_scope !== 'P4_cases' || Math.abs(frame-candidate.frame)>6) return null;
+  const matches = (row.poses || []).map((pose,index)=>({pose,index})).filter(v=>v.pose.id===candidate.raw_track_id);
+  if (matches.length !== 1) return null;
+  return {...candidate,frame,pose_index:matches[0].index,bbox:matches[0].pose.bb,evidence_frame:candidate.frame};
+}
+function labSeek(event,displayFrame=null,reviewNote='') {
   labActive = event;
-  const f = Number.isFinite(event.contact_frame) ? event.contact_frame : event.frame;
+  const f = Number.isFinite(displayFrame) ? displayFrame : Number.isFinite(event.contact_frame) ? event.contact_frame : event.frame;
   labNode('labVideo').pause();
   // Seek inside the frame, avoiding fractional-fps boundary rounding.
   labNode('labVideo').currentTime = (f+.25)/labBundle.fps;
   labLastFrame = -1;
   const identity = event.player_id || event.proposed_player_id || (event.side_proposal === 'a' ? 'Far player' : 'Unknown near player');
-  labNode('labDetails').textContent = `${identity} · ${event.type} · detector f${event.frame}, evidence f${f}. ` +
+  const actor = (event.candidates || [])[0];
+  const state = actor && actor.identity_resolution;
+  const role = state && Number.isFinite(state.depth_m) ? ` Actor position: ${state.position}, ${state.depth_m.toFixed(1)} m from net (ground anchors; rotation unknown).` : '';
+  const action = actor && actor.action_evidence;
+  const physical = labBundle.methods[labMethod].validation_scope === 'P4_cases'
+    ? (action ? `Hand/forearm distance ${actor.distance_body_heights.toFixed(2)} body heights; relative arm motion ${Number.isFinite(action.relative_arm_speed) ? action.relative_arm_speed.toFixed(2)+' body heights/s' : 'unavailable'}. ` : 'No supported arm evidence. ')
+    : `Flight ${event.detection_evidence.ballistic.toFixed(2)}, interaction ${event.detection_evidence.interaction.toFixed(2)}. `;
+  labNode('labDetails').textContent = `${identity} · ${event.type} · detector f${event.frame}, evidence f${event.contact_frame ?? event.frame}, displayed f${f}. ` +
     `${event.reason.replace(/_/g,' ')}; near-side score ${event.near_side_score.toFixed(2)} (uncalibrated). ` +
-    `Flight ${event.detection_evidence.ballistic.toFixed(2)}, interaction ${event.detection_evidence.interaction.toFixed(2)}. ` +
-    (event.source_event_index == null ? 'New untyped proposal; no source event.' : `Source event ${event.source_event_index}, original f${event.original_frame}.`);
+    physical +
+    (event.source_event_index == null ? 'New untyped proposal; no source event.' : `Source event ${event.source_event_index}, original f${event.original_frame}.`) +
+    (actor ? ` ${event.side_accepted === false ? 'Rejected nearby pose' : 'Raw actor'} ${actor.raw_track_id}; identity method ${(state && (state.identity_method || state.method)) || 'source'}.` : '') + role + (reviewNote ? ` Human review: ${reviewNote}` : '');
   labRenderEvents();
+}
+function labRenderCases() {
+  const container = labNode('labCases');
+  if (!container) return;
+  container.replaceChildren();
+  const cases = labBundle.case_review && labBundle.case_review.cases;
+  if (!cases) return;
+  cases.forEach((review,index) => {
+    const result = (labBundle.methods[labMethod].case_results || []).find(r=>r.id===review.id);
+    const button = document.createElement('button');
+    button.textContent = `${index+1} · f${review.review_frame} · ${result ? result.passed ? 'check passes' : 'check fails' : 'original proposal'}`;
+    button.title = review.note;
+    button.onclick = () => {
+      const event = labBundle.methods[labMethod].events.find(e=>e.source_event_index===review.event_index);
+      if (event) labSeek(event,review.review_frame,review.note);
+    };
+    container.appendChild(button);
+  });
 }
 function labRenderEvents() {
   if (!labBundle) return;
@@ -65,7 +111,16 @@ function labRenderMethod() {
   labNode('labMethod').value = labMethod;
   const method = labBundle.methods[labMethod];
   const timing = method.detection_lovo.all.at_5;
-  labNode('labMethodInfo').textContent = `Held-out contact detection: F1 ${(timing.f1*100).toFixed(1)}%, precision ${(timing.precision*100).toFixed(1)}%, recall ${(timing.recall*100).toFixed(1)}%. ${method.author_method}.`;
+  labNode('labMethodInfo').textContent = method.validation_scope === 'P4_cases'
+    ? `Contact times unchanged. Actor/ID rules: five P4 development cases, no held-out person accuracy. ${method.author_method}.`
+    : `Held-out contact detection: F1 ${(timing.f1*100).toFixed(1)}%, precision ${(timing.precision*100).toFixed(1)}%, recall ${(timing.recall*100).toFixed(1)}%. ${method.author_method}.`;
+  if (method.validation_scope === 'P4_cases') {
+    const checks = method.case_results || [];
+    labNode('labQuality').textContent = `${checks.filter(c=>c.passed).length}/${checks.length} targeted P4 development checks pass. Only the confirmed f4915 identity is an appearance reference; exclusions are evaluation checks, not frame-specific rules. Identity overlays are derived proposals; original JSON and model keypoints are unchanged. Earlier team-only scores do not validate this actor correction.`;
+  } else {
+    labNode('labQuality').textContent = labBundle.comparison.quality_scope + '. Earlier team-only scores do not measure P1–P7 author accuracy.';
+  }
+  labRenderCases();
   labRenderEvents();
 }
 function labDraw() {
@@ -83,21 +138,24 @@ function labDraw() {
   const row = labFrames.get(f);
   labNode('labFrame').textContent = `f${f} · ${labTime(f)}`;
   if (!row) return;
-  const candidate = labActive && (labActive.candidates || [])[0];
+  const candidate = labEvidenceCandidate(row,f);
   const bones = [[5,7],[7,9],[6,8],[8,10],[5,6],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]];
   (row.poses || []).forEach((pose,index) => {
     const focused = candidate && candidate.frame === f && candidate.pose_index === index && candidate.raw_track_id === pose.id;
-    const near = pose.team === 'b' || pose.team === 'team_b';
-    const selected = focused || (near && (!labPlayer || pose.player_id === labPlayer));
-    ctx.strokeStyle = ctx.fillStyle = selected ? '#ffdc00' : 'rgba(170,185,200,.65)';
-    ctx.lineWidth = (selected ? 2.5 : 1.3)*unit;
+    const identity = labPoseIdentity(pose,index,f);
+    const near = identity.side === 'b';
+    const selected = near && (!labPlayer || identity.player_id === labPlayer);
+    const actorIsOther = focused && labPlayer && identity.player_id !== labPlayer;
+    ctx.strokeStyle = ctx.fillStyle = actorIsOther ? '#00d8ef' : selected ? '#ffdc00' : 'rgba(170,185,200,.65)';
+    ctx.lineWidth = (selected || focused ? 2.5 : 1.3)*unit;
     const point = i => (pose.kp || [])[i];
     const valid = p => p && p[2] >= .25 && Number.isFinite(p[0]) && Number.isFinite(p[1]);
     for (const [a,b] of bones) if (valid(point(a)) && valid(point(b))) {
       ctx.beginPath(); ctx.moveTo(...point(a).slice(0,2)); ctx.lineTo(...point(b).slice(0,2)); ctx.stroke();
     }
     for (const p of pose.kp || []) if (valid(p)) {ctx.beginPath();ctx.arc(p[0],p[1],2.5*unit,0,Math.PI*2);ctx.fill();}
-    if (pose.player_id && pose.bb) {ctx.font = `bold ${12*unit}px system-ui`;ctx.fillText(pose.player_id,pose.bb[0],pose.bb[1]-5*unit);}
+    const label = identity.player_id ? identity.player_id+(identity.changed ? '*' : '') : identity.changed && pose.player_id === 'P4' ? 'ID?' : '';
+    if (label && pose.bb) {ctx.font = `bold ${12*unit}px system-ui`;ctx.fillText(label,pose.bb[0],pose.bb[1]-5*unit);}
   });
   if (row.ball && !row.ball_out_of_frame) {
     const derived = row.ball_interp || row.ball_reconstructed || /reconstruct|interpolat/.test(row.ball_source || '');
@@ -108,7 +166,7 @@ function labDraw() {
     const b = candidate.bbox;ctx.strokeStyle = '#f6ac35';ctx.lineWidth = 2*unit;ctx.setLineDash([5*unit,3*unit]);
     ctx.strokeRect(b[0],b[1],b[2]-b[0],b[3]-b[1]);ctx.setLineDash([]);
     ctx.fillStyle = '#f6ac35';ctx.font = `bold ${12*unit}px system-ui`;
-    ctx.fillText(`${labActive.player_id || labActive.proposed_player_id || 'Actor'} · proposal`,b[0],b[1]-20*unit);
+    ctx.fillText(`${labActive.player_id || labActive.proposed_player_id || candidate.player_id || (candidate.side==='a' ? 'Opponent' : 'Actor')} · proposal`,b[0],b[1]-20*unit);
   }
 }
 async function labInit() {
@@ -118,6 +176,7 @@ async function labInit() {
     [labBundle,labAnnotations] = await Promise.all(responses.map(r=>r.json()));
     labFrames = new Map(labAnnotations.frames.map(row=>[row.f,row]));
     labMethod = labBundle.selected_method;
+    if (labBundle.case_review && labBundle.roster_ids.includes('P4')) labPlayer = 'P4';
     for (const name of Object.keys(labBundle.methods)) {
       const option = document.createElement('option');option.value = name;option.textContent = LAB_LABELS[name] || name;labNode('labMethod').appendChild(option);
     }

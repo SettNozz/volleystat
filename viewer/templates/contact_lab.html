@@ -8,7 +8,8 @@
 <main><section>
 <div class="stage"><video id="labVideo" controls preload="metadata" src="{% if job.original_video_path_url %}/api/original_video?path={{ job.original_video_path_url }}{% else %}/api/video/{{ job_id }}{% endif %}"></video><canvas id="labCanvas"></canvas></div>
 <div class="toolbar"><button id="labBack">−1 frame</button><button id="labForward">+1 frame</button><span id="labFrame" class="pill">Loading</span></div>
-<div class="card"><div id="labDetails">Choose a contact to inspect its evidence.</div><p class="legend">Yellow: selected near player. Gray: other observed poses. Amber box: proposed contact actor at this evidence frame. Ball: green observed-backed trajectory, amber derived point. Hidden poses are not invented.</p><p id="labQuality" class="muted"></p><div id="labComparison"></div></div>
+<div id="labCases" class="toolbar" aria-label="P4 reviewed cases"></div>
+<div class="card"><div id="labDetails">Choose a contact to inspect its evidence.</div><p class="legend">Yellow: selected player. Cyan: proposed actor when different from the selected player. Gray: other observed poses. Amber box: actor proposal. P4*: derived identity correction from the confirmed reference, not a new detector result. ID?: source P4 rejected. Ball: green observed-backed trajectory, amber derived point. Hidden poses are not invented.</p><p id="labQuality" class="muted"></p><div id="labComparison"></div></div>
 </section><aside class="card">
 <label for="labMethod">Contact method</label><select id="labMethod" disabled></select><p id="labMethodInfo" class="muted"></p>
 <div id="labPlayers" class="chips" aria-label="Player filter"></div>
