@@ -1,5 +1,10 @@
 # Isolated contact-author experiments
 
+Update, 2026-10-31: [person-author human benchmark](contact_author_benchmark.md)
+now contains 188 person labels and 206 other-team labels. The zero-person-label
+statements and team-only scores below describe the earlier experiment, not the
+new benchmark or evidence of individual-author accuracy.
+
 This branch experiments with the team/player responsible for each **existing**
 spotter event. It preserves the 103 JIZ3 source events, their types, detector
 poses, stable identities, ball and original analysis JSON. It does not detect

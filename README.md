@@ -15,7 +15,14 @@ IDs through a per-video roster file; returning players retain their original
 IDs. Local tracklet contradictions are rejected rather than relabelled.
 Motion cannot assign an ID whose frozen appearance is clearly worse than
 another known person's appearance.
-Full-match accuracy and personal contact attribution remain unverified.
+Full-match production identity accuracy remains unverified. The experimental
+[human contact-author benchmark](docs/contact_author_benchmark.md) now measures
+person attribution on reviewed contacts from three complete videos: 382 strict
+examples, with whole-video held-out training. Best fixed comparison gets 92.4%
+team accuracy and 60.3% exact near-person recall; nested algorithm selection gets
+59.8% near-person recall. These are known-contact development scores, not
+end-to-end contact detection or a production promotion. A read-only error
+viewer compares all methods with the human photo roster.
 The [human contact-author annotator](docs/contact_author_annotation.md) collects
 person-level reference labels: video on the left, confirmed player photo cards
 on the right, plus other-team/unsure/not-contact decisions. It reuses the active

@@ -31,6 +31,44 @@ Volleystat is an offline-first volleyball analytics pipeline for fixed-camera 4K
 - See `docs/contact_author_annotation.md`; tests: `test_contact_author_annotator.py`
   and `test_contact_author_annotation_ui.cjs`.
 
+## Human contact-author benchmark (2026-10-31)
+
+- The annotation project is now complete: revision 421, 403 decisions (188
+  player, 206 other-team, eight unsure, one not-contact). Immutable benchmark
+  snapshot: `results/contact_author_benchmark_20261031_v1`. Never rewrite the
+  live SQLite labels, roster, human sources or earlier snapshots during experiments.
+- `scripts/evaluation/evaluate_contact_authors.py` prepares versioned HSV/pose
+  features and evaluates source-held-out models. Core modules:
+  `src/tracking/contact_author_benchmark.py`, `contact_author_evaluation.py`.
+  Model caches remain frozen. Original pixels are decoded only for handcrafted
+  HSV descriptors; compatible OSNet outputs were absent for these three sources.
+- Main score excludes eight contacts within 60 frames of photo references and
+  four unverified timings: 382 contacts, 184 near-person / 198 other-team.
+  Photo IDs are setup inputs scoped to source video; raw IDs never become gold.
+  Numeric inputs exclude IDs, video names and absolute times. Future track
+  views are explicitly allowed for this offline benchmark.
+- 22 comparisons include box/pose HSV, track aggregation, one-to-one assignment,
+  learned team models, shared person rankers, training-only team-sequence priors,
+  and closest-observed central-time actors. Outer training holds out a complete
+  video; inner whole-source folds select methods. Normalization and transition
+  counts use training sources only. Reuse compatible saved fold models for
+  rule comparisons; do not repeat inference/training or silently refresh features.
+- Selected fixed development comparison `trees_sequence_central`: team 92.4%,
+  exact near-person recall 60.3%, near assignment precision 61.7%, overall exact
+  author-or-other-team 77.2%. Nested selection: 59.8% near recall / 77.0% overall.
+  Central time adds only one correct contact over `trees_sequence_hungarian`;
+  do not call that a robust gain. There are only three sources and no untouched
+  final test. Given human contact times/types: do not quote these as event
+  detection, full-match identity, or unseen-camera accuracy. Models not promoted.
+- `python -m action_recognition.annotator.contact_author_benchmark_viewer
+  --evaluation <evaluation-dir>` serves read-only review on port 5067. Green
+  card is human truth, orange card/skeleton is a model proposal at its exact
+  evidence frame. No human author-box gold exists: do not invent green skeletons
+  or claim identity vs actor-localization error separation from these labels.
+- Current detailed report: `results/contact_author_evaluation_20261031_v5`.
+  Docs: `docs/contact_author_benchmark.md`; tests:
+  `test_contact_author_benchmark.py`, `test_contact_author_benchmark_viewer.py`.
+
 Primary outputs:
 
 - selected and reconstructed ball trajectory;
