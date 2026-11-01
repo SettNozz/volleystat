@@ -69,6 +69,32 @@ Volleystat is an offline-first volleyball analytics pipeline for fixed-camera 4K
   Docs: `docs/contact_author_benchmark.md`; tests:
   `test_contact_author_benchmark.py`, `test_contact_author_benchmark_viewer.py`.
 
+## OSNet/temporal author follow-up and unseen-video inference
+
+- The versioned `contact_author_reid_temporal_20261031_v1` adds pinned OSNet
+  gallery/clean-track similarity, temporal pose/action cues and derived short
+  joint-gap estimates, with availability masks. Source poses and balls remain
+  unchanged; inferred joints never become detector labels.
+- Latest development report: `contact_author_rich_eval_20261031_v5`.
+  Fixed `class_fusion`: 146/184 exact near-person (79.35%), precision 78.92%,
+  F1 79.13%; nested method selection 75.54% near recall. The 80% target is not
+  reached. Fusion fits on cross-source predictions, not in-sample base scores.
+  Only three development videos; no untouched final test or production promotion.
+- `scripts/evaluation/apply_contact_author_models.py` prepares unlabelled
+  inputs and reuses three two-source frozen `class_fusion` members. No training.
+  New source must be absent from all member training sources. Their deployment
+  ensemble does not inherit a measured held-out score from individual members.
+- Inputs use `inference_inputs.json`, targets=-1 and no author decisions;
+  never name model inputs `human_labels.json`. Keep automatic roster and event
+  provenance explicitly unverified. Unknown substitutions remain unknown.
+- Source result for X6: `results/viewer/job_1793380818`. Reuse ball, poses,
+  events and compatible OSNet crops; capture only identified missing OSNet crops.
+  New artifacts stay in the isolated author's worktree, versioned directories.
+- `python -m action_recognition.annotator.contact_author_inference_viewer
+  --predictions <dir> --port 5068` serves read-only review without fake metrics
+  or human-truth highlights. See `docs/contact_author_inference.md`.
+  Tests: `test_contact_author_inference.py`, `test_contact_author_reid_features.py`.
+
 Primary outputs:
 
 - selected and reconstructed ball trajectory;

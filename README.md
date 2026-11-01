@@ -18,11 +18,17 @@ another known person's appearance.
 Full-match production identity accuracy remains unverified. The experimental
 [human contact-author benchmark](docs/contact_author_benchmark.md) now measures
 person attribution on reviewed contacts from three complete videos: 382 strict
-examples, with whole-video held-out training. Best fixed comparison gets 92.4%
-team accuracy and 60.3% exact near-person recall; nested algorithm selection gets
-59.8% near-person recall. These are known-contact development scores, not
+examples, with whole-video held-out training. The OSNet/temporal follow-up's
+best fixed `class_fusion` gets 79.35% exact near-person recall and 78.92%
+assignment precision; nested algorithm selection gets 75.54% near-person recall.
+The 80% person target is not reached. These are known-contact development scores, not
 end-to-end contact detection or a production promotion. A read-only error
 viewer compares all methods with the human photo roster.
+The [unlabelled-video author workflow](docs/contact_author_inference.md) applies
+three frozen `class_fusion` fold members to an existing saved analysis, with no
+training or detector replay. Its read-only viewer shows contact predictions,
+original skeleton evidence and the saved automatic roster; accuracy stays
+unmeasured until this source receives human author labels.
 The [human contact-author annotator](docs/contact_author_annotation.md) collects
 person-level reference labels: video on the left, confirmed player photo cards
 on the right, plus other-team/unsure/not-contact decisions. It reuses the active
