@@ -1,0 +1,65 @@
+<!doctype html><html lang="uk"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Хто торкнувся м'яча</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101722;color:#e8eff7;font:15px system-ui}header{padding:14px 20px;background:#182231}h1{font-size:20px;margin:0 0 6px}main{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:18px;padding:18px}.note{color:#a9b8ca;font-size:13px;line-height:1.5}.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}button,select{background:#25364b;color:#eef4fc;border:1px solid #455d77;border-radius:6px;padding:7px 9px;font:inherit}button{cursor:pointer}button:disabled{opacity:.4}#case{flex:1;min-width:240px}.stage{position:relative;width:100%;background:#000}.stage video{display:block;width:100%}.stage canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.card{display:grid;grid-template-columns:64px 1fr;gap:8px;padding:7px;margin:7px 0;background:#1a2738;border:2px solid transparent;border-radius:8px;cursor:pointer}.card.selected{border-color:#ffc36c}.card img{width:64px;height:104px;object-fit:contain;background:#0e1520;grid-row:span 2}.card strong{align-self:end}.card small{color:#a9b8ca}#status{font-size:16px;line-height:1.6;margin:10px 0}#scores{font-size:13px;color:#c5d4e6}#error{color:#ff9393}.legend span{display:inline-block;margin-right:14px}.sw{display:inline-block;width:14px;height:4px;vertical-align:middle;margin-right:5px}aside h2{font-size:16px;margin:4px 0}label{display:flex;gap:6px;align-items:center}.bad{color:#ff9f7a}@media(max-width:850px){main{grid-template-columns:1fr}#cards{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.card{grid-template-columns:1fr}.card img{height:96px;width:100%}}
+</style>
+<header><h1>Хто торкнувся м'яча · person ranker</h1>
+<div class="note">Прогнози на новому відео. Ручної розмітки авторів для цього відео немає, тож точність тут ще не виміряна (84.8% — це оцінка на трьох gold-відео). Контакти й типи — від спотера; ID гравців — автоматичний ростер, не підтверджений людиною.</div>
+<div class="note" id="counts"></div></header>
+<main><section>
+<div class="toolbar"><label>Гравець <select id="player"><option value="all">Усі контакти</option><option value="other_team">Інша команда</option></select></label><label><input id="disagree" type="checkbox">Розбіжність з class_fusion</label></div>
+<div class="toolbar"><button id="previous">←</button><select id="case" aria-label="Контакт"></select><button id="next">→</button></div>
+<div class="stage"><video id="video" controls preload="metadata" muted></video><canvas id="overlay"></canvas></div>
+<div class="toolbar"><button id="back">−1 кадр</button><button id="play">▶ ±2 с</button><button id="forward">+1 кадр</button><button id="contact">Кадр контакту</button><button id="actor">Кадр доказу</button><select id="speed" aria-label="Швидкість"><option value=".25">0.25×</option><option value=".5" selected>0.5×</option><option value="1">1×</option></select><span id="frame"></span></div>
+<div id="status"></div><div id="scores"></div><div id="error"></div>
+<div class="note legend"><span><i class="sw" style="background:#ffc36c"></i>прогноз person ranker</span><span><i class="sw" style="background:#5fb4ff"></i>class_fusion, якщо інший</span><span><i class="sw" style="background:#8996a5"></i>інші гравці (підпис — автоматичний ID)</span><span><i class="sw" style="background:#ffe773"></i>м'яч</span></div>
+<div class="note">←/→ — контакти, A/D — кадри, пробіл — фрагмент ±2 с. «Кадр доказу» — кадр, на якому модель виміряла найближчий до м'яча контакт цього гравця.</div>
+</section>
+<aside><h2>Ближня команда</h2><div class="note">Фото — автоматичні референси ростера. Клік фільтрує контакти гравця.</div><div id="cards"></div><button id="all">Показати всі</button></aside></main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id),video=$('video'),canvas=$('overlay'),ctx=canvas.getContext('2d');
+const bones=[[5,7],[7,9],[6,8],[8,10],[5,6],[5,11],[6,12],[11,12],[11,13],[13,15],[12,14],[14,16]];
+const OURS='person_ranker',OTHER='class_fusion_ensemble';
+let data,rows=[],index=0,source=null,stop=null,evidence=new Map(),generation=0;
+const current=()=>rows[index],ours=r=>(r||current()).predictions[OURS],theirs=r=>(r||current()).predictions[OTHER];
+const meta=()=>data.videos[current().video_id],label=p=>p==='other_team'?'Інша команда':p==null?'—':p;
+const frame=()=>Math.floor(video.currentTime*meta().fps+.001);
+async function json(url){const response=await fetch(url),body=await response.json();if(!response.ok)throw Error(body.error||'Помилка сервера');return body;}
+function seek(f){video.pause();stop=null;video.currentTime=(Math.max(0,Math.min(meta().num_frames-1,f))+.25)/meta().fps;}
+function differs(r){return theirs(r)&&theirs(r).label!==ours(r).label;}
+function filter(){
+ rows=data.records.filter(r=>($('player').value==='all'||ours(r).label===$('player').value)&&(!$('disagree').checked||differs(r)));index=0;
+ $('case').replaceChildren(...rows.map((r,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`${i+1}/${rows.length} · f${r.frame} · ${r.type} · ${label(ours(r).label)}${differs(r)?' ≠ '+label(theirs(r).label):''}`;return o;}));
+ for(const id of ['previous','next','case','back','forward','play','contact','actor'])$(id).disabled=!rows.length;
+ if(rows.length)show();else{generation++;video.pause();ctx.clearRect(0,0,canvas.width,canvas.height);$('status').textContent='Немає контактів для цього фільтра';$('scores').textContent='';cards();}}
+function cards(){$('cards').replaceChildren();const v=Object.keys(data.videos)[0];for(const p of data.rosters[v].players){const card=document.createElement('div');card.className='card'+(rows.length&&ours().label===p.player_id?' selected':'');card.tabIndex=0;card.setAttribute('role','button');
+ const img=document.createElement('img');img.src=`/photo/${encodeURIComponent(v)}/${p.player_id}`;img.alt=p.player_id;const name=document.createElement('strong');name.textContent=p.player_id;const count=document.createElement('small');count.textContent=(data.report.counts[p.player_id]||0)+' контактів';
+ const select=()=>{$('player').value=p.player_id;filter();};card.onclick=select;card.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();select();}};card.append(img,name,count);$('cards').append(card);}}
+async function show(){const version=++generation,r=current(),p=ours();$('case').value=index;$('error').textContent='';ctx.clearRect(0,0,canvas.width,canvas.height);evidence=new Map();
+ const t=theirs();$('status').innerHTML=`${r.type} · f${r.frame} · ${(r.frame/meta().fps).toFixed(2)} с · <b>Прогноз: ${label(p.label)}</b> · P(ближня команда) ${p.team_near_probability.toFixed(2)}`+(t?` · class_fusion: <span class="${t.label!==p.label?'bad':''}">${label(t.label)}</span>`:'');
+ const top=Object.entries(p.person_scores).sort((a,b)=>b[1]-a[1]).slice(0,4).map(([k,v])=>`${label(k)} ${v.toFixed(2)}`).join(' · ');$('scores').textContent='Оцінки кандидатів (некалібровані): '+top+(p.label==='other_team'?` · найкращий з ближньої: ${p.best_near_person}`:'');cards();
+ const target=(p.actor||r).frame;
+ if(source!==r.video_id){source=r.video_id;canvas.width=meta().width;canvas.height=meta().height;video.onloadedmetadata=()=>{if(version===generation){video.playbackRate=Number($('speed').value);seek(target);}};video.src='/video/'+encodeURIComponent(source);}else seek(target);
+ try{const start=Math.max(0,r.frame-75),end=Math.min(meta().num_frames-1,r.frame+75);const result=await json(`/api/frames/${encodeURIComponent(r.video_id)}?start=${start}&end=${end}`);if(version!==generation)return;evidence=new Map(result.frames.map(f=>[f.f,f]));draw();}catch(e){$('error').textContent=e.message;}}
+function skeleton(p,colour,width,alpha){ctx.strokeStyle=colour;ctx.lineWidth=width;ctx.globalAlpha=alpha;for(const[x,y]of bones){if(!p.kp[x]||!p.kp[y]||p.kp[x][2]<.25||p.kp[y][2]<.25)continue;ctx.beginPath();ctx.moveTo(p.kp[x][0],p.kp[x][1]);ctx.lineTo(p.kp[y][0],p.kp[y][1]);ctx.stroke();}ctx.globalAlpha=1;}
+function draw(){ctx.clearRect(0,0,canvas.width,canvas.height);if(!rows.length||video.seeking||video.readyState<2)return;const f=frame(),row=evidence.get(f);$('frame').textContent='f'+f;if(!row)return;
+ const a=ours().actor,b=differs(current())?theirs().actor:null;ctx.font='bold 54px system-ui';
+ (row.poses||[]).forEach((p,i)=>{const mine=a&&(a.frame===f?a.pose_index===i:Math.abs(f-a.frame)<=60&&p.id===a.raw_track_id&&p.id!=null),other=b&&(b.frame===f?b.pose_index===i:Math.abs(f-b.frame)<=60&&p.id===b.raw_track_id&&p.id!=null);
+  if(mine)skeleton(p,'#ffc36c',16,1);else if(other)skeleton(p,'#5fb4ff',13,1);else skeleton(p,'#8996a5',7,.5);
+  if(p.player_id&&(p.team==='b'||p.team==='team_b')){ctx.fillStyle=mine?'#ffc36c':'#cfd8e3';ctx.globalAlpha=mine?1:.75;ctx.fillText(p.player_id,p.bb[0],p.bb[1]-8);ctx.globalAlpha=1;}
+  if(mine&&a.frame===f){ctx.strokeStyle='#ffc36c';ctx.lineWidth=9;ctx.strokeRect(p.bb[0],p.bb[1],p.bb[2]-p.bb[0],p.bb[3]-p.bb[1]);ctx.fillStyle='#ffc36c';ctx.font='bold 84px system-ui';ctx.fillText(label(ours().label),p.bb[0],Math.max(90,p.bb[1]-70));ctx.font='bold 54px system-ui';}});
+ if(row.ball&&!row.ball_out_of_frame){ctx.strokeStyle='#ffe773';ctx.lineWidth=9;ctx.beginPath();ctx.arc(row.ball[0],row.ball[1],30,0,2*Math.PI);ctx.stroke();}}
+$('player').onchange=filter;$('disagree').onchange=filter;$('all').onclick=()=>{$('player').value='all';$('disagree').checked=false;filter();};
+$('case').onchange=e=>{index=Number(e.target.value);show();};$('previous').onclick=()=>{if(index>0){index--;show();}};$('next').onclick=()=>{if(index<rows.length-1){index++;show();}};
+$('back').onclick=()=>seek(frame()-1);$('forward').onclick=()=>seek(frame()+1);$('contact').onclick=()=>seek(current().frame);$('actor').onclick=()=>seek((ours().actor||current()).frame);
+$('speed').onchange=()=>{video.playbackRate=Number($('speed').value);};
+$('play').onclick=()=>{const r=current(),fps=meta().fps;video.currentTime=Math.max(0,r.frame-2*fps)/fps;stop=(r.frame+2*fps)/fps;video.playbackRate=Number($('speed').value);video.play();};
+video.ontimeupdate=()=>{if(stop!==null&&video.currentTime>=stop){video.pause();stop=null;}};
+for(const e of ['seeked','timeupdate','loadeddata','pause'])video.addEventListener(e,draw);
+let drawn='';(function loop(){const key=rows.length?`${index}:${evidence.size}:${video.readyState>=2&&!video.seeking?frame():'-'}`:'';if(!video.paused||key!==drawn){drawn=key;draw();}requestAnimationFrame(loop);})();
+document.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)&&e.key!=='ArrowLeft'&&e.key!=='ArrowRight')return;if(!rows.length)return;
+ if(e.key==='ArrowRight'){e.preventDefault();$('next').click();}else if(e.key==='ArrowLeft'){e.preventDefault();$('previous').click();}else if(e.key==='a'||e.key==='A')$('back').click();else if(e.key==='d'||e.key==='D')$('forward').click();else if(e.key===' '){e.preventDefault();$('play').click();}});
+json('/api/report').then(d=>{data=d;const v=Object.keys(d.videos)[0];for(const p of d.rosters[v].players){const o=document.createElement('option');o.value=p.player_id;o.textContent=p.player_id;$('player').append(o);}
+ const c=d.report.counts,ag=d.report.agreement_with_comparison;$('counts').textContent=`${d.records.length} контактів · ближня команда ${d.records.length-(c.other_team||0)} · інша команда ${c.other_team||0}`+(ag?` · збіг з class_fusion ${ag.same_label}/${ag.compared}`:'');filter();}).catch(e=>{$('error').textContent=e.message;});
+</script></html>
