@@ -64,13 +64,17 @@ Current production path is `analyze_video.py` -> `GameAnalyzer` -> JSON/video ar
 | Match analytics | Manual set/team mapping plus event-sourced aggregation | Sets, side changes, points and team statistics |
 | Viewer | Flask app with upload, analysis, court editor and overlays | Interactive video and match dashboards |
 
-Pipeline is offline-first. RTX 3080 is supported; correctness takes priority over real-time speed.
+Pipeline is offline-first; correctness takes priority over real-time speed.
+Reference workstation: RTX 5070 Ti 16 GB (Blackwell, sm_120), i9-10900F,
+32 GB RAM. Older cards (RTX 3080) still work.
 
 ## Requirements
 
 - Windows or Linux
 - Python 3.11
-- NVIDIA GPU recommended for 4K processing
+- NVIDIA GPU recommended for 4K processing. RTX 50xx (Blackwell, sm_120)
+  needs PyTorch >= 2.7 built for CUDA 12.8; the default PyPI wheel on Windows
+  is CPU-only. Tested: torch 2.7.1+cu128, torchvision 0.22.1+cu128.
 - Local model weights or running MLflow model registry
 - FFmpeg-compatible video input readable by OpenCV
 
@@ -78,6 +82,8 @@ Pipeline is offline-first. RTX 3080 is supported; correctness takes priority ove
 py -3.11 -m venv volley_env_311
 .\volley_env_311\Scripts\Activate.ps1
 python -m pip install --upgrade pip
+# CUDA build first, so requirements.txt does not pull a CPU-only torch.
+pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
 pip install -r requirements.txt
 
 # Viewer, annotators and Parquet feature files
@@ -143,6 +149,34 @@ See every supported option:
 ```powershell
 python analyze_video.py --help
 ```
+
+GPU utilisation. Inference that the cache does not hold yet runs ahead of the
+ordered analysis loop on background threads: one decoder thread, one ball
+thread and two YOLO-pose threads (one model instance each). ByteTrack, ball
+selection, FSM and all cache writes stay on the main thread in frame order,
+and every model call keeps its batch size, input size and precision, so cache
+keys and stored values are unchanged. `--no-model-prefetch` restores the
+serial loop for debugging. OSNet identity encodes 128 crops per forward pass.
+`--ball-batch-size` stays 8: 16 was only 8% faster and the batch size is part
+of the ball cache key, so changing it would recompute every cached video.
+
+Measured 2026-11-06 on the first 30 s (899 frames) of `j0gRhgFCgIs_4_4k`
+with an empty cache, RTX 5070 Ti, same code with and without prefetch:
+
+| Run | Detection loop | Identity pass | Wall time |
+|---|---|---|---|
+| Serial, OSNet batch 8 (before) | 6.4 fps | 97 s | 314 s |
+| Serial, OSNet batch 128 | 9.6 fps | 37 s | 204 s |
+| Prefetch, 2 pose threads, OSNet batch 128 | 15.0 fps | 34 s | 151 s |
+
+The first row was also the first run on the new card, so part of its loop
+time is cold start. About 35 s of every wall time is model-registry timeouts
+when the MLflow server is not running (`--no-model-registry` skips them).
+The pipeline remains CPU/GIL-bound: a third pose thread gave 15.4 fps and the
+GPU averages about 40% utilisation during the loop. Repeated runs are not
+bit-identical even serially (FP16 with `cudnn.benchmark`): two serial runs
+shared 822 of 899 raw ball outputs exactly and pose boxes moved by up to 15 px,
+which is why replays should go through the cache.
 
 ### 3. Open viewer
 

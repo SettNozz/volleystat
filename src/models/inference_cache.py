@@ -160,8 +160,12 @@ class ModelOutputCache:
             self.db.execute('INSERT INTO sequences(stage,generation) VALUES (?,?)', (stage,generation))
         return stage+'/'+generation, False
 
+    def items(self, stage):
+        """Every stored item key of one stage, as strings."""
+        return {row[0] for row in self.db.execute('SELECT item FROM outputs WHERE stage=?', (stage,))}
+
     def covers(self, stage, frames):
-        keys = {row[0] for row in self.db.execute('SELECT item FROM outputs WHERE stage=?', (stage,))}
+        keys = self.items(stage)
         return all(str(frame) in keys for frame in frames)
 
     def seal_sequence(self, sequence):
@@ -355,7 +359,14 @@ def video_frames(video, needed, size=None):
         cap.release()
 
 
-def collect_embeddings(frames, images, encoder, feature_cache=None, batch_size=8, progress=None):
+# Crops per OSNet forward. Measured 2026-11-06 on an RTX 5070 Ti: 72 crops/s at
+# 8, 438 at 128 (CPU crop transform caps near 540/s). Batch size moves
+# embeddings by at most 1.3e-6 cosine distance (TF32 on), far below identity
+# thresholds; cached embeddings are keyed by frame/crop, never by batch.
+OSNET_BATCH_SIZE = 128
+
+
+def collect_embeddings(frames, images, encoder, feature_cache=None, batch_size=OSNET_BATCH_SIZE, progress=None):
     observations={p['key']:(f['f'],p) for f in frames for p in f['players']}
     features={}
     if feature_cache is not None:

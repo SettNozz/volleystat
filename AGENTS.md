@@ -4,7 +4,7 @@ Updated: 2026-10-27. Code, CLI `--help`, tests, and config files override prose 
 
 ## Mission and priorities
 
-Volleystat is an offline-first volleyball analytics pipeline for fixed-camera 4K video. Accuracy matters more than runtime; target workstation has RTX 3080. Current work stays in 2D image/court coordinates.
+Volleystat is an offline-first volleyball analytics pipeline for fixed-camera 4K video. Accuracy matters more than runtime; target workstation has RTX 5070 Ti 16 GB (Blackwell sm_120; needs torch >= 2.7 cu128, tested 2.7.1+cu128), i9-10900F, 32 GB RAM. Current work stays in 2D image/court coordinates.
 
 Primary outputs:
 
@@ -78,8 +78,24 @@ Current high-value analysis options:
 --player-identity-seed <JSON>
 --player-reid-assets <DIR>
 --player-reid-device auto|cpu|cuda
+--no-model-prefetch
 --no-video
 ```
+
+GPU throughput (2026-11-06): `src/pipeline/model_prefetch.py` runs decoding
+and missing raw ball/pose inference ahead of the ordered loop (1 decoder,
+1 ball, `POSE_PREFETCH_WORKERS=2` pose threads with separate model
+instances). Main thread alone touches SQLite, ByteTrack, gate and FSM. Same
+model calls, batch, imgsz and precision, so cache keys/values are unchanged;
+never edit hashed sources (`_infer_pose_model`, `PoseTracker`,
+`scripts/detection/detect_ball_on_video.py`, `src/models/player_reid_encoder.py`)
+merely for speed. Ball batch stays 8 (part of the cache key; 16 gave +8%).
+OSNet batch is 128 (`OSNET_BATCH_SIZE`). On 30 s of `j0gRhgFCgIs_4_4k` with an
+empty cache: serial loop 9.6 fps / 204 s wall, prefetch 15.0 fps / 151 s;
+OSNet batch 8 -> 128 cut identity 97 s -> 37 s. Still CPU/GIL-bound (~40% GPU).
+GPU reruns are not bit-identical even serially (822/899 identical raw ball
+outputs between two serial runs), so judge speed changes against a serial
+control run and replay hypotheses through the cache.
 
 For any command, verify exact arguments with `--help` before documenting or running a long job.
 

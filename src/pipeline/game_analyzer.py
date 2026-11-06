@@ -57,6 +57,7 @@ from src.tracking.match_analytics import (
 )
 from src.utils.logger import get_logger
 from src.utils.path_utils import local_path_from_uri
+from src.pipeline.model_prefetch import PrefetchJob, prefetch_model_outputs, threaded_iter
 from src.models.inference_cache import (
     DEFAULT_CACHE, CachedForward, CacheMiss, LazyModel, ModelOutputCache,
     array_payload, digest, file_digest, model_spec,
@@ -293,6 +294,7 @@ class GameAnalyzer:
         player_reid_device: str = "auto",
         model_cache_dir: Optional[str] = None,
         require_model_cache: bool = False,
+        model_prefetch: bool = True,
     ):
         """
         Args:
@@ -332,7 +334,12 @@ class GameAnalyzer:
                        They are confident on every frame, and a confident
                        candidate is *cheap* for the solver, so a stationary run
                        can outscore a real flight. See ball_static_sources.
+            model_prefetch: Decode frames and run stateless ball/pose model
+                       inference ahead of the ordered analysis loop on
+                       background threads (see pipeline/model_prefetch.py).
+                       Identical model calls and cache keys; only overlap.
         """
+        self.model_prefetch = bool(model_prefetch)
         self.progress_callback = progress_callback
         self.enable_pose = bool(enable_pose)
         self.enable_player_identity = bool(enable_player_identity and enable_pose)
@@ -978,12 +985,19 @@ class GameAnalyzer:
             if conf >= self.BALL_MIN_CONFIDENCE
         ]
 
-    def _ball_candidates_for(self, frame: np.ndarray, frame_idx=None, primary=None) -> List[BallCandidate]:
-        """Every plausible ball in this frame, from one or both detectors."""
+    def _ball_candidates_for(self, frame: np.ndarray, frame_idx=None, primary=None,
+                             prefetched=None) -> List[BallCandidate]:
+        """Every plausible ball in this frame, from one or both detectors.
+
+        ``prefetched`` holds raw detector outputs already computed for this
+        frame by the background model prefetch (keyed ``ball_<name>``).
+        """
         def raw(name, detector):
             cache = getattr(self, '_model_cache', None)
             def infer():
-                return [[float(v) for v in row] for row in detector.detect_ball(frame)]
+                ahead = (prefetched or {}).get('ball_' + name)
+                value = ahead if ahead is not None else detector.detect_ball(frame)
+                return [[float(v) for v in row] for row in value]
             return cache.compute(self._ball_stages[name], frame_idx, infer) if cache else infer()
         candidates = self._candidates_from_detections(primary if primary is not None else raw('primary', self.ball_detector))
         if self.ball_detector_2 is None:
@@ -1006,6 +1020,105 @@ class GameAnalyzer:
                                          batch=settings.get('batch',1), mode='track', **kwargs)
         return pack_pose_result(result[0] if result else None)
 
+    # Chunks (of ball_batch_size frames) decoded and inferred beyond the one the
+    # loop is consuming. Two keep the GPU fed without holding many 4K frames.
+    PREFETCH_CHUNKS_AHEAD = 2
+    IDENTITY_DECODE_DEPTH = 16
+    # Raw pose is the slowest stage (4K -> 2560 letterbox on CPU, then YOLO11m).
+    # Extra threads, each with its own model instance, overlap that CPU work.
+    # Measured 2026-11-06 (RTX 5070 Ti, i9-10900F, 4K VP9): loop 11.7 fps with
+    # one worker, 15.0 with two, 15.4 with three (GIL-bound), so two.
+    POSE_PREFETCH_WORKERS = 2
+
+    def _close_prefetch(self) -> None:
+        source = getattr(self, '_prefetch_source', None)
+        self._prefetch_source = None
+        if source is not None:
+            source.close()
+
+    def _pose_predict_kwargs(self) -> Dict[str, Any]:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        kwargs = dict(verbose=False, device=device, half=(device == "cuda"))
+        if self.pose_imgsz:
+            kwargs["imgsz"] = self.pose_imgsz
+        return kwargs
+
+    def _model_prefetch_jobs(self, total: int) -> Dict[str, PrefetchJob]:
+        """Stateless model outputs this pass still has to compute, as prefetch jobs.
+
+        Only cache-backed passes qualify: the cache is what turns pose into a
+        stateless raw stage (ByteTrack is replayed in order on this thread).
+        Each job runs the exact call the serial path would make, so values and
+        cache keys do not depend on whether prefetch ran.
+        """
+        cache = getattr(self, '_model_cache', None)
+        if not getattr(self, 'model_prefetch', False) or cache is None or cache.require:
+            return {}
+        step = self.skip_frames + 1
+        frames = range(0, max(0, int(total)), step)
+
+        def missing(stage):
+            stored = cache.items(stage)
+            absent = {index for index in frames if str(index) not in stored}
+            return lambda index, absent=absent: index in absent
+
+        jobs: Dict[str, PrefetchJob] = {}
+        primary = missing(self._ball_stages['primary'])
+        if any(primary(index) for index in frames):
+            batch_state = {'enabled': self.ball_batch_size > 1 and self.ball_detector_2 is None}
+
+            def ball_batch(images):
+                if batch_state['enabled']:
+                    try:
+                        return self.ball_detector.detect_ball_batch(images)
+                    except Exception as error:
+                        log.warning(f'Ball batch unavailable ({error}); using single-frame model outputs')
+                        batch_state['enabled'] = False
+                return [self.ball_detector.detect_ball(image) for image in images]
+
+            jobs['ball_primary'] = PrefetchJob(primary, lambda image: self.ball_detector.detect_ball(image),
+                                               ball_batch)
+        if self.ball_detector_2 is not None and 'tiled' in self._ball_stages:
+            tiled = missing(self._ball_stages['tiled'])
+            if any(tiled(index) for index in frames):
+                jobs['ball_tiled'] = PrefetchJob(tiled, lambda image: self.ball_detector_2.detect_ball(image))
+        if self.enable_pose and self.pose_model is not None and not self._pose_cache_read:
+            pose = missing(self._raw_pose_stage)
+            if any(pose(index) for index in frames):
+                infer, workers = self._pose_worker_inference()
+                jobs['pose_raw'] = PrefetchJob(pose, infer, workers=workers)
+        return jobs
+
+    def _pose_worker_inference(self) -> Tuple[Callable[[np.ndarray], Any], int]:
+        """Thread-safe raw pose inference: one YOLO instance per worker thread.
+
+        An Ultralytics model holds its predictor state, so concurrent calls need
+        separate instances. Every thread still runs the unchanged
+        ``_infer_pose_model`` (its source is part of the pose cache key) with
+        the same weights and settings; only the instance differs.
+        """
+        import queue
+        import threading
+        from types import SimpleNamespace
+        kwargs = self._pose_predict_kwargs()
+        pool: "queue.Queue" = queue.Queue()
+        pool.put(self)
+        # Only a lazily built model can be instantiated again; anything else
+        # (an injected model) stays on a single thread.
+        factory = self.pose_model.factory if isinstance(self.pose_model, LazyModel) else None
+        workers = max(1, int(self.POSE_PREFETCH_WORKERS)) if factory else 1
+        for _ in range(workers - 1):
+            pool.put(SimpleNamespace(pose_model=LazyModel(factory), _pose_spec=self._pose_spec))
+        local = threading.local()
+
+        def infer(image):
+            host = getattr(local, 'host', None)
+            if host is None:
+                host = local.host = pool.get_nowait()
+            return type(self)._infer_pose_model(host, image, kwargs)
+        return infer, workers
+
     def _detect_players(
         self,
         frame: np.ndarray,
@@ -1020,12 +1133,7 @@ class GameAnalyzer:
         if self.pose_model is None:
             return {"team_a": [], "team_b": []}, []
 
-        import torch
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        kwargs = dict(verbose=False, device=device, half=(device == "cuda"))
-        if self.pose_imgsz:
-            kwargs["imgsz"] = self.pose_imgsz
+        kwargs = self._pose_predict_kwargs()
 
         cache = getattr(self, '_model_cache', None)
         frame_index = getattr(self, '_current_pose_frame', None)
@@ -1033,7 +1141,11 @@ class GameAnalyzer:
         if saved is not None:
             results = [unpack_pose_result(saved)]
         elif cache and not self._pose_cache_read:
+            ahead = getattr(self, '_prefetched_outputs', None)
             def infer_pose():
+                # Raw detections computed ahead by the same _infer_pose_model call.
+                if ahead and ahead[0] == frame_index and 'pose_raw' in ahead[1]:
+                    return ahead[1]['pose_raw']
                 return self._infer_pose_model(frame, kwargs)
             raw = cache.compute(self._raw_pose_stage, frame_index, infer_pose)
             saved = self._cached_pose_tracker.update(raw, self._cache_frame_size)
@@ -1544,9 +1656,20 @@ class GameAnalyzer:
         if batch_enabled:
             log.info(f"Ball YOLO batch size: {self.ball_batch_size}")
 
+        prefetch_jobs = self._model_prefetch_jobs(total)
+        if prefetch_jobs:
+            log.info(f"Model prefetch: {', '.join(prefetch_jobs)} computed ahead on background threads")
+            source = prefetch_model_outputs(frame_iter, prefetch_jobs, self.ball_batch_size,
+                                            chunks_ahead=self.PREFETCH_CHUNKS_AHEAD)
+            # Closed explicitly by process_video before the capture is released:
+            # after an exception the traceback would keep this generator alive.
+            self._prefetch_source = source
+        else:
+            source = ((idx, image, {}) for idx, image in frame_iter)
+
         def frame_chunks():
             chunk = []
-            for item in frame_iter:
+            for item in source:
                 chunk.append(item)
                 if len(chunk) >= self.ball_batch_size:
                     yield chunk
@@ -1561,14 +1684,22 @@ class GameAnalyzer:
                 if cache is not None:
                     raw = {}
                     missing = []
-                    for idx,image in frame_chunk:
+                    ahead_values = []
+                    for idx,image,ahead in frame_chunk:
                         if self.skip_frames > 0 and idx % (self.skip_frames+1):
                             continue
                         value = cache.get(self._ball_stages['primary'], idx)
-                        if value is None:
+                        if value is None and ahead.get('ball_primary') is not None:
+                            ahead_values.append((idx, ahead['ball_primary']))
+                        elif value is None:
                             missing.append((idx,image))
                         else:
                             raw[idx] = value
+                    if ahead_values:
+                        cache.computed['ball_primary'] += len(ahead_values)
+                        for idx,value in ahead_values:
+                            raw[idx] = [[float(v) for v in row] for row in value]
+                            cache.put(self._ball_stages['primary'], idx, raw[idx])
                     if missing and cache.require:
                         raise CacheMiss(f'Missing ball model outputs at frame {missing[0][0]}')
                     if missing:
@@ -1587,14 +1718,15 @@ class GameAnalyzer:
                         for (idx,_),value in zip(missing,values):
                             raw[idx] = [[float(v) for v in row] for row in value]
                             cache.put(self._ball_stages['primary'], idx, raw[idx])
-                    for idx,image in frame_chunk:
-                        yield idx,image,(self._ball_candidates_for(image,idx,raw[idx]) if idx in raw else None)
+                    for idx,image,ahead in frame_chunk:
+                        yield idx,image,(self._ball_candidates_for(image,idx,raw[idx],prefetched=ahead)
+                                         if idx in raw else None),ahead
                     continue
                 batched_candidates: Dict[int, List[BallCandidate]] = {}
                 if batch_enabled:
                     processable = [
                         (idx, frame)
-                        for idx, frame in frame_chunk
+                        for idx, frame, _ in frame_chunk
                         if self.skip_frames <= 0
                         or idx % (self.skip_frames + 1) == 0
                     ]
@@ -1614,10 +1746,11 @@ class GameAnalyzer:
                                 "falling back to per-frame inference"
                             )
                             batch_enabled = False
-                for frame_idx, frame in frame_chunk:
-                    yield frame_idx, frame, batched_candidates.get(frame_idx)
+                for frame_idx, frame, ahead in frame_chunk:
+                    yield frame_idx, frame, batched_candidates.get(frame_idx), ahead
 
-        for frame_idx, frame, candidates in frames_with_ball_candidates():
+        for frame_idx, frame, candidates, prefetched in frames_with_ball_candidates():
+            self._prefetched_outputs = (frame_idx, prefetched)
             if getattr(self, '_model_cache', None) is not None:
                 self._cache_visited_frames.append(frame_idx)
             stats.total_frames += 1
@@ -2863,11 +2996,18 @@ class GameAnalyzer:
                 self._cached_frame_iterator() if cached_pass and not recovery and out_writer is None else frame_iter(), fps, max_frames, stats,
                 out_writer=out_writer,
             )
+            self._close_prefetch()
             if getattr(self, "enable_player_identity", False):
                 def identity_images():
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     yield from frame_iter()
-                self._apply_player_identity(stats, identity_images(), fps, vp)
+                # Decode ahead while OSNet encodes; closed before cap is reused.
+                images = (threaded_iter(identity_images(), self.IDENTITY_DECODE_DEPTH, name='identity-decode')
+                          if getattr(self, 'model_prefetch', False) else identity_images())
+                try:
+                    self._apply_player_identity(stats, images, fps, vp)
+                finally:
+                    images.close()
             else:
                 stats.player_identity = {"enabled": False, "status": "disabled"}
             if defer_final_render:
@@ -2875,6 +3015,7 @@ class GameAnalyzer:
                     vp, out_path, stats.frame_annotations, fps, w, h, max_frames,
                 )
         finally:
+            self._close_prefetch()
             cap.release()
             if out_writer:
                 out_writer.release()
