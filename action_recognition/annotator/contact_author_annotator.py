@@ -105,6 +105,9 @@ def create_app(project_dir,verify_full=True):
     @app.post("/api/label")
     def label(): return jsonify(**snapshot(store.label(body())))
 
+    @app.post("/api/event")
+    def event(): return jsonify(**snapshot(store.event_action(body())))
+
     @app.post("/api/roster")
     def roster(): return jsonify(**snapshot(store.roster_action(body())))
 

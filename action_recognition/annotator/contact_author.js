@@ -18,7 +18,9 @@ async function boot() {
   let project, state, progress, videoId, rows = [], index = 0, busy = false, crop = null, drag = null, box = null;
   let stopAt = null, pendingFrame = null, loadVersion = 0, boxFrame = null;
   let referenceFocus = [];
+  let pendingRemoval = null, cardsSignature = null;
   const current = () => rows[index];
+  const reviewedType = contact => state.event_reviews?.[contact.id]?.type || contact.type;
   const metadata = () => project.videos[videoId];
   const roster = () => state.rosters[videoId];
   const labelText = label => !label ? "Без мітки" : label.decision === "player" ? label.player_id :
@@ -26,10 +28,16 @@ async function boot() {
   const error = message => { $("error").textContent = message || ""; };
 
   async function json(url, options) {
-    const response = await fetch(url, options);
-    const result = await response.json();
-    if (!response.ok) { const failure = new Error(result.error || "Помилка сервера"); failure.status = response.status; throw failure; }
-    return result;
+    const controller = new AbortController(), deadline = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(url, {...options, signal:controller.signal});
+      const result = await response.json();
+      if (!response.ok) { const failure = new Error(result.error || "Помилка сервера"); failure.status = response.status; throw failure; }
+      return result;
+    } catch (failure) {
+      if (failure.name === "AbortError") { const timeout = new Error("Сервер не відповів за 15 секунд."); timeout.timeout = true; throw timeout; }
+      throw failure;
+    } finally { clearTimeout(deadline); }
   }
   function lock(value) {
     busy = value;
@@ -38,10 +46,18 @@ async function boot() {
     updateButtons();
   }
   function updateButtons() {
-    const disabled = busy || !roster().confirmed || !!crop;
+    const disabled = busy || !roster().confirmed || !!crop || !!pendingRemoval;
     for (const id of ["other","uncertain","notContact","reset"]) $(id).disabled = disabled;
     document.querySelectorAll(".pick").forEach(button => { button.disabled = disabled; });
-    document.querySelectorAll(".editReference").forEach(button => { button.disabled = busy; });
+    document.querySelectorAll(".editReference").forEach(button => { button.disabled = busy || !!pendingRemoval; });
+    document.querySelectorAll(".removePlayer").forEach(button => { button.disabled = busy || !!crop || !!pendingRemoval; });
+    $("confirmRemove").disabled = busy || !pendingRemoval;
+    $("cancelRemove").disabled = busy;
+    $("restorePlayer").disabled = busy || !!crop || !!pendingRemoval;
+    $("rosterFrame").disabled = busy || !roster().players.length;
+    $("confirmRoster").disabled = busy || !roster().players.length;
+    $("eventType").disabled = busy || !!crop || !!pendingRemoval;
+    $("resetEventType").disabled = busy || !!crop || !!pendingRemoval || !state.event_reviews?.[current().id];
   }
   async function mutate(url, payload) {
     if (busy) return false;
@@ -54,11 +70,13 @@ async function boot() {
       return true;
     } catch (failure) {
       $("saved").textContent = "Мітку не збережено";
-      if (failure.status === 409) {
-        try { const latest = await json("/api/project"); state = latest.state; progress = latest.progress; }
+      if (failure.status === 409 || !failure.status) {
+        try { const latest = await json("/api/project"); state = latest.state; progress = latest.progress;
+          if (failure.timeout) $("saved").textContent = `Стан оновлено · ревізія ${state.revision}. Перевірте поточну мітку.`;
+        }
         catch (_) { /* Source conflicts stay visible; never retry a write. */ }
       }
-      error(failure.message + (failure.status === 409 ? " Оновіть сторінку; перевірте мітку перед повтором." : ""));
+      error(failure.message + (failure.status === 409 || failure.timeout ? " Перевірте поточну мітку перед повтором; якщо стан не оновився, перезавантажте сторінку." : ""));
       return false;
     } finally { lock(false); render(); }
   }
@@ -80,11 +98,13 @@ async function boot() {
   }
   function showContact(nextIndex) {
     if (busy) return;
+    cancelRemoval();
     index = Math.max(0, Math.min(rows.length - 1, nextIndex));
     cancelCrop(); seek(current().frame); render();
   }
   function selectVideo(id) {
     if (busy) return;
+    cancelRemoval();
     cancelCrop(); videoId = id; rows = project.contacts.filter(c => c.video_id === id);
     index = rows.findIndex(c => !state.labels[c.id]); if (index < 0) index = 0;
     canvas.width = metadata().width; canvas.height = metadata().height;
@@ -99,12 +119,19 @@ async function boot() {
     $("videoSelect").value = videoId;
     $("contactSelect").replaceChildren(...rows.map((c, i) => {
       const option = document.createElement("option"); option.value = i;
-      option.textContent = `${state.labels[c.id] ? "✓" : "○"} ${i + 1}. f${c.frame} · ${names[c.type] || c.type} · ${labelText(state.labels[c.id])}`;
+      option.textContent = `${state.labels[c.id] ? "✓" : "○"} ${i + 1}. f${c.frame} · ${names[reviewedType(c)] || reviewedType(c)} · ${labelText(state.labels[c.id])}`;
       return option;
     }));
     $("contactSelect").value = index;
-    $("event").textContent = `${index + 1}/${rows.length} · ${names[current().type] || current().type} · f${current().frame}`;
-    $("eventMeta").textContent = `Мітка: ${labelText(state.labels[current().id])} · Час: ${current().timing_verified ? "перевірений людиною" : "початкова позначка, час не перевірений"}`;
+    const contact = current(), type = reviewedType(contact), review = state.event_reviews?.[contact.id];
+    $("event").textContent = `${index + 1}/${rows.length} · ${names[type] || type} · f${contact.frame}`;
+    $("eventMeta").textContent = `Мітка: ${labelText(state.labels[contact.id])} · Час: ${contact.timing_verified ? "перевірений людиною" : "початкова позначка, час не перевірений"}${!review && contact.event_label_source === "model" ? " · Подія знайдена моделлю; тип ще не перевірений" : ""}`;
+    $("eventType").replaceChildren(...Object.entries(names).map(([value, text]) => {
+      const option = document.createElement("option"); option.value = value; option.textContent = text; return option;
+    }));
+    if (!names[type]) { const option = document.createElement("option"); option.value = type; option.textContent = type; $("eventType").append(option); }
+    $("eventType").value = type;
+    $("eventTypeStatus").textContent = review ? `Тип підтверджений людиною · початковий: ${names[contact.type] || contact.type}` : "Виберіть інший тип — зміна збережеться автоматично. Автор контакту залишиться тим самим.";
     const total = Object.values(progress).reduce((sum, p) => sum + p.total, 0);
     const reviewed = Object.values(progress).reduce((sum, p) => sum + p.reviewed, 0);
     $("progress").max = total; $("progress").value = reviewed;
@@ -113,9 +140,19 @@ async function boot() {
     $("rosterStatus").textContent = roster().confirmed ? "Картки підтверджені · оберіть автора контакту" : "Спочатку перевірте й підтвердьте картки";
     $("confirmRoster").classList.toggle("hidden", roster().confirmed);
     $("confirmRoster").textContent = `Підтверджую: це ${roster().players.length} різних гравців`;
+    $("labelGuard").textContent = roster().confirmed ? "" : roster().players.length ? "Щоб присвоювати контакти, перевірте картки справа й натисніть «Підтверджую». Зайві картки можна видалити." : "Додайте картки гравців кнопкою «Новий гравець / заміна», потім підтвердьте їх.";
+    const removed = roster().removed_players || [], lastRemoved = removed[removed.length - 1];
+    $("restorePlayer").classList.toggle("hidden", !lastRemoved);
+    $("restorePlayer").textContent = lastRemoved ? `Відновити ${lastRemoved.player.player_id}` : "Відновити видалену картку";
     renderCards(); updateButtons();
   }
   function renderCards() {
+    const signature = JSON.stringify([videoId, roster().players]);
+    if (cardsSignature === signature) {
+      document.querySelectorAll(".card").forEach((card, i) => card.classList.toggle("selected", state.labels[current().id]?.player_id === roster().players[i]?.player_id));
+      return;
+    }
+    cardsSignature = signature;
     $("cards").replaceChildren();
     for (const player of roster().players) {
       const card = document.createElement("div"); card.className = "card";
@@ -124,7 +161,7 @@ async function boot() {
       const image = document.createElement("img"); image.alt = `Фото ${player.player_id}`;
       const title = document.createElement("strong"); title.textContent = player.player_id;
       let view = 0;
-      const setView = number => { view = number; image.src = `/portrait/${encodeURIComponent(videoId)}/${player.player_id}/${number}?r=${state.revision}`; };
+      const setView = number => { view = number; image.src = `/portrait/${encodeURIComponent(videoId)}/${player.player_id}/${number}?v=${encodeURIComponent(JSON.stringify(player.references[number]))}`; };
       setView(0); pick.append(image, title); pick.onclick = () => assign("player", player.player_id); card.append(pick);
       const views = document.createElement("div"); views.className = "views";
       player.references.forEach((_, n) => {
@@ -136,18 +173,51 @@ async function boot() {
       const edit = document.createElement("button"); edit.className = "editReference";
       edit.textContent = roster().confirmed ? "+ Ракурс" : "Замінити фото";
       edit.onclick = () => startCrop(roster().confirmed ? "add_view" : "replace_reference", player.player_id);
-      tools.append(jump, edit); card.append(tools); $("cards").append(card);
+      const remove = document.createElement("button"); remove.className = "removePlayer"; remove.textContent = `Видалити ${player.player_id}`;
+      remove.style = "width:100%;margin-top:6px;color:#ffb6ac"; remove.onclick = () => requestRemoval(player.player_id);
+      tools.append(jump, edit); card.append(tools, remove); $("cards").append(card);
     }
   }
+  function cancelRemoval() {
+    pendingRemoval = null; $("removePanel").classList.add("hidden");
+    if (state && videoId) updateButtons();
+  }
+  function requestRemoval(playerId) {
+    if (busy || crop) return;
+    const affected = rows.filter(c => state.labels[c.id]?.player_id === playerId).length;
+    pendingRemoval = {video_id:videoId, player_id:playerId, affected};
+    $("removeTitle").textContent = `Видалити картку ${playerId}?`;
+    $("removeMessage").textContent = affected ? `Цьому гравцю присвоєно ${affected} контактів. Вони повернуться до нерозмічених. Картку й попередні мітки можна відновити.` : "Картка зникне з меню. Інші ID не зміняться. Видалення можна скасувати кнопкою відновлення.";
+    $("confirmRemove").textContent = affected ? `Видалити й зняти ${affected} міток` : "Видалити картку";
+    $("removePanel").classList.remove("hidden"); $("removePanel").scrollIntoView?.({block:"nearest"}); updateButtons();
+  }
+  $("cancelRemove").onclick = cancelRemoval;
+  $("confirmRemove").onclick = async () => {
+    if (busy || !pendingRemoval) return;
+    const removal = {...pendingRemoval};
+    await mutate("/api/roster", {action:"remove_player", video_id:removal.video_id, player_id:removal.player_id,
+      removal_confirmed:true, unassign_contacts_confirmed:removal.affected > 0});
+    cancelRemoval(); render();
+  };
+  $("restorePlayer").onclick = () => {
+    const removed = roster().removed_players || [], last = removed[removed.length - 1];
+    if (!busy && !crop && !pendingRemoval && last) return mutate("/api/roster", {video_id:videoId, action:"restore_player", player_id:last.player.player_id});
+  };
   async function assign(decision, playerId = null) {
-    if (busy || crop || !roster().confirmed) return;
+    if (busy || crop || pendingRemoval || !roster().confirmed) return;
     const contactId = current().id, oldIndex = index, oldVideo = videoId;
     if (await mutate("/api/label", {contact_id:contactId, decision, player_id:playerId})) {
       if (decision !== "reset" && $("autoNext").checked && videoId === oldVideo && current().id === contactId) showContact(oldIndex + 1);
     }
   }
+  async function changeEvent(action, type) {
+    if (busy || crop || pendingRemoval) return false;
+    return mutate("/api/event", {contact_id:current().id, action, ...(action === "set" ? {type} : {})});
+  }
+  $("eventType").onchange = event => changeEvent("set", event.target.value);
+  $("resetEventType").onclick = () => changeEvent("reset");
   function startCrop(action, playerId = null) {
-    if (busy) return;
+    if (busy || pendingRemoval) return;
     video.pause(); stopAt = null; referenceFocus = []; crop = {action, player_id:playerId}; box = null; drag = null;
     canvas.classList.add("drawing"); $("cropPanel").classList.remove("hidden");
     $("cropTitle").textContent = action === "add_player" ? "Новий гравець: обведіть людину, якої ще немає на картках" : `${playerId}: обведіть саме цю людину`;
@@ -198,7 +268,7 @@ async function boot() {
   $("cancelCrop").onclick = cancelCrop;
   $("confirmRoster").onclick = () => mutate("/api/roster", {video_id:videoId, action:"confirm"});
   $("addPlayer").onclick = () => startCrop("add_player");
-  $("rosterFrame").onclick = () => seekReference(roster().players[0], 0, true);
+  $("rosterFrame").onclick = () => { if (roster().players.length) seekReference(roster().players[0], 0, true); };
   $("videoSelect").onchange = event => selectVideo(event.target.value);
   $("contactSelect").onchange = event => showContact(Number(event.target.value));
   $("previous").onclick = () => showContact(index - 1); $("next").onclick = () => showContact(index + 1);
@@ -235,7 +305,7 @@ async function boot() {
   document.onkeydown = event => {
     if (!project || busy || event.repeat || ["INPUT","SELECT","TEXTAREA","VIDEO"].includes(event.target.tagName)) return;
     const key = event.key.toLowerCase();
-    if (/^[1-9]$/.test(key)) { const p = roster().players[Number(key)-1]; if (p) assign("player", p.player_id); }
+    if (/^[1-9]$/.test(key)) { const p = roster().players.find(p => p.player_id === "P" + key); if (p) assign("player", p.player_id); }
     else if (key === "o") assign("other_team"); else if (key === "u") assign("unsure"); else if (key === "n") assign("not_contact");
     else if (key === "arrowleft") showContact(index - 1); else if (key === "arrowright") showContact(index + 1);
     else if (key === "a") seek(observedFrame() - 1); else if (key === "d") seek(observedFrame() + 1);

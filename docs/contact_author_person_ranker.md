@@ -77,6 +77,13 @@ higher.
 
 ## Limits
 
+**2026-11-01 paired audit:** the original 84.8% above is reproduced, but its
+inner team predictions include the outer test source and fitting includes 12
+non-strict labels. Under matched strict-only training, fixed HGB gets 85.87%
+(158/184); properly nested selection gets 82.07% (151/184), versus Codex's
+79.35% fixed / 75.54% nested. See the [paired comparison](contact_author_comparison.md)
+for source-by-source metrics, exact protocol differences and reproducible commands.
+
 - Three development videos from one fixed camera; no untouched final test.
   Not an unseen-camera or unseen-team number.
 - Contact time and type are the audited human values. With spotter timing/types

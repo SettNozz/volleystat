@@ -24,6 +24,10 @@ assignment precision; nested algorithm selection gets 75.54% near-person recall.
 The 80% person target is not reached. These are known-contact development scores, not
 end-to-end contact detection or a production promotion. A read-only error
 viewer compares all methods with the human photo roster.
+The [paired comparison with Claude's person ranker](docs/contact_author_comparison.md)
+uses identical 382 strict contacts: fixed HGB gets 85.87% exact near-person
+recall versus `class_fusion` 79.35%; corrected nested selection gets 82.07%
+versus 75.54%. These remain three-video development estimates.
 The [unlabelled-video author workflow](docs/contact_author_inference.md) applies
 three frozen `class_fusion` fold members to an existing saved analysis, with no
 training or detector replay. Its read-only viewer shows contact predictions,
@@ -35,6 +39,18 @@ on the right, plus other-team/unsure/not-contact decisions. It reuses the active
 414-clip human event dataset and audited contact times (403 review items after
 duplicate grouping and known-error exclusion). Substitutes get new IDs;
 progress, revisions and JSON export remain separate from model predictions.
+Player cards can be removed with an explicit confirmation and restored. Assigned
+contacts return to unlabelled only after confirmation; deleted IDs are reserved.
+Save requests have a timeout and reconcile saved state before another decision.
+The **Тип контакту** selector separately corrects an event type with autosave
+and a reset to the original value. Human type reviews enter the JSON export
+with their original predictions; author labels and timing remain independent.
+New-source author annotation can reuse existing spotter results with
+`scripts/evaluation/prepare_contact_author_expansion.py`. It excludes sources
+in the active event-training manifest and completed author snapshot, creates a
+fresh empty project, retains model time/type provenance and requires photo-roster
+confirmation. Current expansion: seven videos, 759 contact proposals, port 5070.
+See [new-source annotation](docs/contact_author_annotation.md#new-sources-outside-the-existing-datasets).
 The viewer's **Player contacts** panel selects a roster ID, highlights only
 that skeleton, and lists its reception, dig/pass/set, attack, block and serve
 events with click-to-seek. Unverified contact proposals use saved ball/pose
@@ -488,3 +504,15 @@ in finding touches, not naming them. See
 [dense contact spotting](docs/dense_contact_spotting.md) and the
 [landscape review](docs/event_detection_research_2026-10.md). Production models
 and datasets are unchanged.
+
+## Expanded human contact experiments
+
+The completed author-review projects can be frozen and evaluated with
+`scripts/evaluation/train_expanded_contacts.py` in the isolated experiment
+worktree. Whole-video folds compare old-three-source and expanded training for
+named authors and contact typing. Unchanged model event types remain unverified;
+only explicit type corrections augment the event dataset. Run artifacts retain
+SQLite snapshots, source hashes, features, seeds, fold predictions, metrics and
+model files. TcUru's confirmed five-person roster is an explicit exception to
+the normal six-person court policy. See
+[expanded training and history](docs/expanded_contact_training.md).

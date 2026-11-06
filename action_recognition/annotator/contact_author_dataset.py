@@ -19,6 +19,7 @@ from src.tracking.player_contacts import side
 
 SCHEMA = "contact_author_annotation_v1"
 DECISIONS = {"player", "other_team", "unsure", "not_contact"}
+EVENT_TYPES = {"serve", "reception", "pass", "set", "dig", "attack", "block", "free_ball", "other"}
 
 
 def sha(path):
@@ -29,6 +30,17 @@ def sha(path):
 
 
 def now(): return datetime.now(timezone.utc).isoformat()
+
+
+def reviewed_contact(contact,state):
+    """Apply an explicit human type override, preserving source event and timing."""
+    row=deepcopy(contact);review=state.get("event_reviews",{}).get(contact["id"])
+    if review:
+        row["original_event"]={k:deepcopy(contact[k]) for k in
+            ("type","raw_types","core_type","event_label_source","event_verified") if k in contact}
+        row.update(type=review["type"],raw_types=[review["type"]],event_label_source="human",event_verified=True,event_review=deepcopy(review))
+        row.pop("core_type",None)
+    return row
 
 
 def fingerprint_file(path):
@@ -218,7 +230,7 @@ class AnnotationStore:
 
     def label(self,payload):
         key = payload.get("contact_id"); decision = payload.get("decision")
-        if key not in self.contacts: raise ValueError("Unknown contact")
+        if not isinstance(key,str) or key not in self.contacts: raise ValueError("Unknown contact")
         if decision not in DECISIONS|{"reset"}: raise ValueError("Unknown annotation decision")
         def apply(state):
             video = self.contacts[key]["video_id"]; roster = state["rosters"][video]
@@ -232,11 +244,49 @@ class AnnotationStore:
                  "revision":state["revision"]+1}
         return self.mutate(payload.get("revision"),payload,apply)
 
+    def event_action(self,payload):
+        key=payload.get("contact_id");action=payload.get("action","set")
+        if not isinstance(key,str) or key not in self.contacts: raise ValueError("Unknown contact")
+        if action not in ("set","reset"): raise ValueError("Unknown event review action")
+        if action=="set" and (not isinstance(payload.get("type"),str) or payload["type"] not in EVENT_TYPES): raise ValueError("Unknown contact type")
+        def apply(state):
+            reviews=state.setdefault("event_reviews",{})
+            if action=="reset": reviews.pop(key,None);return
+            reviews[key]={"type":payload["type"],"label_source":"human","verified":True,
+                          "verification_scope":"contact_type_only","updated_at":now(),"revision":state["revision"]+1}
+        return self.mutate(payload.get("revision"),payload,apply)
+
     def roster_action(self,payload):
         video = payload.get("video_id"); action = payload.get("action")
         if video not in self.project["videos"]: raise ValueError("Unknown video")
         def apply(state):
             roster = state["rosters"][video]
+            if action=="remove_player":
+                player = next((p for p in roster["players"] if p["player_id"]==payload.get("player_id")),None)
+                if player is None: raise ValueError("Unknown player")
+                if payload.get("removal_confirmed") is not True: raise ValueError("Confirm player removal")
+                affected = {key:deepcopy(label) for key,label in state["labels"].items()
+                            if self.contacts[key]["video_id"]==video and label.get("player_id")==player["player_id"]}
+                if affected and payload.get("unassign_contacts_confirmed") is not True:
+                    raise Conflict(f"Player has {len(affected)} contact labels; explicitly confirm returning them to unlabelled")
+                roster.setdefault("removed_players",[]).append({"player":deepcopy(player),"removed_at":now(),
+                    "revision":state["revision"]+1,"unassigned_labels":affected})
+                roster["players"].remove(player)
+                for key in affected: del state["labels"][key]
+                if not roster["players"]: roster["confirmed"] = False
+                return
+            if action=="restore_player":
+                removed = roster.get("removed_players",[])
+                entry = next((p for p in removed if p["player"]["player_id"]==payload.get("player_id")),None)
+                if entry is None: raise ValueError("Unknown removed player")
+                if any(p["player_id"]==payload.get("player_id") for p in roster["players"]): raise Conflict("Player ID already exists")
+                roster["players"].append(deepcopy(entry["player"]))
+                roster["players"].sort(key=lambda p:int(p["player_id"][1:]))
+                for key,label in entry["unassigned_labels"].items():
+                    if key not in state["labels"]: state["labels"][key] = deepcopy(label)
+                roster.setdefault("restored_players",[]).append({**deepcopy(entry),"restored_at":now(),"restored_revision":state["revision"]+1})
+                removed.remove(entry)
+                return
             if action=="confirm":
                 if len(roster["players"])<1: raise ValueError("Empty roster")
                 roster["confirmed"] = True
@@ -254,7 +304,8 @@ class AnnotationStore:
             reference = {"frame":frame,"bbox":box,"label_source":"human","scope":"identity_reference_only"}
             if action=="add_player":
                 if payload.get("new_person_confirmed") is not True: raise ValueError("Confirm this is a new person")
-                number = max(int(p["player_id"][1:]) for p in roster["players"])+1
+                reserved = roster["players"]+[p["player"] for p in roster.get("removed_players",[])]
+                number = max((int(p["player_id"][1:]) for p in reserved),default=0)+1
                 roster["players"].append({"player_id":f"P{number}","references":[reference],
                       "identity_confirmation":{"label_source":"human","verified":True,"scope":"new_person","updated_at":now()}})
             else:
@@ -274,12 +325,13 @@ class AnnotationStore:
         for c in self.project["contacts"]:
             label = state["labels"].get(c["id"])
             if not label or label["decision"] not in ("player","other_team") or not label["verified"]: continue
-            rows.append({**deepcopy(c),"author":deepcopy(label),"author_label_source":"human",
+            rows.append({**reviewed_contact(c,state),"author":deepcopy(label),"author_label_source":"human",
                          "author_key":f'{c["video_id"]}:{label["player_id"]}' if label["player_id"] else None,
                          "team":self.project["videos"][c["video_id"]]["target_side"] if label["decision"]=="player" else "a"})
         return {"schema":"human_contact_author_dataset_v1","created_at":now(),"project_sha256":self.fingerprint,
                 "revision":state["revision"],"rosters":state["rosters"],"contacts":rows,
-                "decisions":deepcopy(state["labels"]),"queue":deepcopy(self.project["contacts"]),
+                "decisions":deepcopy(state["labels"]),"queue":[reviewed_contact(c,state) for c in self.project["contacts"]],
+                "event_reviews":deepcopy(state.get("event_reviews",{})),
                 "excluded":deepcopy(self.project["excluded"]),"sources":deepcopy(self.project["sources"]),
                 "videos":deepcopy(self.project["videos"]),"source_scope":self.project["source_scope"],
                 "evaluation_scope":self.project["evaluation_scope"],"split_unit":"source_video",

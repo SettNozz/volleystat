@@ -38,6 +38,126 @@ def confirm(store):
     return store.roster_action({"video_id":"game","action":"confirm","revision":store.load()["revision"]})
 
 
+def test_contact_type_correction_preserves_author_source_and_timing_and_can_be_reset(project_dir):
+    store=AnnotationStore(project_dir);confirm(store)
+    store.label({"contact_id":"c0","decision":"player","player_id":"P2","revision":1})
+    original_author=deepcopy(store.load()["labels"]["c0"]);original_project=(project_dir/"project.json").read_bytes()
+    store.event_action({"contact_id":"c0","action":"set","type":"attack","revision":2})
+    store.event_action({"contact_id":"c0","action":"set","type":"set","revision":3})
+    resumed=AnnotationStore(project_dir);row=resumed.export()["contacts"][0]
+    assert row["type"]=="set" and row["raw_types"]==["set"]
+    assert row["author"]==original_author and row["event_label_source"]=="human" and row["event_verified"]
+    assert row["original_event"]["type"]=="pass" and row["timing_verified"]
+    assert row["event_review"]["verification_scope"]=="contact_type_only"
+    assert (project_dir/"project.json").read_bytes()==original_project
+    with pytest.raises(Conflict):resumed.event_action({"contact_id":"c0","type":"block","revision":2})
+    resumed.event_action({"contact_id":"c0","action":"reset","revision":4})
+    reset=resumed.export()["contacts"][0]
+    assert reset["type"]=="pass" and "event_review" not in reset and reset["author"]==original_author
+    with resumed.connect() as con:assert con.execute("SELECT COUNT(*) FROM revisions").fetchone()[0]==5
+
+
+def test_type_review_is_independent_of_roster_confirmation_and_author_decision(project_dir):
+    store=AnnotationStore(project_dir);store.event_action({"contact_id":"c0","type":"set","revision":0})
+    exported=store.export()
+    assert exported["contacts"]==[] and exported["queue"][0]["type"]=="set"
+    assert exported["event_reviews"]["c0"]["label_source"]=="human"
+    assert store.load()["labels"]=={} and not store.load()["rosters"]["game"]["confirmed"]
+
+
+@pytest.mark.parametrize("event_type",["banana",None,[],{}])
+def test_invalid_event_type_does_not_change_saved_state(project_dir,event_type):
+    store=AnnotationStore(project_dir);before=store.load()
+    with pytest.raises(ValueError,match="Unknown contact type"):store.event_action({"contact_id":"c0","type":event_type,"revision":0})
+    assert store.load()==before
+
+
+def test_event_review_api_export_keeps_model_timing_unverified(project_dir,tmp_path):
+    project=json.loads((project_dir/"project.json").read_bytes());contact=project["contacts"][0]
+    contact.update(type="attack",raw_types=["attack"],event_label_source="model",event_verified=False,
+                   timing_verified=False,timing_source="model",core_type="attack")
+    directory=tmp_path/"model_events";write_new(directory/"project.json",project)
+    client=create_app(directory).test_client()
+    response=client.post("/api/event",json={"contact_id":"c0","type":"set","revision":0})
+    assert response.status_code==200 and response.get_json()["state"]["labels"]=={}
+    row=client.get("/api/export").get_json()["queue"][0]
+    assert row["type"]=="set" and row["event_verified"] and not row["timing_verified"]
+    assert row["original_event"]["type"]=="attack" and row["original_event"]["event_label_source"]=="model"
+    assert "core_type" not in row and row["original_event"]["core_type"]=="attack"
+    assert client.post("/api/event",json={"contact_id":"c0","type":"block","revision":0}).status_code==409
+    assert client.post("/api/event",json={"contact_id":"bad","type":"set","revision":1}).status_code==400
+
+
+def test_remove_player_requires_explicit_confirmation_and_reserves_its_id(project_dir):
+    store=AnnotationStore(project_dir);before=store.load()
+    with pytest.raises(ValueError,match="Confirm player removal"):
+        store.roster_action({"video_id":"game","action":"remove_player","player_id":"P6","revision":0})
+    assert store.load()==before
+    result=store.roster_action({"video_id":"game","action":"remove_player","player_id":"P6","removal_confirmed":True,"revision":0})
+    assert [p["player_id"] for p in result["rosters"]["game"]["players"]]==[f"P{n}" for n in range(1,6)]
+    assert result["labels"]=={} and result["rosters"]["game"]["removed_players"][0]["player"]["player_id"]=="P6"
+    result=store.roster_action({"video_id":"game","action":"add_player","new_person_confirmed":True,
+        "frame":3,"bbox":[2,2,40,90],"revision":1})
+    assert result["rosters"]["game"]["players"][-1]["player_id"]=="P7"
+    with pytest.raises(Conflict):
+        store.roster_action({"video_id":"game","action":"remove_player","player_id":"P1","removal_confirmed":True,"revision":0})
+
+
+def test_labelled_player_removal_is_reversible_and_does_not_overwrite_new_labels(project_dir):
+    store=AnnotationStore(project_dir);confirm(store)
+    store.label({"contact_id":"c0","decision":"player","player_id":"P6","revision":1})
+    original=deepcopy(store.load()["labels"]["c0"])
+    payload={"video_id":"game","action":"remove_player","player_id":"P6","removal_confirmed":True,"revision":2}
+    with pytest.raises(Conflict,match="1 contact labels"):store.roster_action(payload)
+    assert store.load()["labels"]["c0"]==original and store.load()["revision"]==2
+    store.roster_action({**payload,"unassign_contacts_confirmed":True})
+    assert store.export()["contacts"]==[]
+    archive=store.load()["rosters"]["game"]["removed_players"][0]
+    assert archive["unassigned_labels"]["c0"]==original
+    store.roster_action({"video_id":"game","action":"restore_player","player_id":"P6","revision":3})
+    assert store.load()["labels"]["c0"]==original
+    store.roster_action({**payload,"unassign_contacts_confirmed":True,"revision":4})
+    store.label({"contact_id":"c0","decision":"player","player_id":"P2","revision":5})
+    store.roster_action({"video_id":"game","action":"restore_player","player_id":"P6","revision":6})
+    assert store.load()["labels"]["c0"]["player_id"]=="P2"
+    assert store.load()["rosters"]["game"]["restored_players"][-1]["unassigned_labels"]["c0"]==original
+
+
+def test_delete_all_cards_can_add_new_person_without_reusing_old_ids(project_dir):
+    store=AnnotationStore(project_dir)
+    for n in range(1,7):
+        store.roster_action({"video_id":"game","action":"remove_player","player_id":f"P{n}","removal_confirmed":True,"revision":n-1})
+    assert store.load()["rosters"]["game"]["players"]==[]
+    with pytest.raises(ValueError,match="Empty roster"):confirm(store)
+    store.roster_action({"video_id":"game","action":"add_player","new_person_confirmed":True,
+                        "frame":3,"bbox":[2,2,40,90],"revision":6})
+    assert store.load()["rosters"]["game"]["players"][0]["player_id"]=="P7"
+
+
+def test_removal_is_scoped_to_one_video_and_keeps_other_person_labels(project_dir,tmp_path):
+    project=json.loads((project_dir/"project.json").read_bytes())
+    project["videos"]["other"]=deepcopy(project["videos"]["game"])
+    project["videos"]["other"].update(video_id="other",name="other")
+    project["contacts"].append({"id":"other_contact","video_id":"other","frame":3,"type":"pass","timing_verified":True})
+    path=tmp_path/"two_sources";write_new(path/"project.json",project);store=AnnotationStore(path);store.initialize()
+    for video in ("game","other"):store.roster_action({"video_id":video,"action":"confirm","revision":store.load()["revision"]})
+    for key in ("c0","other_contact"):store.label({"contact_id":key,"decision":"player","player_id":"P6","revision":store.load()["revision"]})
+    store.roster_action({"video_id":"game","action":"remove_player","player_id":"P6","removal_confirmed":True,
+                        "unassign_contacts_confirmed":True,"revision":store.load()["revision"]})
+    assert set(store.load()["labels"])=={"other_contact"}
+    assert store.export()["contacts"][0]["author_key"]=="other:P6"
+
+
+def test_remove_and_restore_are_available_through_roster_api(project_dir):
+    client=create_app(project_dir).test_client()
+    removed=client.post("/api/roster",json={"video_id":"game","action":"remove_player","player_id":"P6",
+                                          "removal_confirmed":True,"revision":0})
+    assert removed.status_code==200 and len(removed.get_json()["state"]["rosters"]["game"]["players"])==5
+    assert client.get("/portrait/game/P6/0").status_code==400
+    restored=client.post("/api/roster",json={"video_id":"game","action":"restore_player","player_id":"P6","revision":1})
+    assert restored.status_code==200 and len(restored.get_json()["state"]["rosters"]["game"]["players"])==6
+
+
 def test_queue_uses_audited_time_merges_duplicates_and_retains_links():
     clips = [{"clip_id":f"clip{n}","source_stem":"game","annotation_ids":[f"ann{n}"],
               "contact_frame":10+n,"primary_event_type":"pass","full_event_types":["pass"]} for n in range(4)]

@@ -38,6 +38,67 @@ with an explicit audit reason. Queue: **403 items**, 157 / 126 / 120 per video.
 Six items have unverified timing, shown explicitly in the UI. Ambiguous inherited
 raw types remain ambiguous; author assignment does not retype a contact.
 
+## New sources outside the existing datasets
+
+Use `scripts/evaluation/prepare_contact_author_expansion.py --help` to prepare
+the same blind annotator from existing paired spotter stats/annotations. Pass
+each `*_stats.json` explicitly, plus the active event-training manifest and
+the completed author snapshot to exclude. Source names and known video hashes
+prevent including an old source under a different file name. Duplicate video
+content inside the new batch is refused too. This command never runs models.
+
+```powershell
+python scripts/evaluation/prepare_contact_author_expansion.py `
+  --stats <saved-result-1>_stats.json <saved-result-2>_stats.json `
+  --exclude-event-manifest <shared>/data/event_clips_three_full_gold_causal_120f_v1/manifest.json `
+  --exclude-author-snapshot results/contact_author_benchmark_20261031_v1/human_labels.json `
+  --output results/contact_author_expansion_NEW
+
+python -m action_recognition.annotator.contact_author_annotator `
+  --project results/contact_author_expansion_NEW --port 5070
+```
+
+Current batch: `results/contact_author_expansion_20261101_v2`, seven videos and
+**759** model contact proposals, initially zero author labels:
+
+| Video | Contacts | Proposed people |
+|---|---:|---:|
+| X6JdbC8SM_U_4k | 87 | 6 |
+| JIZ3exHe3hA_4k | 111 | 7, including the known substitute |
+| xZbD8fx3D4k_1_4k | 195 | 6 |
+| LdOghv6rt_4_4k | 118 | 6 |
+| qDzHtxhNkBA_4k | 64 | 6 |
+| QhqMwaCf8iw_4k | 82 | 6 |
+| TcUru_ou4CQ_4k | 102 | 6 |
+
+These sources are outside the active three-video event training source set and
+the completed three-video author gold set. Some night videos have prior
+event-type review/research history; this is not a claim they are absent from
+every historical experiment or an untouched final test. No new split is assigned
+and no training dataset is promoted or rewritten.
+
+All contacts/types/times here are **model proposals**, not human gold. Exact
+frame duplicates are grouped with all original indices/types retained. False
+proposals can be marked **Це не контакт**. Author assignment verifies only the
+person/team; it does not verify time/type. These flags remain explicit in the
+export, so timing-sensitive evaluation needs a separate audited-time review.
+Algorithm author predictions are never copied into labels or displayed as hints.
+
+Saved identity galleries, when present, retain their local P1/P2 numbering and
+substitute reference cards; otherwise six observed near-side boxes propose the
+photos. Every roster starts **unconfirmed**, regardless of previous identity
+provenance. Confirm or repair the cards before labelling. Additional substitutions
+still require explicit new-person confirmation.
+
+`project.json` fingerprints both analysis files and original videos; SQLite
+autosaves separately from the old 403-decision project. Existing directories
+are refused. Preparation only reads existing analyses and video metadata. It
+does not replay YOLO, OSNet, SAM, ball tracking or the spotter, or render MP4.
+
+Tests: `tests/test_contact_author_expansion.py` checks dataset/name/hash exclusions,
+model provenance after human author assignment, immutable source data, resume,
+saved substitute references and queue duplicate handling.
+
 ## Establish the roster once per video
 
 The saved analyses have local tracker IDs, not verified person identities.
@@ -64,7 +125,47 @@ such as `Khe4P8QcJkg_5_4k:P2`. The current preparation scope is side `b`, the
 near team in these three fixed-camera videos; **Інша команда** means side `a`.
 Set-side changes are outside this project's scope.
 
+### Remove or restore a card
+
+Each card has **Видалити Pn**. The inline confirmation states how many contacts
+are assigned to that person. For a labelled player, **Видалити й зняти N міток**
+explicitly returns those contacts to unlabelled; other players and videos retain
+their labels. Nothing is removed until this second click. Cancel or navigate to
+another contact to dismiss the pending removal.
+
+Removal archives the complete photo references and previous contact decisions
+in SQLite. **Відновити Pn** restores the latest removed card and restores its old
+labels only where the contact is still unlabelled; newer human decisions win.
+Restoration history is retained. Remaining IDs are never renumbered, and removed
+IDs cannot be assigned to a new person. Number keys continue to match the visible
+P number even when the roster has gaps. All cards may be removed and replaced;
+an empty roster must receive new cards before confirmation.
+
+The UI explains beside the contact when roster confirmation is still needed.
+Requests time out after 15 seconds instead of leaving **Зберігаю…** forever.
+After an ambiguous timeout, it reloads saved state without retrying or advancing
+the contact: check the displayed decision before choosing again. Optimistic
+revision checks still reject stale writes. Photo elements/URLs stay stable
+between ordinary label saves, so all portraits are not fetched again per contact.
+
 ## Review and save
+
+The **Тип контакту** selector changes the current event (serve, reception,
+set/pass, dig, attack, block, free ball or other). Selecting a different type
+autosaves without advancing, even when auto-next for author labels is enabled.
+It works independently of roster confirmation and leaves the author decision
+and contact time unchanged. **Повернути початковий тип** removes the override.
+The contact heading/list update immediately; a rejected/stale save restores the
+saved value instead of applying the edit to another contact.
+
+Type reviews are stored under `state.event_reviews` with human provenance,
+revision history and `verification_scope: contact_type_only`. Original project
+events and source analysis files remain immutable. Export `contacts` and `queue`
+apply these reviews to `type`/`raw_types`, mark event type human verified, retain
+the original event in `original_event` and include the full `event_reviews` map.
+Any stale original `core_type` is retained only inside `original_event`, so a
+future dataset builder must derive core taxonomy from the corrected raw type.
+Model contact timing stays unverified; editing a type does not audit its frame.
 
 - Choose a video/contact, play ±2 seconds at 0.25×/0.5×/1×, or step single frames.
   The timeline and original video controls allow wider context.
