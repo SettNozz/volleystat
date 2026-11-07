@@ -36,7 +36,7 @@ function drawPoseEstimates(ctx, ann, frameIndex, px, py, scale) {
   ctx.restore();
 }
 
-function initPoseEstimates(data) {
+function initPoseEstimates(data, contactUsesEstimates = false) {
   const toggle = document.getElementById('togPoseEstimates');
   const status = document.getElementById('poseEstimateStatus');
   const report = data.pose_completion;
@@ -49,5 +49,7 @@ function initPoseEstimates(data) {
   const counts = report.counts;
   status.textContent = `Cyan dashed: estimated hidden joints. ${counts.missing_person_frames || 0} ` +
     `missing + ${counts.partial_person_frames || 0} partial player-frames. ` +
-    'Uses past and future observations; contact counts still use observed poses.';
+    'Uses past and future observations; ' + (contactUsesEstimates
+      ? 'selected experimental contact approach may use derived joints; touches remain unverified.'
+      : 'contact counts still use observed poses.');
 }

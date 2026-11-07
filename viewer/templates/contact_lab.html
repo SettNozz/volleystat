@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Volleyball contact lab</title>
+<style>
+*{box-sizing:border-box}body{font:14px system-ui;margin:0;background:#f3f6fa;color:#182334}header{padding:18px 24px;background:white;border-bottom:1px solid #dae1ec;display:flex;gap:18px;align-items:center}h1{font-size:19px;margin:0}a{color:#3266d7}main{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:16px;padding:20px}.card{background:white;border:1px solid #dce3ed;border-radius:12px;padding:15px}.stage{position:relative;background:#111;aspect-ratio:16/9;border-radius:10px;overflow:hidden}.stage video{width:100%;height:100%;display:block}.stage canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.toolbar,.chips{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}button,select{border:1px solid #ccd6e5;background:white;border-radius:6px;padding:8px;cursor:pointer;color:inherit}button.active{background:#3266d7;color:white;border-color:#3266d7}select{width:100%}small,.muted{color:#627086}p{line-height:1.5}.events{max-height:58vh;overflow:auto}.event{display:block;width:100%;text-align:left;margin-bottom:7px;line-height:1.5}.event small{display:block}.event.uncertain{border-left:3px solid #e8a83c}.event.selected{outline:2px solid #3266d7}.event.new{background:#f1f9f5}table{width:100%;border-collapse:collapse;font-size:12px}td,th{text-align:left;padding:7px;border-bottom:1px solid #e3e9f1}tr.selected{background:#eef3ff}#labError{color:#b23a32}#labDetails{font-size:12px}#labMethodInfo{min-height:55px}.pill{font-size:11px;background:#eef3fb;border-radius:4px;padding:3px 6px}.legend{font-size:12px;line-height:1.7}@media(max-width:1000px){main{grid-template-columns:1fr}.events{max-height:400px}}
+</style></head><body>
+<header><h1>Volleyball · contact lab</h1><a href="/results/{{ job_id }}">Original analysis</a><span class="muted">Frozen ball/pose observations · experimental proposals</span></header>
+<main><section>
+<div class="stage"><video id="labVideo" controls preload="metadata" src="{% if job.original_video_path_url %}/api/original_video?path={{ job.original_video_path_url }}{% else %}/api/video/{{ job_id }}{% endif %}"></video><canvas id="labCanvas"></canvas></div>
+<div class="toolbar"><button id="labBack">−1 frame</button><button id="labForward">+1 frame</button><span id="labFrame" class="pill">Loading</span></div>
+<div id="labCases" class="toolbar" aria-label="P4 reviewed cases"></div>
+<div class="card"><div id="labDetails">Choose a contact to inspect its evidence.</div><p class="legend">Yellow: selected player. Cyan: proposed actor when different from the selected player. Gray: other observed poses. Amber box: actor proposal. P4*: derived identity correction from the confirmed reference, not a new detector result. ID?: source P4 rejected. Ball: green observed-backed trajectory, amber derived point. Hidden poses are not invented.</p><p id="labQuality" class="muted"></p><div id="labComparison"></div></div>
+</section><aside class="card">
+<label for="labMethod">Contact method</label><select id="labMethod" disabled></select><p id="labMethodInfo" class="muted"></p>
+<div id="labPlayers" class="chips" aria-label="Player filter"></div>
+<div class="toolbar"><label><input id="labOnlyNew" type="checkbox"> New detections only</label><label><input id="labOnlyChanges" type="checkbox"> Author changes only</label></div>
+<p id="labSummary"></p><p class="muted">Counts are proposals, not verified personal statistics. “Contact” means action type is unknown. Team accuracy does not measure correct P1–P7.</p>
+<div id="labError" role="status"></div><div id="labEvents" class="events"></div>
+</aside></main>
+<script>const CONTACT_LAB_JOB = {{ job_id | tojson }};</script>
+<script src="{{ url_for('static', filename='contact_lab.js') }}"></script>
+</body></html>

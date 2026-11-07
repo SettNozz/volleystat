@@ -183,6 +183,24 @@ def source_fingerprint(stats_bytes, annotations_bytes):
             "annotations_sha256": hashlib.sha256(annotations_bytes).hexdigest()}
 
 
+def validate_saved_report(report, stats):
+    """Viewer consumes the actual exported model report, bound to its events."""
+    if report.get("schema") != SCHEMA or stats.get("player_contacts") != report:
+        raise ValueError("Saved contact report differs between analysis files")
+    events = stats.get("all_events") or []; seen = set()
+    for contact in report.get("contacts") or []:
+        index = contact.get("event_index")
+        if type(index) is not int or index in seen or not 0 <= index < len(events):
+            raise ValueError("Saved contact report event index mismatch")
+        seen.add(index); event = events[index]
+        if contact.get("frame") != event.get("frame") or contact.get("type") != event.get("type"):
+            raise ValueError("Saved contact report events changed")
+        if contact.get("player_id") is not None and contact["player_id"] not in report.get("roster_ids", []):
+            raise ValueError("Saved contact author is outside its roster")
+    if seen != {i for i, e in enumerate(events) if e.get("type") in CONTACT_TYPES}:
+        raise ValueError("Saved contact report does not cover the source events")
+
+
 def apply_reviews(report, reviews):
     result = deepcopy(report)
     indexed = {c["event_index"]: c for c in result["contacts"]}
