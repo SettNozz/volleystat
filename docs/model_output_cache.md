@@ -71,6 +71,42 @@ new hypotheses.
 computed stages and OSNet batch counts. Identity provenance also records
 `encoder.model_loaded_this_run`.
 
+## Background inference on a cold or partial cache
+
+`src/pipeline/model_prefetch.py` computes missing stateless outputs (raw ball
+proposals, tiled ball proposals, raw YOLO-pose) ahead of the ordered loop:
+one decoder thread, one thread per ball detector and `POSE_PREFETCH_WORKERS`
+pose threads, each with its own model instance. Before the loop the main
+thread reads which frames each stage already stores; workers infer only the
+others. Workers never touch the SQLite connection, ByteTrack, gate or FSM; the
+main thread stores each value exactly as the serial path would. Model calls
+keep their batch size, input size and precision.
+
+Raw pose (`pose_raw`) is computed by `src/detection/pose_gpu.py`: GPU
+letterbox, the Ultralytics NMS/scaling, and a CUDA graph for the network.
+Its key includes the source of `_infer_pose_model` and of `pose_gpu.py` plus
+`preprocess=gpu_letterbox_bilinear_round_v1`, so pose caches written by the
+earlier CPU-letterbox path are not reused (they stay on disk untouched; a new
+analysis recomputes pose once). Bilinear resampling in float32 differs from
+cv2's fixed-point by at most one grey level; boxes moved by a median 0.4 px
+on a 4K sample. Ball and OSNet keys are unchanged.
+
+OSNet embeddings for every saved pose box are encoded during the loop by a
+`BackgroundEncoder` thread from the exact `ann['poses'][i]['bb']` the identity
+pass looks up, serialised off the main thread and stored in one transaction
+per drain. A cold run therefore needs no second decode for identity or contact
+authors; anything missing still falls back to decoding.
+`tests/test_inference_cache.py::test_model_prefetch_matches_serial_pass_and_cache`
+checks identical annotations and identical stored checksums against
+`--no-model-prefetch`.
+
+Prefetch is off with `--require-model-cache` (nothing to compute) and when no
+cache is used. Even serial runs are not bit-identical on a GPU (FP16 with
+`cudnn.benchmark`): measure prefetch effects against a serial control run,
+never against a single earlier run. OSNet now encodes 128 crops per forward
+(`OSNET_BATCH_SIZE`); against batch 8 that moves embeddings by at most
+1.3e-6 cosine distance, and embeddings are keyed by crop, not batch.
+
 ## Existing analyses and the JIZ3exHe3hA experiment
 
 Old final annotations do not contain discarded ball candidates or unfiltered

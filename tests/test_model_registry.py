@@ -177,3 +177,24 @@ def test_home_relative_fallback_is_expanded(registry, weights):
     config = config_for(weights, fallback="~/nowhere/sam.pth")
     resolved = mr.resolve_model("ball_detector", config=config)
     assert "~" not in str(resolved.path)
+
+
+def test_stopped_local_server_is_detected_without_mlflow_retries(monkeypatch):
+    import socket
+    import time
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()  # nothing listens on this port now
+    uri = f"http://127.0.0.1:{port}"
+    monkeypatch.setattr(mr, "_unreachable", {})
+    started = time.monotonic()
+    with pytest.raises(ConnectionError, match="not listening"):
+        mr._require_reachable(uri)
+    assert time.monotonic() - started < 2.0
+    assert f"127.0.0.1:{port}" in mr._unreachable
+    # Remembered: the next logical model in the same analysis does not probe again.
+    monkeypatch.setattr(socket, "create_connection", lambda *a, **k: pytest.fail("probed twice"))
+    with pytest.raises(ConnectionError):
+        mr._require_reachable(uri)
+    mr._require_reachable("sqlite:///unused.db")  # file stores are never probed

@@ -1,6 +1,7 @@
 """Frozen model outputs, raw-pose tracking parity, and pixel-free production replay."""
 from importlib import metadata
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 
 import cv2
@@ -213,6 +214,73 @@ def test_production_cold_then_cache_only_replay_never_calls_models_or_decodes(tm
     assert calls['ball']>0 and calls['pose']==0
 
 
+def test_model_prefetch_matches_serial_pass_and_cache(tmp_path,monkeypatch):
+    """Background inference changes when models run, never what is stored or derived."""
+    source=tmp_path/'game.webm'; source.write_bytes(b'fake video bytes')
+    checkpoint=tmp_path/'weights.pt'; checkpoint.write_bytes(b'weights one')
+    calls={'ball':0,'pose':0,'reads':0}
+    threads=set()
+    class Capture:
+        def __init__(self,*args): self.frame=0
+        def isOpened(self): return True
+        def get(self,key): return {cv2.CAP_PROP_FPS:30.,cv2.CAP_PROP_FRAME_COUNT:20,
+                                  cv2.CAP_PROP_FRAME_WIDTH:600,cv2.CAP_PROP_FRAME_HEIGHT:200}[key]
+        def set(self,*args): self.frame=0
+        def read(self):
+            calls['reads']+=1
+            self.frame+=1
+            image=np.full((200,600,3),self.frame,dtype=np.uint8)
+            return (True,image) if self.frame<=20 else (False,None)
+        def release(self): pass
+    class Ball:
+        def detect_ball_batch(self,frames):
+            threads.add(threading.current_thread().name)
+            calls['ball']+=1
+            return [[(10+int(f[0,0,0]),15,20+int(f[0,0,0]),25,.9)] for f in frames]
+        def detect_ball(self,frame):
+            return self.detect_ball_batch([frame])[0]
+    class Pose:
+        def predict(self,frame,*args,**kwargs):
+            threads.add(threading.current_thread().name)
+            calls['pose']+=1
+            shift=float(frame[0,0,0])
+            boxes=np.asarray([[i*90+shift,60,i*90+60+shift,190,.95,0] for i in range(6)],dtype=np.float32)
+            kp=np.zeros((6,17,3),dtype=np.float32)
+            return [unpack_pose_result({'boxes':array_payload(boxes),'keypoints':array_payload(kp)})]
+    def init_ball(a,path):
+        a.ball_detector=Ball(); a.ball_detector_2=None
+        a._ball_specs={'primary':model_spec(checkpoint,backend='fake-ball',batch_size=8)}
+        a._configure_ball_selection_for(600)
+    def init_pose(a,path):
+        a.pose_model=Pose(); a._pose_tracker_path=tracker_yaml()
+        a._pose_spec=model_spec(checkpoint,backend='fake-pose')
+        a._pose_spec['tracker']=file_digest(tracker_yaml())
+    monkeypatch.setattr(cv2,'VideoCapture',Capture)
+    monkeypatch.setattr(GameAnalyzer,'_init_ball_detector',init_ball)
+    monkeypatch.setattr(GameAnalyzer,'_init_pose_model',init_pose)
+    monkeypatch.setattr(GameAnalyzer,'_init_event_predictor',lambda *a:None)
+    monkeypatch.setattr(GameAnalyzer,'_warmup',lambda *a:None)
+    monkeypatch.setattr(GameAnalyzer,'_load_calibration',lambda *a:CalibrationData(100.,0,600,0,200,0,600,600,200))
+    options=dict(enable_player_identity=False,enable_net_detection=False,use_model_registry=False,ball_batch_size=8)
+    serial=GameAnalyzer(**options,model_cache_dir=str(tmp_path/'serial'),model_prefetch=False)\
+        .process_video(str(source),str(tmp_path/'serial-out'))
+    assert threads=={threading.main_thread().name}
+    serial_calls=dict(calls); calls.update(ball=0,pose=0,reads=0); threads.clear()
+    ahead=GameAnalyzer(**options,model_cache_dir=str(tmp_path/'ahead'))\
+        .process_video(str(source),str(tmp_path/'ahead-out'))
+    assert threading.main_thread().name not in threads
+    assert calls==serial_calls=={'ball':3,'pose':20,'reads':20}
+    assert ahead.frame_annotations==serial.frame_annotations
+    def stored(root):
+        cache=ModelOutputCache(source,root)
+        try:
+            return {(stage.split(':')[0],stage,item):body for stage,item,body in
+                    cache.db.execute("SELECT stage,item,sha FROM outputs WHERE stage LIKE 'ball_%' OR stage LIKE 'pose_raw%'")}
+        finally:
+            cache.db.close()
+    assert stored(tmp_path/'serial')==stored(tmp_path/'ahead')
+
+
 def test_net_cache_binds_geometry_and_reuses_writeback_without_sam(tmp_path):
     from dataclasses import replace
     source=tmp_path/'video'; source.write_bytes(b'video')
@@ -243,4 +311,36 @@ def test_net_cache_binds_geometry_and_reuses_writeback_without_sam(tmp_path):
     with pytest.raises(CacheMiss):
         analyzer._maybe_run_sam_net_detection(str(source),600,200)
     assert len(calls)==1
+    cache.db.close()
+
+
+def test_embedding_prefetch_stores_exact_identity_lookup_keys(tmp_path):
+    """Crops encoded during the loop are found by the identity pass's own lookups."""
+    from src.models.inference_cache import ObservationFeatures
+    from src.models.player_reid_encoder import OSNetEncoder
+    from src.pipeline.model_prefetch import BackgroundEncoder
+    source=tmp_path/'game.webm'; source.write_bytes(b'video')
+    cache=ModelOutputCache(source,tmp_path/'cache')
+    store=ObservationFeatures(cache,{'encoder':'fake'},600,200)
+    class Encoder:
+        crop=staticmethod(OSNetEncoder.crop)
+        def encode(self,crops):
+            return [np.full(4,float(c.sum()%97),dtype=np.float32) for c in crops]
+    encoder=Encoder()
+    store.put(3,[0.,0.,10.,10.],np.zeros(4,dtype=np.float32))  # already cached: not recomputed
+    analyzer=GameAnalyzer.__new__(GameAnalyzer)
+    encode=lambda crops:[store.encode(v) for v in encoder.encode(crops)]
+    analyzer._embedding_prefetch=(BackgroundEncoder(encode,2),encoder,store,cache.items(store.stage))
+    image=(np.arange(200*600*3)%251).astype(np.uint8).reshape(200,600,3)
+    boxes=[[0.,0.,10.,10.],[20.4,30.6,80.5,150.],[590.,10.,640.,90.],[5.,5.,5.,9.],[float('nan'),0,1,1]]
+    analyzer._prefetch_embeddings({'f':3,'poses':[{'bb':b} for b in boxes]},image)
+    analyzer._prefetch_embeddings({'f':4,'poses':[{'bb':boxes[1]}]},image)
+    analyzer._finish_embedding_prefetch()
+    assert analyzer._embedding_prefetch is None
+    for frame,box in ((3,boxes[1]),(3,boxes[2]),(4,boxes[1])):
+        expected=encoder.encode([OSNetEncoder.crop(image,box)])[0]
+        assert np.array_equal(store.get(frame,box),expected)
+    assert np.array_equal(store.get(3,boxes[0]),np.zeros(4,dtype=np.float32))
+    assert cache.computed['osnet_embeddings']==3
+    assert store.get(3,boxes[3]) is None
     cache.db.close()

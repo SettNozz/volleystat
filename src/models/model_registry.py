@@ -138,6 +138,37 @@ def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
 # ----------------------------------------------------------------------
 
 
+# MLflow's HTTP client retries with backoff even for a refused connection, so a
+# stopped local server cost ~8 s per logical model (~33 s for one analysis).
+# A plain TCP connect answers the same question in milliseconds. A negative
+# answer is remembered briefly so one analysis probes once; a long-lived
+# viewer still notices a server started later.
+_PROBE_TIMEOUT_SEC = 0.5
+_UNREACHABLE_TTL_SEC = 60.0
+_unreachable: Dict[str, float] = {}
+
+
+def _require_reachable(uri: str) -> None:
+    """Raise ConnectionError fast when an http(s) tracking server is not listening."""
+    import socket
+    import time
+    from urllib.parse import urlparse
+    parsed = urlparse(uri)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    target = f"{parsed.hostname}:{port}"
+    seen = _unreachable.get(target)
+    if seen is not None and time.monotonic() - seen < _UNREACHABLE_TTL_SEC:
+        raise ConnectionError(f"registry server not listening at {target}")
+    try:
+        socket.create_connection((parsed.hostname, port), timeout=_PROBE_TIMEOUT_SEC).close()
+    except OSError as exc:
+        _unreachable[target] = time.monotonic()
+        raise ConnectionError(f"registry server not listening at {target}: {exc}") from exc
+    _unreachable.pop(target, None)
+
+
 def _cached_versions(name: str) -> List[str]:
     directory = CACHE_DIR / name
     if not directory.is_dir():
@@ -231,6 +262,7 @@ def resolve_model(
     uri = tracking_uri()
 
     try:
+        _require_reachable(uri)
         client = MlflowClient(tracking_uri=uri, registry_uri=uri)
         version = _lookup_version(client, registry_name, alias)
     except Exception as exc:
