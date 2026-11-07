@@ -870,6 +870,28 @@ Rules specific to this work:
 
 ## Expanded contact-author/type experiments (2026-11-06)
 
+### Author promotion (2026-11-07)
+
+- Default `contact_author` is the final all10 `authors_all_sides/expanded_soft_hgb`
+  artifact, SHA256 `4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091`.
+  Install with `scripts/models/promote_contact_author.py install`. Event-model
+  selection is unchanged. Experiment history remains immutable.
+- `src/tracking/contact_author_runtime.py` runs after identity and final events.
+  Production arrays match all 1,137 frozen experimental cases exactly. It uses
+  source-bound identity photos and observed cached OSNet crops on both sides;
+  no contact-author targets, source-pose rewrites or coordinate interpolation.
+- Pipeline and `scripts/apply_player_contacts.py` share the runtime. Replay is
+  cache-only by default; `--capture-missing-reid` explicitly permits missing
+  OSNet crops only. Existing outputs are refused. `--no-contact-author` in the
+  main CLI or replay `--legacy` restores the old heuristic. Source results and
+  human labels remain unchanged; new paired JSON has report/model provenance.
+- The viewer consumes and validates paired stored reports instead of rebuilding
+  geometry. Human reviews remain source-bound and append-only. Automatic roster
+  inference has no measured attribution score. TcUru photo setup has five actual
+  IDs; substitutes can expand roster length without changing the court cap.
+- See `docs/contact_author_production.md`; tests `test_contact_author_runtime.py`,
+  `test_player_contacts.py`, `test_player_contacts_ui.cjs`.
+
 - `scripts/evaluation/train_expanded_contacts.py` freezes project revisions
   421/862 into fresh versioned outputs: 1,137 author targets over ten sources.
   The user explicitly said unchanged model types are **not** human-verified.

@@ -6,7 +6,7 @@ const vm = require('node:vm');
 
 function fixture() {
   class Element {
-    constructor() { this.children = []; this.attributes = {}; }
+    constructor() { this.children = []; this.attributes = {}; this.style = {}; }
     append(...children) { this.children.push(...children); }
     appendChild(child) { this.children.push(child); }
     replaceChildren(...children) { this.children = children; }
@@ -14,7 +14,7 @@ function fixture() {
     dataset = {};
   }
   const nodes = Object.fromEntries(['playerChips', 'playerContactSummary', 'playerContactStatus',
-    'playerContactList', 'togPlayers'].map(id => [id, new Element()]));
+    'playerContactList', 'togPlayers', 'playerContactMethodBar', 'playerContactMethod', 'playerContactMethodQuality'].map(id => [id, new Element()]));
   const calls = [];
   const context = vm.createContext({
     document: {getElementById: id => nodes[id], createElement: () => new Element(), addEventListener() {}},
@@ -71,4 +71,24 @@ test('correction posts source-bound event index and refreshes rows', async () =>
   assert.equal(body.player_id, 'P7');
   assert.deepEqual(body.source, {stats_sha256: 's', annotations_sha256: 'a'});
   assert.match(nodes.playerContactStatus.textContent, /Attribution saved/);
+});
+
+test('model evidence highlights one observed pose despite a conflicting old roster ID or side', () => {
+  const {context} = fixture();
+  vm.runInContext(`selectedPlayerId = 'P1'; activePlayerContact = {
+    player_id: 'P1', label_source: 'derived', candidates: [{frame: 30, pose_index: 1, raw_track_id: 99}]
+  }`, context);
+  assert.equal(vm.runInContext(`playerPoseStyle({id: 99, team: 'a', player_id: 'P7'}, 1, 30).width`, context), 3);
+  assert.equal(vm.runInContext(`playerPoseStyle({id: 7, team: 'b', player_id: 'P1'}, 0, 30).width`, context), 1.5);
+});
+
+test('single promoted model remains visible and fallback never advertises the new model ran', () => {
+  const {context, nodes} = fixture();
+  vm.runInContext(`data.method_id = 'new_model'; data.attribution = {status: 'completed'}; renderPlayerContactMethods(data)`, context);
+  assert.equal(nodes.playerContactMethodBar.style.display, '');
+  assert.equal(nodes.playerContactMethod.disabled, true);
+  assert.match(nodes.playerContactMethod.children[0].textContent, /soft HGB/);
+  assert.match(nodes.playerContactMethodQuality.textContent, /unverified/);
+  vm.runInContext(`data.attribution = {status: 'roster_unavailable'}; renderPlayerContactMethods(data)`, context);
+  assert.match(nodes.playerContactMethodQuality.textContent, /geometric proposals/);
 });

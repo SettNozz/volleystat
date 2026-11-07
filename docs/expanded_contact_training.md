@@ -1,5 +1,9 @@
 # Expanded contact training, 2026-11-06
 
+2026-11-07: the winning author model was promoted at the user's request; see
+[production workflow](contact_author_production.md). The experiment records
+below remain the immutable pre-promotion history. Event models were not changed.
+
 The completed contact-author projects provide 1,137 usable human author labels
 over ten videos: 585 named near-side people and 552 opposite-team contacts.
 The immutable snapshots are author project revision 421 and expansion revision

@@ -1,5 +1,10 @@
 # Per-player contacts from saved analysis
 
+**2026-11-07 default:** the expanded all-side OSNet + soft HGB model now supplies
+contact authors in new analyses and saved-result replay. See
+[promoted contact-author workflow](contact_author_production.md). The geometry
+description and old JIZ3 coverage below are the preserved `--legacy` baseline.
+
 Open the original-video viewer and use **Player contacts** at the top of the
 sidebar. Select P1–P6 to highlight that person's skeleton in yellow while every
 other skeleton stays gray. **All** restores the team overlay. Rosters include
@@ -18,6 +23,7 @@ filters: spotter events with `team: null` remain visible here.
 python scripts/apply_player_contacts.py --help
 python scripts/apply_player_contacts.py `
   --annotations results/JIZ3exHe3hA_identity_roster_20261030_v4_regret010/JIZ3exHe3hA_4k_annotations.json `
+  --legacy `
   --output results/JIZ3exHe3hA_player_contacts_20261030_v1
 python viewer.py --port 5052
 # http://localhost:5052/load?video=JIZ3exHe3hA_4k&results_dir=results/JIZ3exHe3hA_player_contacts_20261030_v1

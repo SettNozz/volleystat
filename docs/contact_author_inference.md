@@ -1,5 +1,8 @@
 # Contact authors on a saved, unlabelled video
 
+**2026-11-07:** these class-fusion commands are historical experiments. The default
+pipeline/replay now uses the [promoted expanded soft HGB](contact_author_production.md).
+
 This experimental workflow applies frozen author models to a new source. It
 does not run the video analysis pipeline, retrain a model, render an annotated
 MP4, rewrite source results or modify human annotations. Use the original video

@@ -36,7 +36,12 @@ function renderPlayerContactMethods(report) {
   const quality = document.getElementById('playerContactMethodQuality');
   if (!bar || !select || !quality) return;
   const methods = Object.entries(report.methods || {});
-  bar.style.display = methods.length > 1 ? '' : 'none';
+  const learned = report.attribution && report.attribution.status === 'completed';
+  const fallback = report.attribution && !['completed', 'disabled', 'no_events'].includes(report.attribution.status);
+  if (!methods.length && (learned || fallback)) {
+    methods.push([report.method_id, {label: learned ? 'Temporal OSNet + soft HGB' : 'Geometry fallback'}]);
+  }
+  bar.style.display = methods.length > 1 || learned || fallback ? '' : 'none';
   select.replaceChildren();
   for (const [id, metadata] of methods) {
     const option = document.createElement('option');
@@ -45,10 +50,12 @@ function renderPlayerContactMethods(report) {
     select.appendChild(option);
   }
   select.value = report.method_id;
-  select.disabled = false;
+  select.disabled = methods.length < 2;
   const method = (report.methods || {})[report.method_id] || {};
   const metrics = method.team_lovo;
-  quality.textContent = metrics
+  quality.textContent = learned
+    ? 'Contact-author model · saved predictions · individual authors remain unverified.' : fallback
+    ? 'Contact-author model unavailable for this result; geometric proposals shown.' : metrics
     ? `Team-side video holdout: ${(metrics.accuracy*100).toFixed(1)}% accuracy. Individual authors remain unverified.`
     : 'Geometric contact-author proposals; individual authors remain unverified.';
   if (typeof window !== 'undefined' && window._annData && typeof initPoseEstimates === 'function') {
@@ -67,7 +74,7 @@ function playerPoseStyle(pose, poseIndex, frameIndex) {
   const onSide = pose.team === targetSide || pose.team === 'team_' + targetSide;
   const candidate = playerContactCandidate(frameIndex);
   const focused = candidate && candidate.pose_index === poseIndex && candidate.raw_track_id === pose.id;
-  const highlighted = focused || (selectedPlayerId ? (onSide && pose.player_id === selectedPlayerId) : onSide);
+  const highlighted = candidate ? focused : (selectedPlayerId ? (onSide && pose.player_id === selectedPlayerId) : onSide);
   return {
     color: highlighted ? 'rgba(255, 220, 0, 0.98)' : 'rgba(150, 170, 190, 0.58)',
     width: highlighted ? 3 : 1.5,

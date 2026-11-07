@@ -507,6 +507,14 @@ and datasets are unchanged.
 
 ## Expanded human contact experiments
 
+**Default contact authors (2026-11-07):** expanded all-side temporal OSNet +
+soft HGB. Install the frozen artifact with
+`python scripts/models/promote_contact_author.py install`. New analyses apply it
+after roster identity; saved-result replay defaults to the same model and a
+strict cache check. `--no-contact-author` / replay `--legacy` retains geometry.
+The viewer reads exported model predictions. Event models are unchanged.
+See [installation, photo setup and cached replay](docs/contact_author_production.md).
+
 The completed author-review projects can be frozen and evaluated with
 `scripts/evaluation/train_expanded_contacts.py` in the isolated experiment
 worktree. Whole-video folds compare old-three-source and expanded training for

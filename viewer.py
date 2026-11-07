@@ -552,8 +552,13 @@ def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp, experim
     payload = json.loads(ann_bytes)
     if stats.get("video") != payload.get("video") or float(stats["fps"]) != float(payload["fps"]):
         raise ValueError("Stats and annotations must belong to the same analysis")
-    report = build_player_contacts(stats.get("all_events") or [], payload["frames"],
-                                   payload["fps"], payload.get("player_identity"))
+    report = payload.get("player_contacts")
+    if report:
+        from src.tracking.player_contacts import validate_saved_report
+        validate_saved_report(report, stats)
+    else:
+        report = build_player_contacts(stats.get("all_events") or [], payload["frames"],
+                                       payload["fps"], payload.get("player_identity"))
     return report, source, None
 
 
@@ -576,12 +581,13 @@ def player_contacts(job_id):
             body = request.get_json(silent=True) or {} if request.method == "POST" else {}
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object")
-            method = body.get("method") or request.args.get("method") or (bundle["selected_method"] if bundle else "body_baseline")
+            default_method = report["method"] if report.get("attribution", {}).get("status") == "completed" else "body_baseline"
+            method = body.get("method") or request.args.get("method") or (bundle["selected_method"] if bundle else default_method)
             if bundle:
                 if method not in bundle["reports"]:
                     raise ValueError("Unknown experimental contact method")
                 report = bundle["reports"][method]
-            elif method != "body_baseline":
+            elif method != default_method:
                 raise ValueError("This result has no contact-method experiment")
             reviews_path = stats_path.with_name(stats_path.name.removesuffix("_stats.json")
                                                + "_player_contact_reviews.jsonl")
