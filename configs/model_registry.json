@@ -7,6 +7,14 @@
     "Register with: python scripts/models/register_models.py --all"
   ],
   "models": {
+    "contact_author": {
+      "registry_name": "volleystat_contact_author",
+      "alias": "production",
+      "artifact": "model.joblib",
+      "fallback": "models/contact_author/expanded_20261106_v1/model.joblib",
+      "sha256": "4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091",
+      "note": "Promoted 2026-11-07: all-side temporal OSNet + soft HGB. Known-contact author LOSO 470/565 (83.19%); new7 307/381 (80.58%). Human photo roster in evaluation; automatic-roster accuracy unmeasured. Final all10 fit has no held-out score."
+    },
     "ball_detector": {
       "registry_name": "volleystat_ball_detector",
       "alias": "production",

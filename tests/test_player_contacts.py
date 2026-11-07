@@ -171,6 +171,21 @@ def test_unknown_job_is_404(client_result):
     assert client.get("/api/player_contacts/absent").status_code == 404
 
 
+def test_viewer_serves_saved_learned_report_and_rejects_mismatched_pair(client_result, monkeypatch):
+    import viewer
+    client, ann, stats = client_result
+    a, s = json.loads(ann.read_bytes()), json.loads(stats.read_bytes())
+    saved = build_player_contacts(s["all_events"], a["frames"], 30)
+    saved.update(method="osnet_temporal_all_sides_soft_hgb_v1", attribution={"status": "completed"})
+    a["player_contacts"] = s["player_contacts"] = saved
+    ann.write_text(json.dumps(a), encoding="utf-8"); stats.write_text(json.dumps(s), encoding="utf-8")
+    monkeypatch.setattr(viewer, "build_player_contacts", lambda *_: pytest.fail("old geometry ran"))
+    result = client.get("/api/player_contacts/contact-test")
+    assert result.status_code == 200 and result.get_json()["method_id"] == saved["method"]
+    s["all_events"][0]["frame"] += 1; stats.write_text(json.dumps(s), encoding="utf-8")
+    assert client.get("/api/player_contacts/contact-test").status_code == 400
+
+
 def test_result_jobs_do_not_mix_two_hypotheses_of_same_video(tmp_path, monkeypatch):
     import viewer
     monkeypatch.setattr(viewer, "PROJECT_ROOT", tmp_path)

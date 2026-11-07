@@ -1,10 +1,146 @@
 # Volleystat - Agent Context
 
-Updated: 2026-10-27. Code, CLI `--help`, tests, and config files override prose when they disagree.
+Updated: 2026-11-07. Code, CLI `--help`, tests, and config files override prose when they disagree.
 
 ## Mission and priorities
 
 Volleystat is an offline-first volleyball analytics pipeline for fixed-camera 4K video. Accuracy matters more than runtime; target workstation has RTX 3080. Current work stays in 2D image/court coordinates.
+
+## Human contact-author annotation (2026-10-31)
+
+- Event type editing (2026-11-06): `POST /api/event` set/reset stores independent
+  `state.event_reviews` with human `contact_type_only` provenance and normal
+  optimistic revisions. UI type changes autosave without auto-next or author
+  edits, and work before roster confirmation. `reviewed_contact` applies these
+  overrides only at export: `type`/`raw_types` become corrected human values;
+  `original_event` retains source type/provenance/core type. Stale `core_type`
+  is removed from the effective row; timing verification stays unchanged.
+  Old projects without reviews remain compatible. Backup of revision 217
+  (191 author decisions) is in the active project's `backups/` directory.
+  Tests: `test_contact_author_annotator.py`, `test_contact_author_annotation_ui.cjs`.
+
+- Roster removal (2026-11-06): `remove_player` requires `removal_confirmed`;
+  assigned contacts additionally require `unassign_contacts_confirmed`. Only
+  labels for that source/player are cleared, after the UI's explicit second
+  click. Full player/label records are archived in `removed_players`; restore
+  restores only still-unlabelled contacts and retains history. Removed IDs are
+  reserved; active IDs and number shortcuts never shift. No schema/source-queue
+  rewrite is needed. Old projects without archive fields remain compatible.
+  UI requests time out at 15 s, reconcile state without retry/auto-next, and
+  retain portrait DOM/URLs on label-only changes. Backup of active revision 71
+  (65 decisions) is in the expansion project's `backups/` directory. Tests:
+  `test_contact_author_annotator.py`, `test_contact_author_annotation_ui.cjs`.
+
+- New-source expansion (2026-11-01): `prepare_contact_author_expansion.py`
+  reuses paired saved spotter results, excludes active event-training and
+  completed author sources by name/hash, and creates an empty blind project.
+  Current: `results/contact_author_expansion_20261101_v2`, seven videos / 759
+  contacts, UI port 5070. JIZ has seven proposed cards including P7. All rosters
+  require human confirmation; authors start empty. Event times/types remain
+  unverified model proposals even after human author assignment. Some night
+  sources have event-review/research history: no untouched-final-test claim.
+  No inference, raw source edits, training or dataset promotion. Existing
+  403-decision project stays separate. Tests: `test_contact_author_expansion.py`.
+
+- Prepare a fresh project with `scripts/evaluation/prepare_contact_author_annotation.py`
+  from the active 414-clip human manifest, `contact_spatial_gold_v1/reviews.json`
+  and existing pose-enabled analyses. Current queue: 403 items (seven duplicate
+  clips collapsed, four audited wrong events excluded), across three full videos.
+- UI: `python -m action_recognition.annotator.contact_author_annotator --project <dir>`
+  (localhost port 5066). Core: `contact_author_dataset.py` in the same package.
+  No inference, feature refresh, training or source annotation mutation.
+- Six initial photo cards are model-derived proposals from a complete near-side
+  cached frame, never verified persistent identities. The human confirms/repairs
+  them before assigning contacts. Add substitutions explicitly as P7/P8; never
+  recycle an ID or replace a confirmed person's original reference. Additional
+  views require same-person confirmation. IDs are scoped to source video.
+- SQLite autosaves decisions with optimistic revision checks and an append-only
+  history. Immutable project/source fingerprints reject changed inputs. Author
+  labels start empty; predictions are not prefilled. `unsure` stays unverified.
+- Export `human_contact_author_dataset_v1` keeps queue/audit/provenance and all
+  decisions; eligible contacts contain only verified player/other-team labels.
+  Author verification does not verify type/timing. No automatic training promotion.
+  These event-model training videos are author-development data, not an independent
+  event-model test. Split future evaluations by complete source video.
+- See `docs/contact_author_annotation.md`; tests: `test_contact_author_annotator.py`
+  and `test_contact_author_annotation_ui.cjs`.
+
+## Human contact-author benchmark (2026-10-31)
+
+- The annotation project is now complete: revision 421, 403 decisions (188
+  player, 206 other-team, eight unsure, one not-contact). Immutable benchmark
+  snapshot: `results/contact_author_benchmark_20261031_v1`. Never rewrite the
+  live SQLite labels, roster, human sources or earlier snapshots during experiments.
+- `scripts/evaluation/evaluate_contact_authors.py` prepares versioned HSV/pose
+  features and evaluates source-held-out models. Core modules:
+  `src/tracking/contact_author_benchmark.py`, `contact_author_evaluation.py`.
+  Model caches remain frozen. Original pixels are decoded only for handcrafted
+  HSV descriptors; compatible OSNet outputs were absent for these three sources.
+- Main score excludes eight contacts within 60 frames of photo references and
+  four unverified timings: 382 contacts, 184 near-person / 198 other-team.
+  Photo IDs are setup inputs scoped to source video; raw IDs never become gold.
+  Numeric inputs exclude IDs, video names and absolute times. Future track
+  views are explicitly allowed for this offline benchmark.
+- 22 comparisons include box/pose HSV, track aggregation, one-to-one assignment,
+  learned team models, shared person rankers, training-only team-sequence priors,
+  and closest-observed central-time actors. Outer training holds out a complete
+  video; inner whole-source folds select methods. Normalization and transition
+  counts use training sources only. Reuse compatible saved fold models for
+  rule comparisons; do not repeat inference/training or silently refresh features.
+- Selected fixed development comparison `trees_sequence_central`: team 92.4%,
+  exact near-person recall 60.3%, near assignment precision 61.7%, overall exact
+  author-or-other-team 77.2%. Nested selection: 59.8% near recall / 77.0% overall.
+  Central time adds only one correct contact over `trees_sequence_hungarian`;
+  do not call that a robust gain. There are only three sources and no untouched
+  final test. Given human contact times/types: do not quote these as event
+  detection, full-match identity, or unseen-camera accuracy. Models not promoted.
+- `python -m action_recognition.annotator.contact_author_benchmark_viewer
+  --evaluation <evaluation-dir>` serves read-only review on port 5067. Green
+  card is human truth, orange card/skeleton is a model proposal at its exact
+  evidence frame. No human author-box gold exists: do not invent green skeletons
+  or claim identity vs actor-localization error separation from these labels.
+- Current detailed report: `results/contact_author_evaluation_20261031_v5`.
+  Docs: `docs/contact_author_benchmark.md`; tests:
+  `test_contact_author_benchmark.py`, `test_contact_author_benchmark_viewer.py`.
+
+## OSNet/temporal author follow-up and unseen-video inference
+
+- Paired audit (2026-11-01): `docs/contact_author_comparison.md`, script
+  `scripts/evaluation/compare_contact_author_methods.py`, output
+  `results/contact_author_paired_comparison_20261101_v1`. Same 382 strict
+  contacts and strict-only source-held-out training: Codex fixed 146/184
+  (79.35%) vs Claude HGB 158/184 (85.87%, precision 84.04%). Corrected nested:
+  Codex 139/184 (75.54%) vs Claude 151/184 (82.07%, precision 80.32%).
+  Claude's original 156/184 (84.78%) fits all 394 labels and its inner team
+  models include the outer test source. Do not call that nested estimate clean.
+  Fixed outer HGB still excludes its own test source. Full-video identity inputs
+  also differ, so the gain is for complete approaches, not isolated rankers.
+  No untouched final test, raw inference or production promotion. Tests:
+  `test_contact_author_comparison.py`.
+
+- The versioned `contact_author_reid_temporal_20261031_v1` adds pinned OSNet
+  gallery/clean-track similarity, temporal pose/action cues and derived short
+  joint-gap estimates, with availability masks. Source poses and balls remain
+  unchanged; inferred joints never become detector labels.
+- Latest development report: `contact_author_rich_eval_20261031_v5`.
+  Fixed `class_fusion`: 146/184 exact near-person (79.35%), precision 78.92%,
+  F1 79.13%; nested method selection 75.54% near recall. The 80% target is not
+  reached. Fusion fits on cross-source predictions, not in-sample base scores.
+  Only three development videos; no untouched final test or production promotion.
+- `scripts/evaluation/apply_contact_author_models.py` prepares unlabelled
+  inputs and reuses three two-source frozen `class_fusion` members. No training.
+  New source must be absent from all member training sources. Their deployment
+  ensemble does not inherit a measured held-out score from individual members.
+- Inputs use `inference_inputs.json`, targets=-1 and no author decisions;
+  never name model inputs `human_labels.json`. Keep automatic roster and event
+  provenance explicitly unverified. Unknown substitutions remain unknown.
+- Source result for X6: `results/viewer/job_1793380818`. Reuse ball, poses,
+  events and compatible OSNet crops; capture only identified missing OSNet crops.
+  New artifacts stay in the isolated author's worktree, versioned directories.
+- `python -m action_recognition.annotator.contact_author_inference_viewer
+  --predictions <dir> --port 5068` serves read-only review without fake metrics
+  or human-truth highlights. See `docs/contact_author_inference.md`.
+  Tests: `test_contact_author_inference.py`, `test_contact_author_reid_features.py`.
 
 Primary outputs:
 
@@ -414,6 +550,119 @@ $py=(Get-Content -Raw '.graphify_python').Trim()
   `test_pose_completion_ui.cjs`. Never enable estimated contact evidence merely
   because the skeleton looks continuous.
 
+## Isolated contact-author learning (2026-10-30)
+
+- User authorized CPU learning in an independent worktree/branch. The active
+  experiment is `codex/contact-author-learning`, based on `202bd7a`; never
+  switch or stage files in the shared checkout used by another process.
+- `scripts/evaluation/run_contact_author_learning.py` creates a fresh manifest,
+  frozen features and comparison for 397 human team labels (205 far, 192 near),
+  three whole source videos, no person labels. Print/verify manifest, feature
+  path, source hashes, provenance, schema, split and counts before fitting.
+- `contact_author_side_frozen_v1` uses only saved ball/observed poses, normalized
+  body/hand geometry and offline motion. Human ball xy, raw/player IDs, video
+  names and absolute match times are excluded from numeric model inputs.
+  Fold scalers fit training videos only. Audited event timing/type is given
+  in the gold comparison; JIZ3 supplies model-predicted timing/type.
+- Fixed logistic/ExtraTrees/HistGradient candidates compare geometry, typed and
+  layout feature views. Layout is diagnostic, excluded from automatic choice
+  because gold videos share a camera. No random clip split, early-stopping
+  holdout, production checkpoint/registry update or image-model inference.
+- Best review candidate: ExtraTrees typed, leave-one-video-out team accuracy
+  0.84635 / macro F1 0.84596. Score >=0.65 or <=0.35 gives 0.92617 accuracy at
+  0.75063 coverage. Scores are uncalibrated. These are selection estimates,
+  not an untouched test set, final-fit score or individual-player accuracy.
+- `run_contact_author_mil.py` trains a shared latent actor scorer from team
+  bags only, seeds 42/43/44, fixed 140 epochs, CPU/two threads. Geometry MIL
+  reaches 0.79093 team accuracy; typed MIL 0.77330, so neither is selected.
+  Latent actors are never human person labels or detector ground truth.
+- Experimental weights/data stay under the worktree's fresh `results/` dirs.
+  Completed flat run: `contact_author_learning_20261030_v3`; MIL/review run:
+  `contact_author_mil_20261030_v1`. No source annotations/events/IDs/ball/features,
+  trained spotter/ReID or another worktree is rewritten.
+- `<stem>_player_contact_experiment.json` binds every frozen proposal report to
+  SHA256 of both byte-identical source JSON files. Viewer validates event
+  indices/frames/types and rejects changed sources or fake human verification.
+  Human attribution corrections remain separate and shared across approaches.
+- Independent viewer port 5053 offers 11 comparison approaches. Chosen JIZ3
+  result: 24 assigned, 21 other-side, 58 unresolved from the SAME 103 events.
+  Uncertain suggestions are excluded from totals; human overrides suppress old
+  conflicting suggestions. A paused amber box marks the proposed actor only
+  at the exact evidence frame and never rewrites source pose identities.
+- No block contacts have human side labels in this training set; do not quote
+  the measured team accuracy as block or per-person performance. JIZ3 and its
+  camera are unlabelled transfer; the user will visually validate it.
+- See `docs/contact_author_learning.md`; tests `test_contact_author_learning.py`,
+  `test_contact_author_experiments.py`, `test_contact_author_mil.py`, and
+  `test_contact_author_ui.cjs`.
+
+## Volleyball contact lab (2026-10-30)
+
+- `scripts/evaluation/run_volleyball_contact_lab.py` compares piecewise 2D
+  flight, moving-limb, joint and consensus detection, bounded retiming and
+  forward/backward team attribution. Core: `src/tracking/volleyball_contact_lab.py`.
+  Research adaptations and limits: `docs/volleyball_contact_lab.md`.
+- Keep the independent `codex/contact-author-learning` worktree. Active reviewer
+  output: `results/volleyball_contact_lab_20261030_v3/viewer_result`, port 5054.
+  v1/v2 remain preserved; v3 reuses v2's hash-verified evidence/metrics and
+  isolates sequence side changes from the optional joint actor-ranking ablation.
+- Detection targets are 397 distinct audited timestamps, including ambiguous
+  raw action types; team data are 397 conclusive records plus nine unsure.
+  These sets differ. Derived context groups exact same-frame records with all
+  IDs retained; unsure/uncertain timing resets context. Human sources stay intact.
+- Fold thresholds and team transitions use only the other two whole videos.
+  Cached OOF spotter control must share annotation/phase hashes. Human coverage
+  and `non_game` labels are scoring masks only, never inference gates.
+- Independent detectors lost: F1@5 flight .4643, limbs .3319, joint .4496,
+  consensus .7473 vs spotter .8735. Bounded retiming tied .8735. This is an
+  audited time-only protocol, not a new score for the production checkpoint.
+- On the spotter's predicted times/types, correct team among 365 matched
+  contacts improves 309/365 (.8466) to 341/365 (.9342); joint detection/team F1
+  .7375 to .8138. Known-time/type side control is .8463 to .9320, not .9421
+  from the superseded duplicate-context preliminary run. All are model-selection
+  estimates; zero human person/contact-author labels and no block-team score.
+- Use spotter timing + sequence side evidence for review. The selected variant
+  preserves local actor ranking and source event times/types; joint ranking is
+  a separate unvalidated-person diagnostic. Never claim P1–P7/JIZ3 accuracy.
+- `/load?...&contact_lab=1` restores the read-only lab. A separate source-bound
+  `*_contact_lab.json` may contain novel **untyped** contacts; do not replace
+  `all_events`, rallies/FSM, source poses/IDs or original JSON with these peaks.
+  No model registry promotion, image inference, MP4 render or dataset rewrite.
+- Tests: `test_volleyball_contact_lab.py`, `test_volleyball_contact_lab_viewer.py`,
+  `test_volleyball_contact_lab_ui.cjs`.
+
+## P4 case corrections (2026-10-30)
+
+- Human feedback is in `configs/contact_case_reviews/JIZ3exHe3hA_P4_20261030_v1.json`,
+  bound to the exact analysis pair. Three author exclusions (384/1051/11223),
+  one positive P4 identity/contact reference (4915), one identity exclusion
+  (6376 raw 1262), and opponent-team confirmation at 11223. The latter does not
+  name the opponent. The 6376 exclusion does not rule out P4 on another skeleton.
+- Replay: `scripts/evaluation/refine_contact_actor_cases.py`; core:
+  `src/tracking/contact_actor_context.py`; docs: `docs/P4_contact_case_corrections.md`.
+  Current isolated reviewer output is `results/P4_action_context_20261030_v4`.
+  Preserve previous runs; v1 failed the positive reception check; v2/v3 still
+  showed an insufficiently supported replacement blocker at f384.
+- Use same-arm hand contact, shoulder-relative arm motion, two-sided raw-track
+  identity through jumps and observed standing/landing anchors. Never infer
+  rotational eligibility or the ball's team from court/airborne-foot geometry.
+  Backcourt attacks remain allowed. Ground depth is a soft positional cue.
+- Only the positive f4915 identity reference enters appearance inference.
+  Negative case answers are evaluation checks, not timestamp-specific vetoes.
+  Reuse existing OSNet embeddings; validate cache hashes and every key/raw ID/bbox.
+  No training, fresh image inference, gallery contamination or source rewrites.
+- Source P4 on receiving track 1262 is rejected; blocking track 1267 is a derived
+  P4 proposal. f384 author remains unresolved after visual inspection, not P1.
+  f1051 proposes P1; f4915 retains P4; f11223 proposes an opponent. Do not claim
+  user verified the new track-1267 or P1 labels, or the interpolated ball at4915.
+- Read-only viewer context labels are `P4*` (derived correction), `ID?` (source
+  P4 rejected). Rejected contact candidates must not draw as accepted authors.
+  Five review buttons display exact user frames with evidence times separate.
+- Five passing case conditions are development regression checks, not held-out
+  person accuracy. Older team metrics do not validate this actor/identity path.
+  Tests: `test_contact_actor_context.py`, `test_contact_actor_case_cache.py`, and
+  extended `test_volleyball_contact_lab_ui.cjs`.
+
 ## Repository map
 
 ```text
@@ -646,6 +895,64 @@ Rules specific to this work:
   `..._v2_nopose` (matched control). Model-selection estimates only; the
   experimental checkpoints are not production-loadable and nothing is promoted.
   See `docs/dense_contact_spotting.md`.
+
+## Expanded contact-author/type experiments (2026-11-06)
+
+### Author promotion (2026-11-07)
+
+- Default `contact_author` is the final all10 `authors_all_sides/expanded_soft_hgb`
+  artifact, SHA256 `4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091`.
+  Install with `scripts/models/promote_contact_author.py install`. Event-model
+  selection is unchanged. Experiment history remains immutable.
+- `src/tracking/contact_author_runtime.py` runs after identity and final events.
+  Production arrays match all 1,137 frozen experimental cases exactly. It uses
+  source-bound identity photos and observed cached OSNet crops on both sides;
+  no contact-author targets, source-pose rewrites or coordinate interpolation.
+- Pipeline and `scripts/apply_player_contacts.py` share the runtime. Replay is
+  cache-only by default; `--capture-missing-reid` explicitly permits missing
+  OSNet crops only. Existing outputs are refused. `--no-contact-author` in the
+  main CLI or replay `--legacy` restores the old heuristic. Source results and
+  human labels remain unchanged; new paired JSON has report/model provenance.
+- The viewer consumes and validates paired stored reports instead of rebuilding
+  geometry. Human reviews remain source-bound and append-only. Automatic roster
+  inference has no measured attribution score. TcUru photo setup has five actual
+  IDs; substitutes can expand roster length without changing the court cap.
+- See `docs/contact_author_production.md`; tests `test_contact_author_runtime.py`,
+  `test_player_contacts.py`, `test_player_contacts_ui.cjs`.
+
+- `scripts/evaluation/train_expanded_contacts.py` freezes project revisions
+  421/862 into fresh versioned outputs: 1,137 author targets over ten sources.
+  The user explicitly said unchanged model types are **not** human-verified.
+  Only 28 eligible explicit type corrections augment the active 410-core-clip
+  causal dataset. Type confirmation never verifies model-proposed timing.
+- Source-held-out old-three-source versus expanded controls share test inputs;
+  fixed seeds 42/43/44 and epoch budgets use no held-out early stopping. Author
+  scoring/training excludes +/-60 frames around photo references in its primary
+  view; all-case scores are secondary. Full spotting recall cannot be measured
+  from this candidate-only review. Raw-six typing masks ambiguous raw types and
+  plain pass rather than inventing set/dig labels.
+- `TcUru_ou4CQ_4k` has five confirmed near-side players (training exception).
+  Never fabricate a sixth. Other sources retain ordinary six-on-court policy;
+  substitutes can make photo roster length exceed six.
+- Reuse saved analyses and OSNet cache. The experimental legacy read-through
+  accepts LF/CRLF-only encoder differences only after exact normalized-source,
+  runtime, weight and settings checks; original cache stages remain separate.
+  `9b0b581` changes inference throughput, not labels/training. Local capture uses
+  its batch128 setting, computing missing OSNet crops only.
+- Preserve immutable snapshots, model/feature versions, predictions and losses.
+  Experiments do not promote checkpoints or modify human sources. See
+  `docs/expanded_contact_training.md`; tests `test_expanded_contacts_training.py`.
+- Main event experiment scores require `scripts/evaluation/rescore_expanded_events.py`:
+  active old clip features have zero pose/player-distance channels. Use each
+  fold's train-only inactive-feature mask on inference; unmasked diagnostic
+  failures are not a matched baseline. New core corrections are 18/28 attack,
+  so 64.29% is already a constant-attack answer on that selected subset.
+- The setup router reads confirmed identity photos versus saved pose sides,
+  never held-out contact authors. All-side candidates address weak wrong-side
+  labels (confirmed visually for LdOgh); source teams/poses are not edited.
+  The all-source final author candidate carries no held-out score and remains
+  experimental. Compact reports and machine-readable metrics are retained under
+  `docs/experiments/`; raw snapshots/features/models stay in the versioned run.
 
 ## Persistent player identity pilot (2026-10-29)
 

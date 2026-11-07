@@ -145,6 +145,9 @@ def main():
                              "from them, each opening on its serve (FSM rallies "
                              "kept in rallies_fsm); score and the attack heatmap "
                              "stay FSM-derived")
+    parser.add_argument("--contact-author-model", metavar="MODEL", help="Override promoted contact-author model path")
+    parser.add_argument("--contact-author-roster", metavar="JSON", help="Source-bound near-side identity photos, including substitutes or five-player training")
+    parser.add_argument("--no-contact-author", action="store_true", help="Use legacy geometric player-contact proposals")
     parser.add_argument("--ball-ensemble", action="store_true",
                         help="Collect ball candidates from a second, tiled detector "
                              "(union recall 0.93 vs 0.72, roughly half the speed)")
@@ -269,6 +272,9 @@ def main():
         player_identity_seed=args.player_identity_seed,
         player_reid_assets=args.player_reid_assets,
         player_reid_device=args.player_reid_device,
+        enable_contact_author=not args.no_contact_author,
+        contact_author_model=args.contact_author_model,
+        contact_author_roster=args.contact_author_roster,
         output_video=args.render_video,
         model_cache_dir=args.model_cache_dir,
         require_model_cache=args.require_model_cache,

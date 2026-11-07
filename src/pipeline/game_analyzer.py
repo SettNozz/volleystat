@@ -293,6 +293,9 @@ class GameAnalyzer:
         player_reid_device: str = "auto",
         model_cache_dir: Optional[str] = None,
         require_model_cache: bool = False,
+        enable_contact_author: bool = True,
+        contact_author_model: Optional[str] = None,
+        contact_author_roster: Optional[str] = None,
     ):
         """
         Args:
@@ -346,6 +349,9 @@ class GameAnalyzer:
         self.player_reid_device = player_reid_device
         self.model_cache_dir = Path(model_cache_dir) if model_cache_dir else DEFAULT_CACHE
         self.require_model_cache = require_model_cache
+        self.enable_contact_author = enable_contact_author
+        self.contact_author_model = contact_author_model
+        self.contact_author_roster = contact_author_roster
         self._model_cache = None
         self._ball_specs = {}
         self._pose_spec = None
@@ -2870,6 +2876,7 @@ class GameAnalyzer:
                 self._apply_player_identity(stats, identity_images(), fps, vp)
             else:
                 stats.player_identity = {"enabled": False, "status": "disabled"}
+            self._apply_contact_authors(stats, str(vp.resolve()), w, h)
             if defer_final_render:
                 self._render_final_video(
                     vp, out_path, stats.frame_annotations, fps, w, h, max_frames,
@@ -2930,6 +2937,7 @@ class GameAnalyzer:
         total = len(frame_files)
         self._cache_full_source_limit = None
         cached_pass = None
+        w, h = 1280, 720
         if frame_files and hasattr(self, 'model_cache_dir'):
             first = cv2.imread(str(frame_files[0]))
             if first is None:
@@ -2960,6 +2968,8 @@ class GameAnalyzer:
         )
 
         self._apply_player_identity(stats, frame_iter(), fps)
+        self._apply_contact_authors(stats, "", w if frame_files else 1280, h if frame_files else 720,
+            images=lambda wanted: ((f, image) for f, image in frame_iter() if f in wanted))
         if out_frames_dir is not None and getattr(self, "enable_player_identity", False):
             by_frame = {ann["f"]: ann for ann in stats.frame_annotations}
             for index, image in frame_iter():
@@ -2976,13 +2986,30 @@ class GameAnalyzer:
     # Output
     # ------------------------------------------------------------------
 
+    def _apply_contact_authors(self, stats, video, width, height, images=None):
+        from src.tracking.contact_author_runtime import attribute_contacts
+        payload = {"frames": stats.frame_annotations, "fps": stats.fps, "video": stats.video_name,
+            "original_video_path": video, "frame_width": width, "frame_height": height,
+            "player_identity": stats.player_identity}
+        stats.player_contacts = attribute_contacts(payload, stats.all_events,
+            enabled=getattr(self, "enable_contact_author", False),
+            model_path=getattr(self, "contact_author_model", None), roster=getattr(self, "contact_author_roster", None),
+            cache=getattr(self, "_model_cache", None), cache_dir=getattr(self, "model_cache_dir", None),
+            assets=getattr(self, "player_reid_assets", None), device=getattr(self, "player_reid_device", "auto"),
+            require_cache=getattr(self, "require_model_cache", False), use_registry=getattr(self, "use_model_registry", True), images=images)
+        provenance = stats.player_contacts.get("attribution", {}).get("model_resolution")
+        if provenance:
+            self.model_provenance["contact_author"] = provenance
+            stats.models = dict(self.model_provenance)
+
     def _save_and_print(self, stats: GameStats, output_dir: Path, stem: str,
                         original_video_path: str = "",
                         calibration_override: Optional["CalibrationData"] = None):
         from src.tracking.player_contacts import build_player_contacts
-        stats.player_contacts = build_player_contacts(
-            stats.all_events, stats.frame_annotations, stats.fps, stats.player_identity,
-        )
+        if not stats.player_contacts:
+            stats.player_contacts = build_player_contacts(
+                stats.all_events, stats.frame_annotations, stats.fps, stats.player_identity,
+            )
         if getattr(self, '_model_cache', None) is not None:
             stats.model_cache = self._model_cache.summary()
         out_path = output_dir / f"{stem}_stats.json"

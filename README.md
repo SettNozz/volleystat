@@ -15,13 +15,61 @@ IDs through a per-video roster file; returning players retain their original
 IDs. Local tracklet contradictions are rejected rather than relabelled.
 Motion cannot assign an ID whose frozen appearance is clearly worse than
 another known person's appearance.
-Full-match accuracy and personal contact attribution remain unverified.
+Full-match production identity accuracy remains unverified. The experimental
+[human contact-author benchmark](docs/contact_author_benchmark.md) now measures
+person attribution on reviewed contacts from three complete videos: 382 strict
+examples, with whole-video held-out training. The OSNet/temporal follow-up's
+best fixed `class_fusion` gets 79.35% exact near-person recall and 78.92%
+assignment precision; nested algorithm selection gets 75.54% near-person recall.
+The 80% person target is not reached. These are known-contact development scores, not
+end-to-end contact detection or a production promotion. A read-only error
+viewer compares all methods with the human photo roster.
+The [paired comparison with Claude's person ranker](docs/contact_author_comparison.md)
+uses identical 382 strict contacts: fixed HGB gets 85.87% exact near-person
+recall versus `class_fusion` 79.35%; corrected nested selection gets 82.07%
+versus 75.54%. These remain three-video development estimates.
+The [unlabelled-video author workflow](docs/contact_author_inference.md) applies
+three frozen `class_fusion` fold members to an existing saved analysis, with no
+training or detector replay. Its read-only viewer shows contact predictions,
+original skeleton evidence and the saved automatic roster; accuracy stays
+unmeasured until this source receives human author labels.
+The [human contact-author annotator](docs/contact_author_annotation.md) collects
+person-level reference labels: video on the left, confirmed player photo cards
+on the right, plus other-team/unsure/not-contact decisions. It reuses the active
+414-clip human event dataset and audited contact times (403 review items after
+duplicate grouping and known-error exclusion). Substitutes get new IDs;
+progress, revisions and JSON export remain separate from model predictions.
+Player cards can be removed with an explicit confirmation and restored. Assigned
+contacts return to unlabelled only after confirmation; deleted IDs are reserved.
+Save requests have a timeout and reconcile saved state before another decision.
+The **Тип контакту** selector separately corrects an event type with autosave
+and a reset to the original value. Human type reviews enter the JSON export
+with their original predictions; author labels and timing remain independent.
+New-source author annotation can reuse existing spotter results with
+`scripts/evaluation/prepare_contact_author_expansion.py`. It excludes sources
+in the active event-training manifest and completed author snapshot, creates a
+fresh empty project, retains model time/type provenance and requires photo-roster
+confirmation. Current expansion: seven videos, 759 contact proposals, port 5070.
+See [new-source annotation](docs/contact_author_annotation.md#new-sources-outside-the-existing-datasets).
 The viewer's **Player contacts** panel selects a roster ID, highlights only
 that skeleton, and lists its reception, dig/pass/set, attack, block and serve
 events with click-to-seek. Unverified contact proposals use saved ball/pose
 evidence from both sides; ambiguous contacts stay unresolved. Correct an
 attribution in the dropdown; corrections are separate, source-bound records.
 No video/model rerun is needed. See [per-player contacts](docs/player_contacts.md).
+An isolated [contact-author learning experiment](docs/contact_author_learning.md)
+compares geometric rules, nine team-side classifiers and weak actor ranking on
+frozen data. Review results expose an approach selector, paused contact frames
+and uncertain player suggestions. Team-side validation is not individual-author
+accuracy; nothing is promoted into production or source annotations.
+The [volleyball contact lab](docs/volleyball_contact_lab.md) additionally compares
+independent flight/limb detectors, bounded retiming and learned team sequences.
+Its read-only viewer exposes new untyped peaks and author changes on the same
+frozen JIZ3 video, with whole-video held-out timing/team comparisons.
+The [P4 case corrections](docs/P4_contact_case_corrections.md) use observed arm
+actions, ground/landing context and the user-confirmed P4 reference to reject
+inactive defenders and separate a confused identity. Five source-bound review
+buttons compare the exact examples; these development checks are not accuracy.
 For short skeleton dropouts, the experimental
 [offline pose completion](docs/pose_completion.md) uses the same person's past
 and future observed joints. Hidden joints appear as cyan dashed estimates,
@@ -509,3 +557,23 @@ in finding touches, not naming them. See
 [dense contact spotting](docs/dense_contact_spotting.md) and the
 [landscape review](docs/event_detection_research_2026-10.md). Production models
 and datasets are unchanged.
+
+## Expanded human contact experiments
+
+**Default contact authors (2026-11-07):** expanded all-side temporal OSNet +
+soft HGB. Install the frozen artifact with
+`python scripts/models/promote_contact_author.py install`. New analyses apply it
+after roster identity; saved-result replay defaults to the same model and a
+strict cache check. `--no-contact-author` / replay `--legacy` retains geometry.
+The viewer reads exported model predictions. Event models are unchanged.
+See [installation, photo setup and cached replay](docs/contact_author_production.md).
+
+The completed author-review projects can be frozen and evaluated with
+`scripts/evaluation/train_expanded_contacts.py` in the isolated experiment
+worktree. Whole-video folds compare old-three-source and expanded training for
+named authors and contact typing. Unchanged model event types remain unverified;
+only explicit type corrections augment the event dataset. Run artifacts retain
+SQLite snapshots, source hashes, features, seeds, fold predictions, metrics and
+model files. TcUru's confirmed five-person roster is an explicit exception to
+the normal six-person court policy. See
+[expanded training and history](docs/expanded_contact_training.md).
