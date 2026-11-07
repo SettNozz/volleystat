@@ -1045,8 +1045,8 @@ class GameAnalyzer:
     # (CUDA graph + stream), so one frame's upload/NMS overlaps another's
     # network. Measured 2026-11-07 (RTX 5070 Ti, i9-10900F, 4K VP9), full cold
     # pipeline: before CUDA graphs two workers beat three (17.6 vs 16.9 fps);
-    # with graphs the loop (24 fps) is bound by OSNet crop transforms and
-    # decoding (35.6 fps without identity), not pose, so two.
+    # with graphs the loop (24 fps) is bound by GPU time (pose ~20 ms + OSNet
+    # ~10 ms per frame) and decoding (35.6 fps without identity), so two.
     POSE_PREFETCH_WORKERS = 2
 
     def _close_prefetch(self) -> None:

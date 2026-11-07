@@ -233,11 +233,29 @@ RTX 5070 Ti, i9-10900F, MLflow server not running:
 
 In-loop OSNet moves ~11 s of encoding into the loop (35.6 fps without identity,
 which is the decoder's ceiling) but removes the 24+ s second decode. GPU
-utilisation in the steady loop went 47% -> 67%. The loop is now bound by
-OSNet's PIL crop transform (GIL) and VP9 decoding, not by the GPU. Repeated
-runs are not bit-identical even serially (FP16 with `cudnn.benchmark`): two
-serial runs shared 822 of 899 raw ball outputs exactly and pose boxes moved by
-up to 15 px, which is why replays should go through the cache.
+utilisation in the steady loop went 47% -> 67%. Repeated runs are not
+bit-identical even serially (FP16 with `cudnn.benchmark`): two serial runs
+shared 822 of 899 raw ball outputs exactly and pose boxes moved by up to
+15 px, which is why replays should go through the cache.
+
+What limits the loop now (measured 2026-11-07, same clip): GPU work per frame
+is ~20 ms YOLO-pose at 2560, ~10 ms OSNet (0.84 ms per crop for the
+original+flip pair, ~12 crops per frame) plus ball and event models, about
+36 ms, so ~28 fps is the ceiling with identity on; the loop runs at 23-24 fps.
+Without identity it reaches 35.6 fps, which is the VP9 software decoder.
+Tried and not adopted:
+
+| Idea | Result |
+|---|---|
+| Hardware decode through OpenCV (`CAP_PROP_HW_ACCELERATION`, D3D11VA/NVDEC) | Slower (12.9 vs 17.5 fps in the same test) and different pixels (75% differ, up to 11 levels: other NV12->BGR conversion). Ball/OSNet keys do not include the decoder, so it would silently mix values. |
+| FFmpeg decoder threads (`OPENCV_FFMPEG_CAPTURE_OPTIONS=threads;N`) | 34.2-35.1 fps for 1-16 threads; identical pixels, no gain. |
+| OSNet PIL resize in 3 spawned processes | Bit-identical embeddings, loop 24 -> 19.2 fps (pickling crops costs more GIL than it saves). |
+| CUDA graph for OSNet (bit-identical to eager) | Loop 23.1 fps, no gain: OSNet is GPU time, not dispatch. |
+| OSNet `channels_last` / FP16 | -13% / -43% OSNet GPU time but 1.75e-5 / 3e-4 cosine change under the same cache key; would need a new OSNet key and recomputing cached embeddings. |
+
+The next real gains need a decision: a TensorRT FP16 engine for YOLO-pose (new
+pose key) or an FP16 OSNet with a new OSNet key (recomputes saved embeddings,
+including the imported JIZ3 cache).
 
 ### 3. Open viewer
 

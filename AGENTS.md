@@ -234,8 +234,14 @@ loop (same encoder/crop/key, serialised off-thread, one transaction per drain),
 so identity/contact-author passes need no second decode. OSNet batch is 128.
 A stopped MLflow server costs one 0.5 s TCP probe (`_require_reachable`).
 30 s of `j0gRhgFCgIs_4_4k`, empty cache: 151 s -> 61-64 s wall, loop 15 -> 24 fps,
-identity 34 s -> 3 s, steady GPU 47% -> 67%; cache-only replay 14 s. Now bound
-by OSNet's PIL transform (GIL) and VP9 decoding (35.6 fps without identity).
+identity 34 s -> 3 s, steady GPU 47% -> 67%; cache-only replay 14 s. Now ~GPU
+bound: pose ~20 ms + OSNet ~10 ms (0.84 ms/crop) + ball/event per frame
+(ceiling ~28 fps, actual 23-24); without identity 35.6 fps = VP9 decoder.
+Rejected 2026-11-07 (see README table): OpenCV D3D11/NVDEC decode (slower,
+different pixels under unchanged ball/OSNet keys), FFmpeg thread counts (no
+gain), OSNet resize process pool (24 -> 19.2 fps), OSNet CUDA graph (no gain).
+OSNet channels_last/FP16 change embeddings (1.75e-5/3e-4) and would need a new
+OSNet key; TensorRT pose needs a new pose key. Ask before either.
 GPU reruns are not bit-identical even serially (822/899 identical raw ball
 outputs between two serial runs), so judge speed changes against a serial
 control run and replay hypotheses through the cache.
