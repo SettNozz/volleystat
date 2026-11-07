@@ -64,6 +64,7 @@ def test_final_replay_replaces_stale_features_and_predictions_without_changing_o
     assert predictor.calls[0][0] == (600.0, 80.0)
     assert predictor.calls[0][4] == {
         "fsm_state": "rally_active", "pose_features": frames[0]["pose_f"],
+        "video_time": 0.0,
         "frame_size": (1280, 720), "ball_new": True,
     }
     expected = PoseFeatureExtractor().update(

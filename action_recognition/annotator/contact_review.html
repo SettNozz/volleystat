@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ревʼю контактів</title>
+<style>
+  :root {
+    --bg:#0f1115; --panel:#171a21; --ink:#e8eaed; --muted:#9aa3af; --line:#2a2f3a;
+    --a:#c026d3; --b:#0ea5e9; --ok:#22c55e; --bad:#ef4444; --warn:#f59e0b;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.45 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { display:flex; align-items:center; gap:16px; padding:9px 16px;
+    border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5; }
+  .title { font-weight:700; }
+  .meta { color:var(--muted); font-size:13px; }
+  .bar { flex:1; height:7px; background:var(--panel); border-radius:999px; overflow:hidden; }
+  .bar > i { display:block; height:100%; background:var(--ok); width:0; transition:width .15s; }
+  main { display:grid; grid-template-columns:1fr 310px; gap:14px; padding:14px; align-items:start; }
+  .stage { background:var(--panel); border-radius:12px; padding:10px; }
+  .stage img { width:100%; display:block; border-radius:8px; background:#000; }
+  .shot { position:relative; line-height:0; cursor:crosshair; }
+  .mark { position:absolute; width:34px; height:34px; margin:-17px 0 0 -17px;
+    border:3px solid #22c55e; border-radius:50%; pointer-events:none;
+    box-shadow:0 0 0 2px rgba(0,0,0,.55); }
+  .mark::after { content:''; position:absolute; inset:14px; background:#22c55e; border-radius:50%; }
+  .offset { position:absolute; left:10px; top:10px; padding:3px 10px; border-radius:6px;
+    background:rgba(0,0,0,.65); color:#f59e0b; font:700 13px/1.4 inherit; }
+  .types { display:grid; grid-template-columns:repeat(6,1fr); gap:8px; margin-top:10px; }
+  .types button { font:inherit; font-weight:700; padding:12px 4px; border-radius:9px;
+    border:2px solid var(--line); background:#222733; color:var(--ink); cursor:pointer; font-size:14px; }
+  .types button.predicted { border-color:var(--warn); }
+  .types button.chosen { background:var(--ok); border-color:var(--ok); color:#06240f; }
+  .types button kbd { display:block; font-size:11px; color:var(--muted); font-weight:600; }
+  .types button.chosen kbd { color:#06240f; }
+  .teams { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px; }
+  .teams button { font:inherit; font-weight:700; padding:12px 4px; border-radius:9px;
+    border:2px solid var(--line); background:#222733; color:var(--ink); cursor:pointer; }
+  .teams button.chosen.a { background:var(--a); border-color:var(--a); color:#fff; }
+  .teams button.chosen.b { background:var(--b); border-color:var(--b); color:#fff; }
+  .teams button.chosen.u { background:#4b5563; border-color:#4b5563; color:#fff; }
+  .danger { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-top:8px; }
+  .danger button { font:inherit; padding:10px 4px; border-radius:9px; border:2px solid var(--line);
+    background:#1b2029; color:var(--muted); cursor:pointer; }
+  .danger button.reject { color:#fca5a5; }
+  .side { display:grid; gap:12px; }
+  .card { background:var(--panel); border-radius:12px; padding:13px; }
+  .card h2 { margin:0 0 7px; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+  .row { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
+  .row b { font-variant-numeric:tabular-nums; }
+  .keys { color:var(--muted); font-size:12.5px; }
+  .keys kbd { background:#222733; border-radius:4px; padding:1px 5px; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; font-weight:700; }
+  .pill.model { background:rgba(245,158,11,.16); color:var(--warn); }
+  .pill.human { background:rgba(34,197,94,.16); color:var(--ok); }
+  .hidden { display:none; }
+  dialog { background:var(--panel); color:var(--ink); border:1px solid var(--line);
+    border-radius:12px; padding:16px; max-width:min(1200px,94vw); }
+  dialog::backdrop { background:rgba(0,0,0,.7); }
+  dialog img { width:100%; border-radius:8px; background:#000; }
+  .stepper { display:flex; gap:8px; align-items:center; margin:10px 0; }
+  .stepper button { font:inherit; padding:8px 12px; border-radius:8px; border:1px solid var(--line);
+    background:#222733; color:var(--ink); cursor:pointer; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">Ревʼю контактів</span>
+  <span class="meta" id="position">—</span>
+  <span class="bar"><i id="progress"></i></span>
+  <span class="meta" id="counts">—</span>
+</header>
+
+<main>
+  <section class="stage">
+    <div class="shot" id="shot">
+      <img id="frame" alt="кадр контакту">
+      <i class="mark hidden" id="mark"></i>
+      <span class="offset hidden" id="offset"></span>
+    </div>
+    <div class="types" id="types"></div>
+    <div class="teams">
+      <button id="teamA" data-team="team_a"><kbd>A</kbd> Дальня</button>
+      <button id="teamB" data-team="team_b"><kbd>B</kbd> Ближня</button>
+      <button id="teamU" data-team="unknown"><kbd>U</kbd> Не видно</button>
+    </div>
+    <div class="danger">
+      <button class="reject" id="btnReject"><kbd>X</kbd> Не контакт</button>
+      <button id="btnUnsure"><kbd>S</kbd> Не певен</button>
+      <button id="btnInsert"><kbd>+</kbd> Додати пропущений</button>
+    </div>
+    <p class="keys" style="margin:10px 2px 2px">
+      <kbd>1</kbd>–<kbd>6</kbd> тип · <kbd>Enter</kbd> лишити як є · <kbd>A</kbd>/<kbd>B</kbd>/<kbd>U</kbd> сторона ·
+      <kbd>X</kbd> видалити · <kbd>S</kbd> не певен · <kbd>Z</kbd> назад · <kbd>←</kbd><kbd>→</kbd> рух<br>
+      <kbd>,</kbd> <kbd>.</kbd> кадр ±<b>1</b> · <kbd>&lt;</kbd> <kbd>&gt;</kbd> кадр ±<b>5</b> ·
+      клік по кадру — поставити мʼяч · <kbd>R</kbd> зняти мʼяч
+    </p>
+  </section>
+
+  <aside class="side">
+    <div class="card">
+      <h2>Контакт</h2>
+      <div class="row"><span>Відео</span><b id="video">—</b></div>
+      <div class="row"><span>Кадр</span><b id="frameNo">—</b></div>
+      <div class="row"><span>Час</span><b id="time">—</b></div>
+      <div class="row"><span>Модель каже</span><b id="pred">—</b></div>
+      <div class="row"><span>Упевненість</span><b id="conf">—</b></div>
+      <div class="row"><span>Декодер обрав</span><b id="decoded">—</b></div>
+      <div class="row"><span>Статус</span><b id="status"><span class="pill model">модель</span></b></div>
+    </div>
+    <div class="card">
+      <h2>Підсумок</h2>
+      <div class="row"><span>Переглянуто</span><b id="cVerified">0</b></div>
+      <div class="row"><span>Відхилено</span><b id="cRejected">0</b></div>
+      <div class="row"><span>Тип змінено</span><b id="cRetyped">0</b></div>
+      <div class="row"><span>Додано вручну</span><b id="cAdded">0</b></div>
+    </div>
+    <div class="card">
+      <h2>Проміжок попереду</h2>
+      <div class="row"><span>До наступного</span><b id="gap">—</b></div>
+      <p class="keys">Якщо в проміжку є пропущений контакт — <kbd>+</kbd>.</p>
+    </div>
+  </aside>
+</main>
+
+<dialog id="insertDialog">
+  <h3 style="margin:0 0 8px">Додати пропущений контакт</h3>
+  <p class="keys" id="insertRange">—</p>
+  <img id="insertFrame" alt="кадр">
+  <div class="stepper">
+    <button data-step="-25">−25</button>
+    <button data-step="-5">−5</button>
+    <button data-step="-1">−1</button>
+    <b id="insertFrameNo" style="min-width:90px;text-align:center">—</b>
+    <button data-step="1">+1</button>
+    <button data-step="5">+5</button>
+    <button data-step="25">+25</button>
+  </div>
+  <div class="types" id="insertTypes"></div>
+  <div class="teams">
+    <button data-team="team_a">Дальня</button>
+    <button data-team="team_b">Ближня</button>
+    <button data-team="unknown">Не видно</button>
+  </div>
+  <p class="keys" style="margin-top:10px">
+    Обери тип і сторону — контакт додасться. <kbd>Esc</kbd> щоб закрити.
+  </p>
+</dialog>
+
+<script>
+const state = { contacts: [], videos: {}, types: [], index: 0, draft: {},
+                insert: null, frame: null, ball: null };
+const $ = (id) => document.getElementById(id);
+const TYPE_LABEL = { serve:'подача', reception:'прийом', set:'пас', dig:'захист', attack:'атака', block:'блок' };
+
+async function load() {
+  const data = await (await fetch('/api/project')).json();
+  state.contacts = data.contacts;
+  state.videos = data.videos;
+  state.types = data.contact_types;
+  buildTypeButtons($('types'), (type) => setType(type));
+  buildTypeButtons($('insertTypes'), (type) => { state.insert.type = type; tryInsert(); });
+  applyCounts(data.counts);
+  const firstUnseen = state.contacts.findIndex((c) => !c.verified && !(c.review));
+  state.index = firstUnseen === -1 ? 0 : firstUnseen;
+  render();
+}
+
+function buildTypeButtons(host, onPick) {
+  host.innerHTML = '';
+  state.types.forEach((type, i) => {
+    const button = document.createElement('button');
+    button.dataset.type = type;
+    button.innerHTML = `${TYPE_LABEL[type] || type}<kbd>${i + 1}</kbd>`;
+    button.addEventListener('click', () => onPick(type));
+    host.appendChild(button);
+  });
+}
+
+function current() { return state.contacts[state.index]; }
+
+function render() {
+  const contact = current();
+  if (!contact) return;
+  const video = state.videos[contact.video_id];
+  state.frame = contact.review?.frame ?? contact.frame;
+  state.ball = contact.review?.ball ?? null;
+  showFrame();
+  prefetch(state.index + 1, 3);
+  $('video').textContent = contact.video_id;
+  $('time').textContent = video.fps ? `${(state.frame / video.fps).toFixed(1)} с` : '—';
+  $('pred').textContent = contact.predicted_type
+    ? (TYPE_LABEL[contact.predicted_type] || contact.predicted_type) : 'додано вручну';
+  $('conf').textContent = contact.confidence == null ? '—' : contact.confidence.toFixed(2);
+  // A candidate the constrained decoder did not also pick is likelier spare.
+  $('decoded').innerHTML = contact.decoded == null ? '—'
+    : (contact.decoded ? '<span class="pill human">так</span>'
+                       : '<span class="pill model">ні — скоріше зайвий</span>');
+  $('status').innerHTML = contact.verified
+    ? `<span class="pill human">перевірено: ${contact.review.status}</span>`
+    : `<span class="pill model">модель</span>`;
+  $('position').textContent = `${state.index + 1} / ${state.contacts.length}`;
+
+  const next = state.contacts[state.index + 1];
+  $('gap').textContent = (next && next.video_id === contact.video_id)
+    ? `${next.frame - contact.frame} кадрів` : 'кінець відео';
+
+  state.draft = {
+    type: contact.review?.type || contact.predicted_type || null,
+    team: contact.review?.team || null,
+  };
+  paint();
+}
+
+// The frame on screen may not be the one the model proposed: stepping is
+// how a mis-timed contact gets corrected, and where the reviewer lands is
+// where the contact is recorded.
+function showFrame() {
+  const contact = current();
+  $('frame').src = `/api/frame/${contact.video_id}/${state.frame}`;
+  $('frameNo').textContent = state.frame;
+  const delta = state.frame - contact.frame;
+  const badge = $('offset');
+  badge.classList.toggle('hidden', delta === 0);
+  badge.textContent = delta > 0 ? `+${delta} кадр.` : `${delta} кадр.`;
+  const video = state.videos[contact.video_id];
+  if (video.fps) $('time').textContent = `${(state.frame / video.fps).toFixed(1)} с`;
+  drawBall();
+}
+
+function drawBall() {
+  const mark = $('mark');
+  if (!state.ball) { mark.classList.add('hidden'); return; }
+  const contact = current();
+  const video = state.videos[contact.video_id];
+  const image = $('frame');
+  mark.style.left = `${(state.ball[0] / video.frame_width) * image.clientWidth}px`;
+  mark.style.top = `${(state.ball[1] / video.frame_height) * image.clientHeight}px`;
+  mark.classList.remove('hidden');
+}
+
+function stepFrame(delta) {
+  const contact = current();
+  const video = state.videos[contact.video_id];
+  const next = Math.max(0, Math.min(video.num_frames - 1, state.frame + delta));
+  if (next === state.frame) return;
+  state.frame = next;
+  // A ball placed by hand belongs to the frame it was placed on.
+  state.ball = null;
+  showFrame();
+}
+
+$('shot').addEventListener('click', (event) => {
+  const image = $('frame');
+  const box = image.getBoundingClientRect();
+  const video = state.videos[current().video_id];
+  state.ball = [
+    ((event.clientX - box.left) / box.width) * video.frame_width,
+    ((event.clientY - box.top) / box.height) * video.frame_height,
+  ];
+  drawBall();
+});
+window.addEventListener('resize', drawBall);
+$('frame').addEventListener('load', drawBall);
+
+function paint() {
+  const contact = current();
+  for (const button of $('types').children) {
+    button.classList.toggle('chosen', button.dataset.type === state.draft.type);
+    button.classList.toggle('predicted', button.dataset.type === contact.predicted_type);
+  }
+  for (const id of ['teamA', 'teamB', 'teamU']) {
+    const button = $(id);
+    button.classList.remove('chosen', 'a', 'b', 'u');
+    if (button.dataset.team === state.draft.team) {
+      button.classList.add('chosen', id === 'teamA' ? 'a' : id === 'teamB' ? 'b' : 'u');
+    }
+  }
+}
+
+const prefetched = new Set();
+function prefetch(from, count) {
+  for (let i = from; i < Math.min(from + count, state.contacts.length); i++) {
+    const c = state.contacts[i];
+    const key = `${c.video_id}/${c.frame}`;
+    if (prefetched.has(key)) continue;
+    prefetched.add(key);
+    new Image().src = `/api/frame/${key}`;
+  }
+}
+
+function setType(type) { state.draft.type = type; paint(); maybeCommit(); }
+function setTeam(team) { state.draft.team = team; paint(); maybeCommit(); }
+
+// Both halves are needed before a contact counts as reviewed; whichever the
+// user supplies second completes it, so the order never matters.
+function maybeCommit() {
+  if (state.draft.type && state.draft.team) {
+    send({ status: 'kept', type: state.draft.type, team: state.draft.team });
+  }
+}
+
+async function send(body) {
+  const contact = current();
+  const response = await fetch('/api/review', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      id: contact.id,
+      frame: state.frame === contact.frame ? null : state.frame,
+      ball: state.ball,
+      ...body,
+    }),
+  });
+  if (!response.ok) return;
+  const result = await response.json();
+  state.contacts[state.index] = result.contact;
+  applyCounts(result.counts);
+  setTimeout(() => move(1), 90);
+}
+
+function applyCounts(counts) {
+  $('counts').textContent = `${counts.verified} / ${counts.total}`;
+  $('progress').style.width = `${(counts.verified / counts.total) * 100}%`;
+  $('cVerified').textContent = counts.verified;
+  $('cRejected').textContent = counts.rejected;
+  $('cRetyped').textContent = counts.retyped;
+  $('cAdded').textContent = counts.added;
+}
+
+function move(step) {
+  const next = state.index + step;
+  if (next < 0 || next >= state.contacts.length) return;
+  state.index = next;
+  render();
+}
+
+// --- inserting a contact the model missed -------------------------------
+function openInsert() {
+  const contact = current();
+  const next = state.contacts[state.index + 1];
+  const upper = (next && next.video_id === contact.video_id)
+    ? next.frame - 1 : contact.frame + 300;
+  state.insert = {
+    video_id: contact.video_id, frame: contact.frame + 1,
+    lower: contact.frame + 1, upper, type: null, team: null,
+  };
+  $('insertRange').textContent =
+    `${contact.video_id}: кадри ${state.insert.lower}–${state.insert.upper}`;
+  paintInsert();
+  $('insertDialog').showModal();
+}
+
+function paintInsert() {
+  $('insertFrameNo').textContent = state.insert.frame;
+  $('insertFrame').src = `/api/frame/${state.insert.video_id}/${state.insert.frame}`;
+  for (const button of $('insertTypes').children) {
+    button.classList.toggle('chosen', button.dataset.type === state.insert.type);
+  }
+}
+
+function stepInsert(delta) {
+  const value = state.insert.frame + delta;
+  state.insert.frame = Math.max(state.insert.lower, Math.min(state.insert.upper, value));
+  paintInsert();
+}
+
+async function tryInsert() {
+  if (!state.insert.type || !state.insert.team) return;
+  const response = await fetch('/api/insert', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(state.insert),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    $('insertRange').textContent = error.error || 'не вдалося додати';
+    return;
+  }
+  const result = await response.json();
+  state.contacts = result.contacts;
+  applyCounts(result.counts);
+  $('insertDialog').close();
+  state.index = result.index;
+  render();
+}
+
+$('insertDialog').addEventListener('click', (event) => {
+  const step = event.target.dataset.step;
+  if (step) stepInsert(Number(step));
+  const team = event.target.dataset.team;
+  if (team && event.target.parentElement.classList.contains('teams')) {
+    state.insert.team = team; tryInsert();
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.metaKey || event.ctrlKey || event.altKey) return;
+  if ($('insertDialog').open) {
+    if (event.key === 'ArrowLeft') { event.preventDefault(); stepInsert(-1); }
+    else if (event.key === 'ArrowRight') { event.preventDefault(); stepInsert(1); }
+    else if (/^[1-6]$/.test(event.key)) {
+      event.preventDefault();
+      state.insert.type = state.types[Number(event.key) - 1];
+      paintInsert(); tryInsert();
+    }
+    return;
+  }
+  const key = event.key.toLowerCase();
+  if (/^[1-6]$/.test(event.key)) { event.preventDefault(); setType(state.types[Number(event.key) - 1]); }
+  else if (key === 'a') { event.preventDefault(); setTeam('team_a'); }
+  else if (key === 'b') { event.preventDefault(); setTeam('team_b'); }
+  else if (key === 'u') { event.preventDefault(); setTeam('unknown'); }
+  else if (key === 'x') { event.preventDefault(); send({ status: 'rejected' }); }
+  else if (key === 's') { event.preventDefault(); send({ status: 'unsure' }); }
+  else if (key === 'z') { event.preventDefault(); move(-1); }
+  else if (event.key === ',') { event.preventDefault(); stepFrame(-1); }
+  else if (event.key === '.') { event.preventDefault(); stepFrame(1); }
+  else if (event.key === '<') { event.preventDefault(); stepFrame(-5); }
+  else if (event.key === '>') { event.preventDefault(); stepFrame(5); }
+  else if (key === 'r') { event.preventDefault(); state.ball = null; drawBall(); }
+  else if (key === '+' || event.key === '=') { event.preventDefault(); openInsert(); }
+  else if (event.key === 'Enter') {
+    event.preventDefault();
+    if (current().predicted_type) { setType(current().predicted_type); }
+  }
+  else if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1); }
+  else if (event.key === 'ArrowRight') { event.preventDefault(); move(1); }
+});
+
+$('teamA').addEventListener('click', () => setTeam('team_a'));
+$('teamB').addEventListener('click', () => setTeam('team_b'));
+$('teamU').addEventListener('click', () => setTeam('unknown'));
+$('btnReject').addEventListener('click', () => send({ status: 'rejected' }));
+$('btnUnsure').addEventListener('click', () => send({ status: 'unsure' }));
+$('btnInsert').addEventListener('click', openInsert);
+load();
+</script>
+</body>
+</html>

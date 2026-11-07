@@ -5,48 +5,70 @@ __pycache__/
 *.so
 .Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+.eggs/
+.pytest_cache/
 
-# PyTorch
-*.pth
+# Local interpreters and environments (see AGENTS.md "Tests and validation")
+volley_env_311/
+.python/
+.sam3_env/
+.uv-cache/
+.graphify_python
+
+# Data, models and analysis results are provisioned per machine.
+# Anchored to the repository root so packages such as action_recognition/data/
+# and action_recognition/models/ stay tracked.
+/data/
+/models/
+/results/
+/notebooks/
+action_recognition/models/checkpoints*/
+action_recognition/models/experiments*/
+
+# Weight files anywhere, so a checkpoint dropped next to code is still ignored
 *.pt
+*.pth
 *.ckpt
+*.onnx
 
-# Data and Models
-data/raw/
-data/processed/
-data/datasets/
-models/checkpoints/
-models/pretrained/
-results/videos/
-results/images/
-results/metrics/
-
-# Personal paths and configurations
-local_paths.json
-personal_config.py
+# Media
 *.mp4
 *.avi
 *.mov
 *.gif
 
-# IDE
+# Per-camera calibrations are runtime outputs; named setups live in
+# configs/court_setups.json
+court_calibration*.json
+configs/court_calibration_*.json
+
+# Personal paths and configurations
+local_paths.json
+personal_config.py
+
+# Logs and MLflow
+*.log
+logs/
+mlruns/
+# Local MLflow model registry (scripts/models/run_mlflow_server.py).
+# The database and the artifact copies are machine-local; what is shared is
+# configs/model_registry.json, which says which names the pipeline resolves.
+mlflow.db
+mlflow.db-journal
+mlartifacts/
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# IDE and agent tooling
 .idea/
 .vscode/
+.cursor/
+.claude/
 *.swp
 *.swo
 
@@ -54,69 +76,16 @@ personal_config.py
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
-logs/
-mlruns/
-
-# Temporary files
-temp/
-tmp/
-*.tmp
-
-# Asset directories
-models/pretrained/
-models/configs/
-#assets/images/
-scripts/cleanup/
-scripts/testing/
-
-# Virtual environments
-volley_env_311/
-
-# Full data/model/results dirs
-data/
-/models/
-# Weight files anywhere, so a checkpoint dropped next to code is still
-# ignored without hiding the code itself.
-*.pt
-*.pth
-*.onnx
-action_recognition/models/checkpoints*/
-action_recognition/models/experiments*/
-results/
-notebooks/
-
-# Runtime outputs
-court_calibration*.json
-assets/temp_palette.png
-
-# IDE configs
-.claude/
-.cursor/
-
-# graphify
-graphify-out/cache/
-
-# Local MLflow model registry (scripts/models/run_mlflow_server.py).
-# The database and the artifact copies are machine-local; what is shared is
-# configs/model_registry.json, which says which names the pipeline resolves.
-mlflow.db
-mlflow.db-journal
-mlartifacts/
-models/_registry_cache/
-
 # ---------------------------------------------------------------------------
 # Vendored, generated and scratch trees. None of these are sources: they are
-# either downloaded, rebuilt from the code, or one-off review material, and
-# together they are ~220 MB that would otherwise live in the history forever.
+# either downloaded, rebuilt from the code, or one-off review material.
 # ---------------------------------------------------------------------------
 
 # Vendored SAM3 checkout (133 MB). Clone it next to the repo instead:
 #   git clone https://github.com/facebookresearch/sam3 third_party/sam3
 third_party/
 
-# Knowledge graph output — rebuilt from the code with `graphify update .`
+# Knowledge graph output, rebuilt from the code with `graphify update .`
 graphify-out/
 
 # Scratch and run-time state
@@ -124,6 +93,10 @@ graphify-out/
 .runs/
 temp_review/
 screenshots/
+test_clips/
+scripts/output/
+# Personal 2025 scratch scripts kept out of the repository on purpose
+scripts/cleanup/
+scripts/testing/
 *.zip
 Volleystat_Showcase.html
-.graphify_python
