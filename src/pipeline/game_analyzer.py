@@ -57,7 +57,7 @@ from src.tracking.match_analytics import (
 )
 from src.utils.logger import get_logger
 from src.utils.path_utils import local_path_from_uri
-from src.pipeline.model_prefetch import PrefetchJob, prefetch_model_outputs, threaded_iter
+from src.pipeline.model_prefetch import BackgroundEncoder, PrefetchJob, prefetch_model_outputs, threaded_iter
 from src.models.inference_cache import (
     DEFAULT_CACHE, CachedForward, CacheMiss, LazyModel, ModelOutputCache,
     array_payload, digest, file_digest, model_spec,
@@ -414,6 +414,7 @@ class GameAnalyzer:
         self.calibration = self._load_calibration(calibration_path)
         self._init_ball_detector(ball_model_path)
         self.pose_model = None
+        self.pose_runner = None
         if self.enable_pose:
             self._init_pose_model(pose_model_path)
         self._person_pose_recovery = None
@@ -833,15 +834,21 @@ class GameAnalyzer:
             from importlib import metadata
             tracker = metadata.distribution('ultralytics').locate_file('ultralytics/cfg/trackers/bytetrack.yaml')
             self._pose_tracker_path = tracker
-            backend = hashlib.sha256(inspect.getsource(type(self)._infer_pose_model).encode()).hexdigest()
+            from src.detection import pose_gpu
+            backend = hashlib.sha256((inspect.getsource(type(self)._infer_pose_model)
+                                      + inspect.getsource(pose_gpu)).encode()).hexdigest()
             self._pose_spec = model_spec(resolved.path, backend=backend,
                                          imgsz=self.pose_imgsz, conf=.1, batch=1,
-                                         precision='fp16_cuda_fp32_cpu')
+                                         precision='fp16_cuda_fp32_cpu',
+                                         preprocess=pose_gpu.PREPROCESS)
             self._pose_spec['tracker'] = file_digest(tracker)
             def load():
                 from ultralytics import YOLO
                 return YOLO(str(resolved.path))
             self.pose_model = LazyModel(load)
+            # Raw cache-backed detections: letterbox, network and NMS on the GPU.
+            imgsz = self.pose_imgsz or 640
+            self.pose_runner = LazyModel(lambda: pose_gpu.GpuPoseModel(resolved.path, imgsz, conf=.1))
             log.info(f"Pose model resolved (loads only on cache miss): {resolved}")
         else:
             raise FileNotFoundError(f'Pose checkpoint unavailable: {resolved.path}; install it before inference')
@@ -1015,6 +1022,10 @@ class GameAnalyzer:
         return candidates
 
     def _infer_pose_model(self, frame, kwargs):
+        runner = getattr(self, 'pose_runner', None)
+        if runner is not None:
+            # src/detection/pose_gpu.py: same weights/conf/imgsz, GPU letterbox.
+            return runner([frame])[0]
         settings = self._pose_spec['settings']
         result = self.pose_model.predict(frame, conf=settings.get('conf',.1),
                                          batch=settings.get('batch',1), mode='track', **kwargs)
@@ -1024,10 +1035,12 @@ class GameAnalyzer:
     # loop is consuming. Two keep the GPU fed without holding many 4K frames.
     PREFETCH_CHUNKS_AHEAD = 2
     IDENTITY_DECODE_DEPTH = 16
-    # Raw pose is the slowest stage (4K -> 2560 letterbox on CPU, then YOLO11m).
-    # Extra threads, each with its own model instance, overlap that CPU work.
-    # Measured 2026-11-06 (RTX 5070 Ti, i9-10900F, 4K VP9): loop 11.7 fps with
-    # one worker, 15.0 with two, 15.4 with three (GIL-bound), so two.
+    # Raw pose is the heaviest GPU stage. Each thread has its own GpuPoseModel
+    # (CUDA graph + stream), so one frame's upload/NMS overlaps another's
+    # network. Measured 2026-11-07 (RTX 5070 Ti, i9-10900F, 4K VP9), full cold
+    # pipeline: before CUDA graphs two workers beat three (17.6 vs 16.9 fps);
+    # with graphs the loop (24 fps) is bound by OSNet crop transforms and
+    # decoding (35.6 fps without identity), not pose, so two.
     POSE_PREFETCH_WORKERS = 2
 
     def _close_prefetch(self) -> None:
@@ -1035,6 +1048,16 @@ class GameAnalyzer:
         self._prefetch_source = None
         if source is not None:
             source.close()
+
+    def _decode_into_pinned_memory(self) -> bool:
+        """Pinned frames only pay off when the GPU pose runner still has to run."""
+        if getattr(self, 'pose_runner', None) is None or getattr(self, '_pose_cache_read', False):
+            return False
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except Exception:
+            return False
 
     def _pose_predict_kwargs(self) -> Dict[str, Any]:
         import torch
@@ -1106,10 +1129,24 @@ class GameAnalyzer:
         pool.put(self)
         # Only a lazily built model can be instantiated again; anything else
         # (an injected model) stays on a single thread.
-        factory = self.pose_model.factory if isinstance(self.pose_model, LazyModel) else None
+        runner = getattr(self, 'pose_runner', None)
+        engine = runner if runner is not None else self.pose_model
+        factory = engine.factory if isinstance(engine, LazyModel) else None
         workers = max(1, int(self.POSE_PREFETCH_WORKERS)) if factory else 1
+        hosts = [self]
         for _ in range(workers - 1):
-            pool.put(SimpleNamespace(pose_model=LazyModel(factory), _pose_spec=self._pose_spec))
+            extra = LazyModel(factory)
+            hosts.append(SimpleNamespace(pose_model=extra if runner is None else self.pose_model,
+                                         pose_runner=extra if runner is not None else None,
+                                         _pose_spec=self._pose_spec))
+        size = getattr(self, '_cache_frame_size', None)
+        for host in hosts:
+            # GPU runners capture their CUDA graph now, before any worker thread
+            # (ball, decode, OSNet) is using the GPU.
+            if host is not self:
+                pool.put(host)
+            if runner is not None and size is not None:
+                host.pose_runner.prepare((size[1], size[0], 3))
         local = threading.local()
 
         def infer(image):
@@ -1919,6 +1956,7 @@ class GameAnalyzer:
             if event_display is not None:
                 ann["event_model"] = event_display
             stats.frame_annotations.append(ann)
+            self._prefetch_embeddings(ann, frame)
 
             # --- Annotate output ---
             if self.output_video and (out_writer or out_frames_dir):
@@ -2738,35 +2776,124 @@ class GameAnalyzer:
 
         return filled
 
+    def _identity_reid(self):
+        """Pinned OSNet encoder plus cache-backed crop features, built once per analysis.
+
+        Shared by the in-loop embedding prefetch and the identity pass so the
+        weights are resolved and loaded once. Raises FileNotFoundError when the
+        bundle is not installed.
+        """
+        built = getattr(self, '_identity_reid_built', None)
+        cache = getattr(self, '_model_cache', None)
+        if built is not None and built[0] is cache:
+            return built[1:]
+        from src.models.player_reid_encoder import DEFAULT_ASSETS, OSNetEncoder
+        assets = Path(self.player_reid_assets) if self.player_reid_assets else DEFAULT_ASSETS
+        if not assets.is_absolute():
+            assets = _ROOT / assets
+        override = str(assets / "osnet_msmt17.pth") if self.player_reid_assets else None
+        resolved = self._resolve("player_reid", override)
+        feature_cache = None
+        if cache is None:
+            encoder = OSNetEncoder(assets, resolved.path, self.player_reid_device)
+        else:
+            encoder = FrozenOSNet(assets, resolved.path, self.player_reid_device)
+            size = getattr(self, '_cache_frame_size', None)
+            if size is None:
+                size = (self.calibration.frame_width,self.calibration.frame_height)
+            width,height = size
+            feature_cache = osnet_feature_store(cache, assets, resolved.path, width,height)
+        self._identity_reid_built = (cache, resolved, encoder, feature_cache)
+        return resolved, encoder, feature_cache
+
+    def _start_embedding_prefetch(self) -> None:
+        """Encode every saved pose crop while the loop still holds its frame.
+
+        The identity pass (and the contact-author runtime) read OSNet features
+        by frame + clamped rounded box from the model-output cache. Computing
+        them here, from the exact ``ann['poses'][i]['bb']`` they will look up,
+        means a cold run no longer decodes the whole video a second time for
+        them. Same encoder, crop and cache key: a value is identical to one the
+        identity pass would compute (up to OSNet batch composition, <=1.3e-6
+        cosine distance). Anything missed still falls back to decoding.
+        """
+        self._embedding_prefetch = None
+        cache = getattr(self, '_model_cache', None)
+        if (not getattr(self, 'enable_player_identity', False) or not getattr(self, 'model_prefetch', False)
+                or cache is None or cache.require):
+            return
+        try:
+            _, encoder, feature_cache = self._identity_reid()
+        except Exception as exc:  # the identity pass reports it properly later
+            log.info(f"OSNet embedding prefetch unavailable: {exc}")
+            return
+        if feature_cache is None:
+            return
+        from src.models.inference_cache import OSNET_BATCH_SIZE
+
+        def encode(crops):
+            # Serialisation (JSON, zlib, sha256) also runs here, off the loop.
+            return [feature_cache.encode(value) for value in encoder.encode(crops)]
+        known = feature_cache.cache.items(feature_cache.stage)
+        self._embedding_prefetch = (BackgroundEncoder(encode, OSNET_BATCH_SIZE), encoder, feature_cache, known)
+        log.info("OSNet crop embeddings computed during the detection pass")
+
+    def _prefetch_embeddings(self, ann: Dict[str, Any], frame: Optional[np.ndarray]) -> None:
+        state = getattr(self, '_embedding_prefetch', None)
+        if state is None or frame is None:
+            return
+        worker, encoder, store, known = state
+        frame_index = int(ann['f'])
+        for pose in ann.get('poses') or []:
+            box = pose.get('bb')
+            if not box or len(box) != 4 or not np.isfinite(box).all() or box[2] <= box[0] or box[3] <= box[1]:
+                continue
+            key = store.key(frame_index, box)
+            if key in known:
+                continue
+            try:
+                crop = encoder.crop(frame, box).copy()
+            except ValueError:
+                continue
+            known.add(key)
+            worker.add((frame_index, tuple(box)), crop)
+        self._store_prefetched_embeddings()
+
+    def _store_prefetched_embeddings(self, wait: bool = False) -> None:
+        state = getattr(self, '_embedding_prefetch', None)
+        if state is None:
+            return
+        worker, _, store, _ = state
+        ready = worker.drain(wait=wait)
+        if ready:
+            store.cache.computed['osnet_embeddings'] += len(ready)
+            store.put_encoded([(frame_index, list(box), body) for (frame_index, box), body in ready])
+
+    def _finish_embedding_prefetch(self, store_results: bool = True) -> None:
+        state = getattr(self, '_embedding_prefetch', None)
+        if state is None:
+            return
+        try:
+            if store_results:
+                self._store_prefetched_embeddings(wait=True)
+        finally:
+            self._embedding_prefetch = None
+            state[0].close()
+
     def _apply_player_identity(self, stats: "GameStats", images, fps: float,
                                video_path: Optional[Path] = None) -> None:
         """Separate offline pass: stable IDs never replace tracker/FSM inputs."""
         if not getattr(self, "enable_player_identity", False):
             stats.player_identity = {"enabled": False, "status": "disabled"}
             return
-        from src.models.player_reid_encoder import DEFAULT_ASSETS, OSNetEncoder
         from src.tracking.player_identity_workflow import METHOD, run_identity_pass
         started = time.time()
         side = self.player_identity_side
-        assets = Path(self.player_reid_assets) if self.player_reid_assets else DEFAULT_ASSETS
-        if not assets.is_absolute():
-            assets = _ROOT / assets
-        override = str(assets / "osnet_msmt17.pth") if self.player_reid_assets else None
-        resolved = self._resolve("player_reid", override)
         cache = getattr(self, '_model_cache', None)
         if cache is None and video_path is not None and hasattr(self, 'model_cache_dir'):
             cache = self._model_cache = ModelOutputCache(video_path, self.model_cache_dir, self.require_model_cache)
-        feature_cache = None
         try:
-            if cache is None:
-                encoder = OSNetEncoder(assets, resolved.path, self.player_reid_device)
-            else:
-                encoder = FrozenOSNet(assets, resolved.path, self.player_reid_device)
-                size = getattr(self, '_cache_frame_size', None)
-                if size is None:
-                    size = (self.calibration.frame_width,self.calibration.frame_height)
-                width,height = size
-                feature_cache = osnet_feature_store(cache, assets, resolved.path, width,height)
+            resolved, encoder, feature_cache = self._identity_reid()
         except FileNotFoundError as exc:
             if self.player_reid_assets or self.player_identity_seed:
                 raise
@@ -2980,10 +3107,11 @@ class GameAnalyzer:
             if out_writer is None:
                 log.warning("VideoWriter failed — annotated video will not be saved")
 
-        def frame_iter():
+        def frame_iter(pinned=False):
+            from src.detection.pose_gpu import pinned_frame
             idx = 0
             while idx < max_frames:
-                ret, frame = cap.read()
+                ret, frame = cap.read(pinned_frame((h, w, 3))) if pinned else cap.read()
                 if not ret:
                     break
                 yield idx, frame
@@ -2992,11 +3120,14 @@ class GameAnalyzer:
         stats = GameStats(video_name=vp.name, fps=fps)
         scaled_calib = self.calibration  # already scaled — needed for _save_and_print
         try:
+            self._start_embedding_prefetch()
             self._process_frames_iter(
-                self._cached_frame_iterator() if cached_pass and not recovery and out_writer is None else frame_iter(), fps, max_frames, stats,
+                self._cached_frame_iterator() if cached_pass and not recovery and out_writer is None
+                else frame_iter(pinned=self._decode_into_pinned_memory()), fps, max_frames, stats,
                 out_writer=out_writer,
             )
             self._close_prefetch()
+            self._finish_embedding_prefetch()
             if getattr(self, "enable_player_identity", False):
                 def identity_images():
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -3016,6 +3147,7 @@ class GameAnalyzer:
                 )
         finally:
             self._close_prefetch()
+            self._finish_embedding_prefetch(store_results=False)
             cap.release()
             if out_writer:
                 out_writer.release()

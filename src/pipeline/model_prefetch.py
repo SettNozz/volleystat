@@ -180,3 +180,68 @@ def prefetch_model_outputs(
         for executor in executors.values():
             executor.shutdown(wait=True)
         decoded.close()
+
+
+class BackgroundEncoder:
+    """Batch crops to ``encode`` on one worker thread; the owner stores results.
+
+    Used to compute OSNet crop embeddings while the analysis loop still holds
+    the decoded frame, so the identity and contact-author passes find them in
+    the model-output cache instead of decoding the video a second time. The
+    worker only runs ``encode``; ``drain`` hands ``(key, value)`` pairs back to
+    the calling thread, which owns the SQLite cache. At most ``max_batches``
+    batches are in flight; ``add`` blocks on the oldest beyond that, so a slow
+    encoder throttles the loop instead of accumulating crops.
+    """
+
+    def __init__(self, encode: Callable[[List[Any]], Sequence[Any]], batch_size: int,
+                 max_batches: int = 4, name: str = 'embed-ahead'):
+        self.encode = encode
+        self.batch_size = max(1, int(batch_size))
+        self.max_batches = max(1, int(max_batches))
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=name)
+        self._keys: List[Any] = []
+        self._crops: List[Any] = []
+        self._futures: deque = deque()
+        self._ready: List[Tuple[Any, Any]] = []
+
+    def _run(self, crops):
+        values = self.encode(crops)
+        if len(values) != len(crops):
+            raise ValueError('Encoder output count differs from submitted crops')
+        return values
+
+    def _submit(self) -> None:
+        if not self._crops:
+            return
+        keys, crops = self._keys, self._crops
+        self._keys, self._crops = [], []
+        self._futures.append((keys, self._executor.submit(self._run, crops)))
+        while len(self._futures) > self.max_batches:
+            self._collect(self._futures.popleft())
+
+    def _collect(self, item) -> None:
+        keys, future = item
+        self._ready.extend(zip(keys, future.result()))
+
+    def add(self, key, crop) -> None:
+        self._keys.append(key)
+        self._crops.append(crop)
+        if len(self._crops) >= self.batch_size:
+            self._submit()
+
+    def drain(self, wait: bool = False) -> List[Tuple[Any, Any]]:
+        """Completed results; with ``wait`` also flush and finish everything."""
+        if wait:
+            self._submit()
+        while self._futures and (wait or self._futures[0][1].done()):
+            self._collect(self._futures.popleft())
+        ready, self._ready = self._ready, []
+        return ready
+
+    def close(self) -> None:
+        for _, future in self._futures:
+            future.cancel()
+        self._futures.clear()
+        self._keys, self._crops = [], []
+        self._executor.shutdown(wait=True)

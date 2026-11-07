@@ -124,19 +124,29 @@ class ModelOutputCache:
         self.counts['hits'] += 1
         return json.loads(raw)
 
-    def put(self, stage, item, value):
+    @staticmethod
+    def encode_body(value):
+        """Stored ``(blob, sha256)`` for one value. Pure: safe on any thread."""
         raw = canonical(value)
-        checksum = hashlib.sha256(raw).hexdigest()
+        return zlib.compress(raw, 3), hashlib.sha256(raw).hexdigest()
+
+    def put(self, stage, item, value):
+        self.put_encoded(stage, [(item, self.encode_body(value))])
+
+    def put_encoded(self, stage, rows):
+        """Insert pre-encoded ``(item, (blob, sha256))`` rows in one transaction."""
+        written = 0
         with self.db:
-            existing = self.db.execute('SELECT sha FROM outputs WHERE stage=? AND item=?',
-                                       (stage, str(item))).fetchone()
-            if existing is not None:
-                if existing[0] != checksum:
-                    raise ValueError('Refusing to replace an existing frozen model output')
-                return
-            self.db.execute('INSERT INTO outputs VALUES (?,?,?,?)',
-                            (stage, str(item), zlib.compress(raw, 3), checksum))
-        self.counts['written'] += 1
+            for item, (blob, checksum) in rows:
+                existing = self.db.execute('SELECT sha FROM outputs WHERE stage=? AND item=?',
+                                           (stage, str(item))).fetchone()
+                if existing is not None:
+                    if existing[0] != checksum:
+                        raise ValueError('Refusing to replace an existing frozen model output')
+                    continue
+                self.db.execute('INSERT INTO outputs VALUES (?,?,?,?)', (stage, str(item), blob, checksum))
+                written += 1
+        self.counts['written'] += written
 
     def compute(self, stage, item, operation):
         value = self.get(stage, item)
@@ -293,6 +303,15 @@ class ObservationFeatures:
 
     def put(self, frame, box, value):
         self.cache.put(self.stage, self.key(frame, box), array_payload(value))
+
+    @staticmethod
+    def encode(value):
+        """Stored form of one embedding; pure, so a worker thread can prepare it."""
+        return ModelOutputCache.encode_body(array_payload(value))
+
+    def put_encoded(self, rows):
+        """Store ``(frame, box, encoded)`` rows from ``encode`` in one transaction."""
+        self.cache.put_encoded(self.stage, [(self.key(frame, box), body) for frame, box, body in rows])
 
 
 class FrozenOSNet:

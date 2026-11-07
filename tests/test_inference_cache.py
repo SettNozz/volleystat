@@ -312,3 +312,35 @@ def test_net_cache_binds_geometry_and_reuses_writeback_without_sam(tmp_path):
         analyzer._maybe_run_sam_net_detection(str(source),600,200)
     assert len(calls)==1
     cache.db.close()
+
+
+def test_embedding_prefetch_stores_exact_identity_lookup_keys(tmp_path):
+    """Crops encoded during the loop are found by the identity pass's own lookups."""
+    from src.models.inference_cache import ObservationFeatures
+    from src.models.player_reid_encoder import OSNetEncoder
+    from src.pipeline.model_prefetch import BackgroundEncoder
+    source=tmp_path/'game.webm'; source.write_bytes(b'video')
+    cache=ModelOutputCache(source,tmp_path/'cache')
+    store=ObservationFeatures(cache,{'encoder':'fake'},600,200)
+    class Encoder:
+        crop=staticmethod(OSNetEncoder.crop)
+        def encode(self,crops):
+            return [np.full(4,float(c.sum()%97),dtype=np.float32) for c in crops]
+    encoder=Encoder()
+    store.put(3,[0.,0.,10.,10.],np.zeros(4,dtype=np.float32))  # already cached: not recomputed
+    analyzer=GameAnalyzer.__new__(GameAnalyzer)
+    encode=lambda crops:[store.encode(v) for v in encoder.encode(crops)]
+    analyzer._embedding_prefetch=(BackgroundEncoder(encode,2),encoder,store,cache.items(store.stage))
+    image=(np.arange(200*600*3)%251).astype(np.uint8).reshape(200,600,3)
+    boxes=[[0.,0.,10.,10.],[20.4,30.6,80.5,150.],[590.,10.,640.,90.],[5.,5.,5.,9.],[float('nan'),0,1,1]]
+    analyzer._prefetch_embeddings({'f':3,'poses':[{'bb':b} for b in boxes]},image)
+    analyzer._prefetch_embeddings({'f':4,'poses':[{'bb':boxes[1]}]},image)
+    analyzer._finish_embedding_prefetch()
+    assert analyzer._embedding_prefetch is None
+    for frame,box in ((3,boxes[1]),(3,boxes[2]),(4,boxes[1])):
+        expected=encoder.encode([OSNetEncoder.crop(image,box)])[0]
+        assert np.array_equal(store.get(frame,box),expected)
+    assert np.array_equal(store.get(3,boxes[0]),np.zeros(4,dtype=np.float32))
+    assert cache.computed['osnet_embeddings']==3
+    assert store.get(3,boxes[3]) is None
+    cache.db.close()

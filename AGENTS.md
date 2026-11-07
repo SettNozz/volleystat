@@ -82,17 +82,24 @@ Current high-value analysis options:
 --no-video
 ```
 
-GPU throughput (2026-11-06): `src/pipeline/model_prefetch.py` runs decoding
+GPU throughput (2026-11-06/07): `src/pipeline/model_prefetch.py` runs decoding
 and missing raw ball/pose inference ahead of the ordered loop (1 decoder,
 1 ball, `POSE_PREFETCH_WORKERS=2` pose threads with separate model
-instances). Main thread alone touches SQLite, ByteTrack, gate and FSM. Same
-model calls, batch, imgsz and precision, so cache keys/values are unchanged;
-never edit hashed sources (`_infer_pose_model`, `PoseTracker`,
-`scripts/detection/detect_ball_on_video.py`, `src/models/player_reid_encoder.py`)
-merely for speed. Ball batch stays 8 (part of the cache key; 16 gave +8%).
-OSNet batch is 128 (`OSNET_BATCH_SIZE`). On 30 s of `j0gRhgFCgIs_4_4k` with an
-empty cache: serial loop 9.6 fps / 204 s wall, prefetch 15.0 fps / 151 s;
-OSNet batch 8 -> 128 cut identity 97 s -> 37 s. Still CPU/GIL-bound (~40% GPU).
+instances). Main thread alone touches SQLite, ByteTrack, gate and FSM.
+Raw pose uses `src/detection/pose_gpu.py` (`GpuPoseModel`: pinned decode,
+GPU letterbox, Ultralytics NMS/scaling, CUDA graph captured by `prepare()`
+before other CUDA threads start; never capture mid-run, the ball thread's
+legacy stream invalidates it). Its source and `PREPROCESS` are in the
+`pose_raw` key; the user accepted that pose-cache break on 2026-11-07. Never
+edit the other hashed sources (`PoseTracker`, `detect_ball_on_video.py`,
+`player_reid_encoder.py`) merely for speed. Ball batch stays 8 (cache key).
+`BackgroundEncoder` computes OSNet embeddings for every saved pose box in the
+loop (same encoder/crop/key, serialised off-thread, one transaction per drain),
+so identity/contact-author passes need no second decode. OSNet batch is 128.
+A stopped MLflow server costs one 0.5 s TCP probe (`_require_reachable`).
+30 s of `j0gRhgFCgIs_4_4k`, empty cache: 151 s -> 61-64 s wall, loop 15 -> 24 fps,
+identity 34 s -> 3 s, steady GPU 47% -> 67%; cache-only replay 14 s. Now bound
+by OSNet's PIL transform (GIL) and VP9 decoding (35.6 fps without identity).
 GPU reruns are not bit-identical even serially (822/899 identical raw ball
 outputs between two serial runs), so judge speed changes against a serial
 control run and replay hypotheses through the cache.

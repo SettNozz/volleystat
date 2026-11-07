@@ -153,30 +153,43 @@ python analyze_video.py --help
 GPU utilisation. Inference that the cache does not hold yet runs ahead of the
 ordered analysis loop on background threads: one decoder thread, one ball
 thread and two YOLO-pose threads (one model instance each). ByteTrack, ball
-selection, FSM and all cache writes stay on the main thread in frame order,
-and every model call keeps its batch size, input size and precision, so cache
-keys and stored values are unchanged. `--no-model-prefetch` restores the
-serial loop for debugging. OSNet identity encodes 128 crops per forward pass.
-`--ball-batch-size` stays 8: 16 was only 8% faster and the batch size is part
-of the ball cache key, so changing it would recompute every cached video.
+selection, FSM and all cache writes stay on the main thread in frame order.
+`--no-model-prefetch` restores the serial loop for debugging.
 
-Measured 2026-11-06 on the first 30 s (899 frames) of `j0gRhgFCgIs_4_4k`
-with an empty cache, RTX 5070 Ti, same code with and without prefetch:
+- YOLO-pose runs through `src/detection/pose_gpu.py`: frames are decoded into
+  pinned memory, uploaded once, letterboxed on the GPU and the network replays
+  a CUDA graph (eager dispatch cost ~22 ms of GIL-holding Python per 2560
+  frame). Boxes match the CPU letterbox path to a median 0.4 px (658/658
+  detections matched on a 4K sample). This changed the raw-pose cache key:
+  old pose caches recompute once; ball and OSNet caches are untouched.
+- OSNet crop embeddings for every saved pose are computed during the
+  detection loop while the frame is still in memory, so the identity pass (and
+  the contact-author runtime) read them from the cache instead of decoding the
+  video again. Same encoder, crop and key (max 2.4e-6 cosine distance against a
+  fresh identity-pass encode).
+- A stopped MLflow server is detected by a 0.5 s TCP probe instead of ~8 s of
+  HTTP retries per logical model.
+- `--ball-batch-size` stays 8: 16 was only 8% faster and the batch size is part
+  of the ball cache key, so changing it would recompute every cached video.
 
-| Run | Detection loop | Identity pass | Wall time |
+Measured on the first 30 s (899 frames) of `j0gRhgFCgIs_4_4k`, empty cache,
+RTX 5070 Ti, i9-10900F, MLflow server not running:
+
+| Run | Detection loop (steady) | Identity pass | Wall time |
 |---|---|---|---|
-| Serial, OSNet batch 8 (before) | 6.4 fps | 97 s | 314 s |
-| Serial, OSNet batch 128 | 9.6 fps | 37 s | 204 s |
-| Prefetch, 2 pose threads, OSNet batch 128 | 15.0 fps | 34 s | 151 s |
+| Serial, OSNet batch 8 (before, 2026-11-06) | 6.4 fps | 97 s | 314 s |
+| Prefetch, CPU letterbox (2026-11-06) | 15.0 fps | 34 s | 151 s |
+| + GPU letterbox, pinned decode (2026-11-07) | 25.6 fps | 29 s | 119 s |
+| + registry probe, in-loop OSNet, CUDA graph (2026-11-07) | 24 fps | 3 s | 61-64 s |
+| Replay of that run, `--require-model-cache` | - | - | 14 s |
 
-The first row was also the first run on the new card, so part of its loop
-time is cold start. About 35 s of every wall time is model-registry timeouts
-when the MLflow server is not running (`--no-model-registry` skips them).
-The pipeline remains CPU/GIL-bound: a third pose thread gave 15.4 fps and the
-GPU averages about 40% utilisation during the loop. Repeated runs are not
-bit-identical even serially (FP16 with `cudnn.benchmark`): two serial runs
-shared 822 of 899 raw ball outputs exactly and pose boxes moved by up to 15 px,
-which is why replays should go through the cache.
+In-loop OSNet moves ~11 s of encoding into the loop (35.6 fps without identity,
+which is the decoder's ceiling) but removes the 24+ s second decode. GPU
+utilisation in the steady loop went 47% -> 67%. The loop is now bound by
+OSNet's PIL crop transform (GIL) and VP9 decoding, not by the GPU. Repeated
+runs are not bit-identical even serially (FP16 with `cudnn.benchmark`): two
+serial runs shared 822 of 899 raw ball outputs exactly and pose boxes moved by
+up to 15 px, which is why replays should go through the cache.
 
 ### 3. Open viewer
 

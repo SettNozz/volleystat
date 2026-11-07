@@ -119,3 +119,51 @@ def test_threaded_iter_close_joins_producer():
     assert next(stream) == 0
     stream.close()
     assert not any(t.name == 'test-decode' for t in threading.enumerate())
+
+
+def test_background_encoder_returns_every_key_once_and_off_the_caller_thread():
+    from src.pipeline.model_prefetch import BackgroundEncoder
+    threads = set()
+
+    def encode(crops):
+        threads.add(threading.current_thread().name)
+        return [crop * 10 for crop in crops]
+    worker = BackgroundEncoder(encode, batch_size=3, max_batches=2)
+    ready = []
+    for key in range(11):
+        worker.add(key, key)
+        ready += worker.drain()
+    ready += worker.drain(wait=True)
+    worker.close()
+    assert sorted(ready) == [(key, key * 10) for key in range(11)]
+    assert threading.main_thread().name not in threads
+
+
+def test_background_encoder_bounds_work_in_flight():
+    from src.pipeline.model_prefetch import BackgroundEncoder
+    release = threading.Event()
+    started = []
+
+    def encode(crops):
+        started.append(len(crops))
+        release.wait(5)
+        return crops
+    worker = BackgroundEncoder(encode, batch_size=1, max_batches=2)
+    worker.add(0, 0); worker.add(1, 1)
+    blocked = threading.Thread(target=lambda: worker.add(2, 2))
+    blocked.start()
+    time.sleep(0.2)
+    assert blocked.is_alive(), 'a third batch beyond max_batches must wait'
+    release.set()
+    blocked.join(5)
+    assert sorted(worker.drain(wait=True)) == [(0, 0), (1, 1), (2, 2)]
+    worker.close()
+
+
+def test_background_encoder_surfaces_errors_and_count_mismatch():
+    from src.pipeline.model_prefetch import BackgroundEncoder
+    worker = BackgroundEncoder(lambda crops: crops[:-1], batch_size=2)
+    worker.add('a', 1); worker.add('b', 2)
+    with pytest.raises(ValueError, match='count'):
+        worker.drain(wait=True)
+    worker.close()
