@@ -45,6 +45,7 @@ from src.tracking.player_contacts import (
     apply_reviews, build_player_contacts, source_fingerprint,
 )
 from src.tracking.player_match_statistics import build_player_match_statistics
+from src.tracking.player_statistics_excel import STATISTICS_VIEWS, export_player_statistics, player_statistic_value
 from src.tracking.contact_author_experiments import ExperimentSourceChanged, experiment_path, load_experiment
 from src.tracking.volleyball_contact_lab import load_lab
 
@@ -645,6 +646,11 @@ def player_statistics(job_id):
     return _player_contact_response(job_id, statistics_page=True)
 
 
+@app.post("/player-statistics/<job_id>/excel")
+def player_statistics_excel(job_id):
+    return _player_contact_response(job_id, statistics_page=True)
+
+
 def _player_contact_response(job_id, *, statistics_page=False):
     job = _get_job(job_id)
     if not job or job["status"] != "done":
@@ -677,7 +683,7 @@ def _player_contact_response(job_id, *, statistics_page=False):
                     if record.get("source") != source:
                         return jsonify({"error": "Analysis changed; saved contact reviews belong to another source"}), 409
                     reviews.append(record["review"])
-            if request.method == "POST":
+            if request.method == "POST" and not statistics_page:
                 if body.get("source") != source:
                     return jsonify({"error": "Analysis changed; reload contacts before reviewing"}), 409
                 if type(body.get("event_index")) is not int:
@@ -703,7 +709,26 @@ def _player_contact_response(job_id, *, statistics_page=False):
                 summary = build_player_match_statistics(
                     json.loads(stats_raw), dict(result, contacts=result["contacts"] + fault_contacts),
                 )
+                if request.endpoint == "player_statistics_excel":
+                    submitted = json.loads(request.form.get("profiles", "{}"))
+                    if not isinstance(submitted, dict):
+                        raise ValueError("Expected player profiles")
+                    profiles = {}
+                    for player in summary["players"]:
+                        profile = submitted.get(player, {})
+                        if not isinstance(profile, dict):
+                            raise ValueError("Invalid player profile")
+                        name, number = profile.get("name", ""), profile.get("number", "")
+                        if not isinstance(name, str) or not isinstance(number, str):
+                            raise ValueError("Player name and jersey must be text")
+                        profiles[player] = {"name": name.strip()[:64], "number": number.strip()[:8]}
+                    return send_file(
+                        export_player_statistics(summary, profiles), as_attachment=True,
+                        download_name=f"{job['video_stem']}-player-statistics.xlsx",
+                        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
                 return render_template("player_statistics.html", job=job, summary=summary,
+                                       modes=STATISTICS_VIEWS, stat_value=player_statistic_value,
                                        portraits={player: len(choices) for player, choices in references.items()},
                                        portrait_version=source["annotations_sha256"])
             result["source"] = source

@@ -27,6 +27,9 @@
   .pill { background: var(--primary-soft); color: var(--primary); border-radius: 8px; padding: .3rem .7rem; font-size: .8rem; font-weight: 700; }
   section { margin-top: 1.5rem; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
   .section-head { padding: 1.15rem 1.35rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; }
+  .stat-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-left: auto; }
+  .roster-editor { display: grid; grid-template-columns: auto minmax(7rem, 1fr) minmax(4rem, 6rem); gap: .55rem; align-items: center; margin: 1rem 0; }
+  .roster-editor input { min-width: 0; padding: .45rem; font: inherit; border: 1px solid var(--border); border-radius: 8px; }
   h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.02em; }
   .stat-modes { display: flex; flex-wrap: wrap; gap: 4px; padding: .7rem 1.35rem; border-bottom: 1px solid var(--border-soft); }
   .stat-modes a { padding: 8px 16px; border-radius: 8px; color: var(--muted2); text-decoration: none; font-size: .85rem; font-weight: 600; }
@@ -73,14 +76,6 @@
     </p>
   </header>
   {% if summary.players %}
-  {% set attacks = [('total', 'Attempts'), ('point', 'Point-winning'), ('continued', 'Play continued'), ('out', 'Out'), ('net', 'Into net'), ('lost', 'Point lost, cause unknown'), ('unknown', 'Unresolved')] %}
-  {% set receptions = [('total', 'Attempts'), ('controlled', 'Controlled'), ('overpass', 'Overpass'), ('error', 'Errors'), ('unknown', 'Unresolved')] %}
-  {% set serves = [('total', 'Attempts'), ('in_play', 'In play'), ('ace', 'Aces'), ('error', 'Errors'), ('unknown', 'Unresolved')] %}
-  {% set modes = {
-    'attack': ('Attacks', attacks),
-    'serve': ('Serves', serves),
-    'reception': ('Serve reception', receptions)
-  } %}
   {% set requested = request.args.get('view') %}
   {% set kind = requested if requested in modes else 'attack' %}
   {% set title, columns = modes[kind] %}
@@ -93,15 +88,19 @@
   <p id="mode-error" role="status" hidden>Could not load statistics. Try again.</p>
   <div class="section-head">
     <h2 id="{{ kind }}">{{ title }}</h2>
+    <div class="stat-actions">
+      <button type="button" id="edit-players">Edit players</button>
+      <form id="export-excel" method="post" action="{{ url_for('player_statistics_excel', job_id=request.view_args.job_id) }}">
+        <input type="hidden" name="profiles" value="{}">
+        <button type="submit">Export Excel</button>
+      </form>
+    </div>
   </div>
   <div class="table-wrap" tabindex="0" role="region" aria-labelledby="{{ kind }}">
     <table aria-labelledby="{{ kind }}">
       <thead><tr>
         <th scope="col">Player</th>
         {% for key, label in columns %}<th scope="col">{{ label }}</th>{% endfor %}
-        {% if kind == 'attack' %}<th scope="col">Errors</th>{% endif %}
-        {% if kind == 'reception' %}<th scope="col">Controlled %</th>{% endif %}
-        {% if kind == 'serve' %}<th scope="col">Error %</th>{% endif %}
       </tr></thead>
       <tbody>
         {% for player, row in summary.players.items() %}
@@ -113,21 +112,19 @@
               <img data-player-photo="{{ player }}" src="{{ url_for('player_portrait', job_id=job.job_id, player_id=player) }}" alt="" loading="lazy" onerror="this.hidden = true" onload="this.hidden = false">
               {% endif %}
             </span>
-            {{ player }}
+            <span data-player-label="{{ player }}">{{ player }}</span>
             {% if portraits.get(player, 0) > 1 %}
             <button type="button" class="change-photo" data-player="{{ player }}" data-count="{{ portraits[player] }}" aria-label="Change photo for {{ player }}">Change photo</button>
             {% endif %}
           </span></th>
           {% for key, label in columns %}
-          {% set count = row[kind].get(key, 0) %}
-          <td{% if not count %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ count }}</td>
-          {% endfor %}
-          {% if kind == 'attack' %}<td>{{ row.attack.get('out', 0) + row.attack.get('net', 0) }}</td>{% endif %}
-          {% if kind in ('reception', 'serve') %}
-          {% set classified = row[kind].get('total', 0) - row[kind].get('unknown', 0) %}
-          {% set rate_key = 'controlled' if kind == 'reception' else 'error' %}
-          <td>{{ ('%.1f%%' | format(100 * row[kind].get(rate_key, 0) / classified)) if classified else '—' }}</td>
+          {% set value = stat_value(kind, row[kind], key) %}
+          {% if key == 'rate' %}
+          <td>{{ ('%.1f%%' | format(100 * value)) if value is not none else '—' }}</td>
+          {% else %}
+          <td{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ value }}</td>
           {% endif %}
+          {% endfor %}
         </tr>
         {% endfor %}
       </tbody>
@@ -140,6 +137,23 @@
     <p>Author assignments include model proposals and saved human corrections. Point-winning attacks are inferred from the final recorded contact and the team point ledger. Attack errors require a recorded fault reason. Reception quality comes from the matched serve lifecycle. Controlled percentage uses classified receptions.</p>
     <p>Serve error percentage uses classified serves. Explicit faults can use proximity to estimate the server. Unresolved serves are excluded from the percentage.</p>
   </details>
+  <dialog id="roster-picker" aria-labelledby="roster-title">
+    <h2 id="roster-title">Edit players</h2>
+    <form method="dialog" id="roster-form">
+      <div class="roster-editor">
+        <strong>ID</strong><strong>Name</strong><strong>Jersey</strong>
+        {% for player in summary.players %}
+        <span>{{ player }}</span>
+        <input data-player-name="{{ player }}" aria-label="{{ player }} name" maxlength="64">
+        <input data-player-number="{{ player }}" aria-label="{{ player }} jersey number" inputmode="numeric" maxlength="8">
+        {% endfor %}
+      </div>
+      <div class="photo-actions">
+        <button type="submit" value="save">Save players</button>
+        <button type="submit" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
   {% else %}
   <p>This result has no tracked player roster.</p>
   {% endif %}
@@ -196,6 +210,42 @@ for (const link of modeLinks) {
 }
 
 const photoScope = {{ [job.job_id | default(''), portrait_version] | tojson }};
+const rosterPicker = document.getElementById('roster-picker');
+if (rosterPicker) {
+  const rosterKey = JSON.stringify(['player-profiles', {{ request.view_args.job_id | tojson }}]);
+  const labels = Array.from(document.querySelectorAll('[data-player-label]'));
+  const names = Array.from(rosterPicker.querySelectorAll('[data-player-name]'));
+  const numbers = Array.from(rosterPicker.querySelectorAll('[data-player-number]'));
+  let profiles = {};
+  try { profiles = JSON.parse(localStorage.getItem(rosterKey)) || {}; } catch {}
+
+  function showProfiles() {
+    for (const label of labels) {
+      const id = label.dataset.playerLabel;
+      const {name, number} = profiles[id] || {};
+      label.textContent = name || (number ? '#' + number : id);
+    }
+    document.querySelector('#export-excel input[name="profiles"]').value = JSON.stringify(profiles);
+  }
+
+  document.getElementById('edit-players').onclick = () => {
+    names.forEach((input, index) => {
+      const {name, number} = profiles[input.dataset.playerName] || {};
+      input.value = name || '';
+      numbers[index].value = number || '';
+    });
+    rosterPicker.showModal();
+  };
+  document.getElementById('roster-form').onsubmit = event => {
+    if (event.submitter?.value !== 'save') return;
+    profiles = Object.fromEntries(names.map((input, index) => [
+      input.dataset.playerName, {name: input.value.trim(), number: numbers[index].value.trim()},
+    ]));
+    try { localStorage.setItem(rosterKey, JSON.stringify(profiles)); } catch {}
+    showProfiles();
+  };
+  showProfiles();
+}
 const photos = Array.from(document.querySelectorAll('[data-player-photo]'));
 const picker = document.getElementById('photo-picker');
 const preview = document.getElementById('photo-preview');
