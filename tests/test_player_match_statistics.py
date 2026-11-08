@@ -46,3 +46,29 @@ def test_player_statistics_uses_score_attempts_and_current_author_assignments():
     assert summary["players"]["P2"]["attack"] == {"total": 1, "point": 1}
     assert summary["players"]["P3"]["attack"] == {}
     assert summary["unassigned"] == {"attack": 1}
+
+
+def test_serve_statistics_use_matching_outcome_and_keep_unknowns_separate():
+    stats = {
+        "all_events": [{"frame": frame, "type": kind} for frame, kind in
+                       [(10, "serve"), (20, "serve"), (30, "serve_fault"), (40, "serve"), (50, "serve")]],
+        "service_attempts": [
+            {"lifecycle": {"serve_frame": 10, "serve_outcome": "in_play"}},
+            {"lifecycle": {"serve_frame": 20, "serve_outcome": "in_play"}},
+        ],
+        "service_attempts_fsm": [
+            {"lifecycle": {"serve_frame": 20, "serve_outcome": "ace", "serving_team": "team_b"}},
+        ],
+    }
+    report = {
+        "side": "b", "roster_ids": ["P1"],
+        "contacts": [
+            {"event_index": index, "status": "assigned", "player_id": "P1"}
+            for index in range(4)
+        ] + [{"event_index": 4, "status": "unresolved"}],
+    }
+    summary = build_player_match_statistics(stats, report)
+    assert summary["players"]["P1"]["serve"] == {
+        "total": 4, "in_play": 1, "ace": 1, "error": 1, "unknown": 1,
+    }
+    assert summary["unassigned"] == {"serve": 1}

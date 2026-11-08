@@ -8,11 +8,12 @@ from src.tracking.player_contacts import CONTACT_TYPES, category, side
 
 ATTACK_ERRORS = {"attack_out": "out", "attack_into_net": "net"}
 RECEPTION_QUALITY = {"controlled": "controlled", "overpass": "overpass", "error": "error"}
+SERVE_OUTCOMES = {"in_play": "in_play", "ace": "ace", "fault": "error"}
 
 
 def build_player_match_statistics(stats, report):
     players = {
-        player_id: {"attack": Counter(), "reception": Counter()}
+        player_id: {kind: Counter() for kind in ("attack", "reception", "serve")}
         for player_id in report["roster_ids"]
     }
     events = stats.get("all_events") or []
@@ -22,6 +23,12 @@ def build_player_match_statistics(stats, report):
         if point.get("rally_id") and point.get("status") == "confirmed"
     }
     attempts = stats.get("service_attempts_fsm") or stats.get("service_attempts") or stats.get("rallies") or []
+    serves = {}
+    for records in (stats.get("service_attempts") or [], attempts):
+        for attempt in records:
+            lifecycle = attempt.get("lifecycle") or {}
+            if lifecycle.get("serve_frame") is not None:
+                serves[lifecycle["serve_frame"]] = lifecycle
     contact_frames = sorted(
         event["frame"] for event in events
         if event.get("type") in CONTACT_TYPES or event.get("type") == "serve_fault"
@@ -47,10 +54,10 @@ def build_player_match_statistics(stats, report):
     unassigned = Counter()
     for contact in report["contacts"]:
         event = events[contact["event_index"]]
-        kind = category(event.get("type"))
-        if kind not in {"attack", "reception"}:
+        kind = "serve" if event.get("type") == "serve_fault" else category(event.get("type"))
+        if kind not in {"attack", "reception", "serve"}:
             kind = category(event.get("core_type"))
-        if kind not in {"attack", "reception"}:
+        if kind not in {"attack", "reception", "serve"}:
             continue
         player_id = contact.get("player_id")
         event_side = side(event.get("court_side") or event.get("team"))
@@ -62,7 +69,13 @@ def build_player_match_statistics(stats, report):
         counts["total"] += 1
         outcome = "unknown"
         context = outcomes.get(event["frame"])
-        if context and target_side and event_side in (None, target_side):
+        if kind == "serve":
+            lifecycle = serves.get(event["frame"], {})
+            serving_side = side(lifecycle.get("serving_team"))
+            if target_side and event_side in (None, target_side) and serving_side in (None, target_side):
+                outcome = ("error" if event.get("type") == "serve_fault"
+                           else SERVE_OUTCOMES.get(lifecycle.get("serve_outcome"), "unknown"))
+        elif context and target_side and event_side in (None, target_side):
             lifecycle, point, terminal = context
             winner = side(point.get("winner_court_side"))
             if kind == "attack":

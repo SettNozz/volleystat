@@ -595,9 +595,20 @@ def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp, experim
     source = source_fingerprint(stats_bytes, ann_bytes)
     payload = json.loads(ann_bytes)
     references = _roster_portrait_references(payload)
+    # Older contact reports omit explicit serve faults. Attribute these
+    # separately for statistics without changing saved reports or reviews.
+    faults = [(index, dict(event, type="serve")) for index, event in enumerate(stats.get("all_events") or [])
+              if event.get("type") == "serve_fault"]
+    fault_contacts = []
+    if faults:
+        fault_contacts = build_player_contacts(
+            [event for _, event in faults], payload["frames"], payload["fps"], payload.get("player_identity"),
+        )["contacts"]
+        for contact in fault_contacts:
+            contact["event_index"] = faults[contact["event_index"]][0]
     if experiment_stamp is not None:
         bundle = load_experiment(experiment_path(stats_path), source, stats)
-        return bundle["reports"][bundle["selected_method"]], source, bundle, references
+        return bundle["reports"][bundle["selected_method"]], source, bundle, references, fault_contacts
     if stats.get("video") != payload.get("video") or float(stats["fps"]) != float(payload["fps"]):
         raise ValueError("Stats and annotations must belong to the same analysis")
     report = payload.get("player_contacts")
@@ -607,7 +618,7 @@ def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp, experim
     else:
         report = build_player_contacts(stats.get("all_events") or [], payload["frames"],
                                        payload["fps"], payload.get("player_identity"))
-    return report, source, None, references
+    return report, source, None, references, fault_contacts
 
 
 def _load_player_contact_inputs(job):
@@ -642,7 +653,7 @@ def _player_contact_response(job_id, *, statistics_page=False):
         # Serialize read-modify-append to preserve corrections from two tabs.
         with _player_contact_lock:
             stats_path = Path(job["stats_path"])
-            report, source, bundle, references = _load_player_contact_inputs(job)
+            report, source, bundle, references, fault_contacts = _load_player_contact_inputs(job)
             body = request.get_json(silent=True) or {} if request.method == "POST" else {}
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object")
@@ -689,7 +700,9 @@ def _player_contact_response(job_id, *, statistics_page=False):
                 stats_raw = stats_path.read_bytes()
                 if hashlib.sha256(stats_raw).hexdigest() != source["stats_sha256"]:
                     return jsonify({"error": "Analysis changed; reload statistics"}), 409
-                summary = build_player_match_statistics(json.loads(stats_raw), result)
+                summary = build_player_match_statistics(
+                    json.loads(stats_raw), dict(result, contacts=result["contacts"] + fault_contacts),
+                )
                 return render_template("player_statistics.html", job=job, summary=summary,
                                        portraits={player: len(choices) for player, choices in references.items()},
                                        portrait_version=source["annotations_sha256"])
@@ -1062,7 +1075,7 @@ def player_portrait(job_id, player_id):
         return "Result not found", 404
     try:
         with _player_contact_lock:
-            report, _, _, references = _load_player_contact_inputs(job)
+            report, _, _, references, _ = _load_player_contact_inputs(job)
         choices = references.get(player_id, [])
         index = request.args.get("candidate", default=0, type=int)
         original = job.get("original_video_path")

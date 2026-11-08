@@ -60,11 +60,12 @@
   {% if summary.players %}
   {% set attacks = [('total', 'Attempts'), ('point', 'Point-winning'), ('continued', 'Play continued'), ('out', 'Out'), ('net', 'Into net'), ('lost', 'Point lost, cause unknown'), ('unknown', 'Unresolved')] %}
   {% set receptions = [('total', 'Attempts'), ('controlled', 'Controlled'), ('overpass', 'Overpass'), ('error', 'Errors'), ('unknown', 'Unresolved')] %}
-  {% for kind, title, columns in [('attack', 'Attacks', attacks), ('reception', 'Serve reception', receptions)] %}
+  {% set serves = [('total', 'Attempts'), ('in_play', 'In play'), ('ace', 'Aces'), ('error', 'Errors'), ('unknown', 'Unresolved')] %}
+  {% for kind, title, columns, subtitle in [('attack', 'Attacks', attacks, 'Attempts and rally outcomes'), ('serve', 'Serves', serves, 'Service attempts by player'), ('reception', 'Serve reception', receptions, 'First touches after a serve')] %}
   <section aria-labelledby="{{ kind }}">
   <div class="section-head">
     <h2 id="{{ kind }}">{{ title }}</h2>
-    <p>{{ 'Attempts and rally outcomes' if kind == 'attack' else 'First touches after a serve' }}</p>
+    <p>{{ subtitle }}</p>
   </div>
   <div class="table-wrap" tabindex="0" role="region" aria-labelledby="{{ kind }}">
     <table aria-labelledby="{{ kind }}">
@@ -73,6 +74,7 @@
         {% for key, label in columns %}<th scope="col">{{ label }}</th>{% endfor %}
         {% if kind == 'attack' %}<th scope="col">Errors</th>{% endif %}
         {% if kind == 'reception' %}<th scope="col">Controlled %</th>{% endif %}
+        {% if kind == 'serve' %}<th scope="col">Error %</th>{% endif %}
       </tr></thead>
       <tbody>
         {% for player, row in summary.players.items() %}
@@ -91,12 +93,13 @@
           </span></th>
           {% for key, label in columns %}
           {% set count = row[kind].get(key, 0) %}
-          <td{% if not count %} class="zero"{% elif key in ('point', 'controlled') %} class="positive"{% endif %}>{{ count }}</td>
+          <td{% if not count %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ count }}</td>
           {% endfor %}
           {% if kind == 'attack' %}<td>{{ row.attack.get('out', 0) + row.attack.get('net', 0) }}</td>{% endif %}
-          {% if kind == 'reception' %}
-          {% set classified = row.reception.get('total', 0) - row.reception.get('unknown', 0) %}
-          <td>{{ ('%.1f' | format(100 * row.reception.get('controlled', 0) / classified)) if classified else '—' }}</td>
+          {% if kind in ('reception', 'serve') %}
+          {% set classified = row[kind].get('total', 0) - row[kind].get('unknown', 0) %}
+          {% set rate_key = 'controlled' if kind == 'reception' else 'error' %}
+          <td>{{ ('%.1f%%' | format(100 * row[kind].get(rate_key, 0) / classified)) if classified else '—' }}</td>
           {% endif %}
         </tr>
         {% endfor %}
@@ -107,8 +110,9 @@
   {% endfor %}
   <details class="notes">
     <summary>How these statistics are counted</summary>
-    <p>Without an assigned player: {{ summary.unassigned.get('attack', 0) }} attacks and {{ summary.unassigned.get('reception', 0) }} receptions. These contacts may include either side when the side is unknown.</p>
+    <p>Without an assigned player: {{ summary.unassigned.get('attack', 0) }} attacks, {{ summary.unassigned.get('serve', 0) }} serves and {{ summary.unassigned.get('reception', 0) }} receptions. These contacts may include either side when the side is unknown.</p>
     <p>Author assignments include model proposals and saved human corrections. Point-winning attacks are inferred from the final recorded contact and the team point ledger. Attack errors require a recorded fault reason. Reception quality comes from the matched serve lifecycle. Controlled percentage uses classified receptions.</p>
+    <p>Serve error percentage uses classified serves. Explicit faults can use proximity to estimate the server. Unresolved serves are excluded from the percentage.</p>
   </details>
   {% else %}
   <p>This result has no tracked player roster.</p>
