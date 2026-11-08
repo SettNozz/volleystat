@@ -200,7 +200,12 @@ def main():
              "trajectory into a scribble",
     )
     parser.add_argument("--ball-batch-size", type=int, default=8, metavar="N",
-                        help="Ball YOLO GPU batch size (default: 8; use 4 on low VRAM)")
+                        help="Ball YOLO GPU batch size (default: 8; part of the ball "
+                             "cache key, so changing it recomputes cached ball outputs)")
+    parser.add_argument("--no-model-prefetch", action="store_true",
+                        help="Run decoding and ball/pose inference serially in the "
+                             "analysis loop instead of ahead on background threads "
+                             "(debugging; same model calls and cache keys either way)")
 
     # Output flags
     video_flags = parser.add_mutually_exclusive_group()
@@ -284,6 +289,7 @@ def main():
         ball_ensemble=args.ball_ensemble,
         ball_trajectory_dp=not args.no_ball_dp,
         ball_batch_size=args.ball_batch_size,
+        model_prefetch=not args.no_model_prefetch,
         net_height_m=net_height_m,
         match_segments=match_config.get("segments", []),
         team_identity_map=match_config.get("team_identity_map", {}),

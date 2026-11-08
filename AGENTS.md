@@ -4,7 +4,7 @@ Updated: 2026-11-07. Code, CLI `--help`, tests, and config files override prose 
 
 ## Mission and priorities
 
-Volleystat is an offline-first volleyball analytics pipeline for fixed-camera 4K video. Accuracy matters more than runtime; target workstation has RTX 3080. Current work stays in 2D image/court coordinates.
+Volleystat is an offline-first volleyball analytics pipeline for fixed-camera 4K video. Accuracy matters more than runtime; target workstation has RTX 5070 Ti 16 GB (Blackwell sm_120; needs torch >= 2.7 cu128, tested 2.7.1+cu128), i9-10900F, 32 GB RAM. Current work stays in 2D image/court coordinates.
 
 ## Human contact-author annotation (2026-10-31)
 
@@ -214,8 +214,37 @@ Current high-value analysis options:
 --player-identity-seed <JSON>
 --player-reid-assets <DIR>
 --player-reid-device auto|cpu|cuda
+--no-model-prefetch
 --no-video
 ```
+
+GPU throughput (2026-11-06/07): `src/pipeline/model_prefetch.py` runs decoding
+and missing raw ball/pose inference ahead of the ordered loop (1 decoder,
+1 ball, `POSE_PREFETCH_WORKERS=2` pose threads with separate model
+instances). Main thread alone touches SQLite, ByteTrack, gate and FSM.
+Raw pose uses `src/detection/pose_gpu.py` (`GpuPoseModel`: pinned decode,
+GPU letterbox, Ultralytics NMS/scaling, CUDA graph captured by `prepare()`
+before other CUDA threads start; never capture mid-run, the ball thread's
+legacy stream invalidates it). Its source and `PREPROCESS` are in the
+`pose_raw` key; the user accepted that pose-cache break on 2026-11-07. Never
+edit the other hashed sources (`PoseTracker`, `detect_ball_on_video.py`,
+`player_reid_encoder.py`) merely for speed. Ball batch stays 8 (cache key).
+`BackgroundEncoder` computes OSNet embeddings for every saved pose box in the
+loop (same encoder/crop/key, serialised off-thread, one transaction per drain),
+so identity/contact-author passes need no second decode. OSNet batch is 128.
+A stopped MLflow server costs one 0.5 s TCP probe (`_require_reachable`).
+30 s of `j0gRhgFCgIs_4_4k`, empty cache: 151 s -> 61-64 s wall, loop 15 -> 24 fps,
+identity 34 s -> 3 s, steady GPU 47% -> 67%; cache-only replay 14 s. Now ~GPU
+bound: pose ~20 ms + OSNet ~10 ms (0.84 ms/crop) + ball/event per frame
+(ceiling ~28 fps, actual 23-24); without identity 35.6 fps = VP9 decoder.
+Rejected 2026-11-07 (see README table): OpenCV D3D11/NVDEC decode (slower,
+different pixels under unchanged ball/OSNet keys), FFmpeg thread counts (no
+gain), OSNet resize process pool (24 -> 19.2 fps), OSNet CUDA graph (no gain).
+OSNet channels_last/FP16 change embeddings (1.75e-5/3e-4) and would need a new
+OSNet key; TensorRT pose needs a new pose key. Ask before either.
+GPU reruns are not bit-identical even serially (822/899 identical raw ball
+outputs between two serial runs), so judge speed changes against a serial
+control run and replay hypotheses through the cache.
 
 For any command, verify exact arguments with `--help` before documenting or running a long job.
 
