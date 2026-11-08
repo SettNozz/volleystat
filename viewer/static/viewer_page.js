@@ -128,7 +128,9 @@ function updateContactTeams(report) {
     }
   }
   scorePoints = buildServeScore(EVENTS, scoreAttempts, eventTeams);
+  refreshAttackHeights();
   applyEventFilters();
+  refreshSetTrajectories();
 }
 
 function renderServeScore() {
@@ -196,7 +198,10 @@ function renderRallyClips() {
 
 /* ── Annotations load ────────────────────────────────── */
 fetch('/api/annotations/' + JOB_ID)
-  .then(r => r.json())
+  .then(r => {
+    if (!r.ok) throw new Error('Annotations unavailable');
+    return r.json();
+  })
   .then(data => {
     annotations = {};
     for (const f of data.frames) annotations[f.f] = f;
@@ -219,11 +224,17 @@ fetch('/api/annotations/' + JOB_ID)
     document.getElementById('netXLVal').textContent = Math.round(xLSlider.value);
     document.getElementById('netXRVal').textContent = Math.round(xRSlider.value);
     renderAttackHeatmapSummary(data.attack_heatmap);
+    refreshAttackHeights();
+    refreshSetTrajectories();
     setupEventMarkers();
     startRenderLoop();
     redraw();
     if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
     loadCourtState();
+  })
+  .catch(error => {
+    document.getElementById('setTrajectoryStatus').textContent = 'Ball annotations unavailable.';
+    console.error(error);
   });
 
 function updateNetY(val) {
@@ -331,6 +342,8 @@ async function saveCourtCorrection(setupName) {
     courtEditor.setupId = saved.court_setup_id || null;
     renderCourtSetups(saved.setups || [], courtEditor.setupId);
     renderAttackHeatmapSummary(d.attack_heatmap);
+    refreshAttackHeights();
+    refreshSetTrajectories();
     if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
     const total = (d.attack_heatmap || {}).total_attacks;
     setCourtHint(`Saved${saved.court_setup_name ? ' as “' + saved.court_setup_name + '”' : ''}. Attack map rebuilt from ${total} attacks.`);
@@ -411,6 +424,7 @@ async function loadCourtState() {
       // Results analysed before corners were stored fall back to the shared
       // calibration, so the editor starts from the geometry actually used.
       d.court_corners = state.court_corners;
+      refreshAttackHeights();
       redraw();
     }
     if (state.heatmap_version !== state.current_heatmap_version) {

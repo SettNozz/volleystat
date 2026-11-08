@@ -162,8 +162,10 @@ Main code:
   preview, player-contact inputs, court-correction I/O, media/thumbnails).
 - `viewer/templates/viewer.html`: results-page markup and Jinja boot constants;
   its scripts are `viewer/static/viewer_page.js` (state, listeners, init, loaded
-  last), `viewer_charts.js`, `viewer_tables.js`, `viewer_overlay.js` (redraw)
-  and `viewer_page.css`. The three feature scripts only declare functions/state.
+  last), `viewer_charts.js`, `viewer_tables.js`, `viewer_overlay.js` (redraw),
+  `viewer_set_trajectories.js` (set-to-attack pairs and overlay),
+  `viewer_attack_height.js` (approximate near-side contact height), and
+  `viewer_page.css`. The feature scripts only declare functions and state.
 
 ## Ball trajectory invariants
 
