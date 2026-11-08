@@ -711,6 +711,15 @@ class GameAnalyzer(
             message="Optimizing the complete ball trajectory...",
         )
 
+        return self._run_offline_passes(stats, fps)
+
+    def _run_offline_passes(self, stats: GameStats, fps: float) -> GameStats:
+        """Whole-video passes after the frame loop.
+
+        Order matters: trajectory solve/clean-up, smoothing, clean FSM replay,
+        match analytics, final features/predictions, contact spotter, then the
+        attack heatmap. Each pass reads the output of the previous one.
+        """
         # Post-process: re-pick the whole trajectory from the candidate cloud.
         # The gate above had to choose with only the past in hand; now the
         # frames after each decision are available too, and they are what
