@@ -61,6 +61,14 @@ video { position: absolute; inset: 0; width: 100%; height: 100%; display: block;
 canvas#overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; }
 canvas#overlay.court-editing { pointer-events: auto; cursor: crosshair; }
 .video-badge { position: absolute; bottom: 14px; left: 14px; padding: 5px 10px; border-radius: 6px; background: oklch(0% 0 0 / 0.55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
+.scoreboard { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); display: flex; overflow: hidden; border-radius: 8px; color: #fff; white-space: nowrap; font-size: clamp(11px, 1.2vw, 16px); }
+.scoreboard label { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: #252553; }
+.scoreboard label + label { background: #4a2564; }
+.scoreboard input { width: 7ch; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; }
+.scoreboard output { font-size: 1.4em; font-weight: 800; font-variant-numeric: tabular-nums; }
+.scoreboard small { align-content: center; padding: 0 6px; background: #252553; }
+#playerContactsPanel summary { cursor: pointer; font-weight: 700; }
+#playerContactsPanel[open] summary { margin-bottom: 12px; }
 
 .controls { padding: 14px 16px; }
 .timeline-bar { position: relative; height: 8px; background: var(--border-soft); border-radius: 4px; margin-bottom: 12px; cursor: pointer; }
@@ -174,7 +182,6 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
     <div class="nav-item" data-page="charts" onclick="showPage('charts')">Visual Stats</div>
     <div class="nav-item" data-page="table" onclick="showPage('table')">Match Stats</div>
   </div>
-  <div class="top-meta">{{ job.video_stem }} · {{ stats.viewer_lifecycle.playable_rallies }} {% if stats.viewer_lifecycle.available %}playable {% endif %}rallies · {{ (stats.ball_detection_rate * 100) | round(0) | int }}% ball{% if stats.get('player_identity', {}).get('status') == 'completed' %} · player IDs {{ (stats.player_identity.coverage * 100)|round(0)|int }}% coverage{% elif stats.get('player_identity', {}).get('enabled') %} · player IDs unavailable{% endif %}</div>
   <a class="library-btn" href="/library">Library</a>
   <a class="upload-btn" href="/">Upload</a>
 </div>
@@ -192,6 +199,11 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
       </video>
       <canvas id="overlay"></canvas>
       <div class="video-badge" id="videoBadge">{{ job.video_stem }}</div>
+      <div class="scoreboard" aria-label="Points inferred from serves" title="Points inferred from the next serve.">
+        <label><input aria-label="Near team name" value="Near team" maxlength="32"><output id="nearScore">0</output></label>
+        <label><input aria-label="Far team name" value="Far team" maxlength="32"><output id="farScore">0</output></label>
+        <small id="unknownScore" title="Points with an unidentified next server" hidden></small>
+      </div>
     </div>
 
     <div class="card controls">
@@ -217,8 +229,8 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
   </div>
 
   <div class="side-col">
-    <div class="card side-card" id="playerContactsPanel">
-      <div class="card-title">Player contacts</div>
+    <details class="card side-card" id="playerContactsPanel">
+      <summary>Player contacts</summary>
       <div id="playerContactMethodBar" style="display:none;margin-bottom:8px">
         <label style="font-size:11px;color:var(--muted)">Review approach
           <select class="ctrl" id="playerContactMethod" style="max-width:100%;width:100%;font-size:11px" onchange="changePlayerContactMethod(this.value)"></select>
@@ -232,7 +244,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
       <p id="playerContactSummary" style="font-size:12px;line-height:1.7"></p>
       <p id="playerContactStatus" role="status" style="font-size:11px;color:var(--muted)">Loading player contacts…</p>
       <div class="event-list" id="playerContactList" style="max-height:300px"></div>
-    </div>
+    </details>
 
     <div class="card side-card">
       <div class="card-title">Event type</div>
@@ -460,6 +472,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 </style>
 <script src="{{ url_for('static', filename='player_contacts.js') }}"></script>
 <script src="{{ url_for('static', filename='pose_completion.js') }}"></script>
+<script src="{{ url_for('static', filename='serve_score.js') }}"></script>
 <script>
 const JOB_ID = "{{ job.job_id }}";
 const FPS = {{ stats.fps | default(30) }};
@@ -496,6 +509,9 @@ function isFailedOutcome(outcome) {
 // Canonical results are metadata-gated. Legacy results retain their original
 // behaviour because they have no lifecycle classification to consume.
 const RALLIES = RAW_RALLIES.filter(isPlayableRally);
+let eventTeams = EVENTS.map(event => event.team);
+const scoreAttempts = SERVICE_ATTEMPTS.length ? SERVICE_ATTEMPTS : RALLIES;
+let scorePoints = buildServeScore(EVENTS, scoreAttempts, eventTeams);
 
 const EV_COLORS = {
   serve: '#eab308', attack: '#ef4444', block: '#f97316',
@@ -538,10 +554,16 @@ function buildChips(containerId, items, activeSet, labelFn, onToggle) {
   const box = document.getElementById(containerId);
   box.innerHTML = '';
   for (const it of items) {
-    const el = document.createElement('div');
+    const el = document.createElement('button');
+    el.type = 'button';
     el.className = 'chip' + (activeSet.has(it) ? ' on' : '');
     el.textContent = labelFn ? labelFn(it) : it;
-    el.onclick = () => { onToggle(it); el.classList.toggle('on', activeSet.has(it)); };
+    el.setAttribute('aria-pressed', String(activeSet.has(it)));
+    el.onclick = () => {
+      onToggle(it);
+      el.classList.toggle('on', activeSet.has(it));
+      el.setAttribute('aria-pressed', String(activeSet.has(it)));
+    };
     box.appendChild(el);
   }
 }
@@ -556,16 +578,48 @@ function initVideoFilters() {
 }
 
 function toggleSet(set, v) { set.has(v) ? set.delete(v) : set.add(v); }
-function evVisible(ev) {
+function evVisible(ev, team) {
   const allTeams = filterState.teams.has('team_a') && filterState.teams.has('team_b');
-  const unattributed = ev.team !== 'team_a' && ev.team !== 'team_b';
+  const unattributed = team !== 'team_a' && team !== 'team_b';
   return filterState.types.has(ev.type) &&
-    (filterState.teams.has(ev.team) || (allTeams && unattributed));
+    (filterState.teams.has(team) || (allTeams && unattributed));
 }
 
 function applyEventFilters() {
   renderEventList();
   setupEventMarkers();
+  updateActiveEvent();
+  redraw();
+}
+
+function updateContactTeams(report) {
+  eventTeams = EVENTS.map(event => event.team);
+  if (report.side === 'a' || report.side === 'b') {
+    const opposite = report.side === 'a' ? 'b' : 'a';
+    for (const contact of report.contacts) {
+      const index = contact.event_index;
+      const event = EVENTS[index];
+      if (!event || event.frame !== contact.frame || event.type !== contact.type) continue;
+      if (contact.label_source !== 'human' && event.team) continue;
+      if (contact.status === 'assigned') eventTeams[index] = 'team_' + report.side;
+      else if (contact.status === 'other_side') eventTeams[index] = 'team_' + opposite;
+      else if (contact.label_source === 'human') eventTeams[index] = null;
+    }
+  }
+  scorePoints = buildServeScore(EVENTS, scoreAttempts, eventTeams);
+  applyEventFilters();
+}
+
+function renderServeScore() {
+  const score = serveScoreAt(scorePoints, currentFrameIdx);
+  const near = document.getElementById('nearScore');
+  const far = document.getElementById('farScore');
+  const unknown = document.getElementById('unknownScore');
+  if (near.value !== String(score.near)) near.value = score.near;
+  if (far.value !== String(score.far)) far.value = score.far;
+  unknown.hidden = !score.unknown;
+  const missing = `+?${score.unknown}`;
+  if (unknown.textContent !== missing) unknown.textContent = missing;
 }
 
 /* ── Event list (video page sidebar) ─────────────────── */
@@ -575,6 +629,8 @@ function renderEventList() {
   const rallyFirst = new Map();
   RALLIES.forEach((r, i) => { if (r.events && r.events.length) rallyFirst.set(r.events[0].frame, i + 1); });
   EVENTS.forEach((ev, i) => {
+    const team = eventTeams[i];
+    if (!evVisible(ev, team)) return;
     if (rallyFirst.has(ev.frame)) {
       const sep = document.createElement('div');
       sep.className = 'rally-sep';
@@ -582,7 +638,6 @@ function renderEventList() {
       sep.onclick = () => seekAndPlay(ev.frame);
       box.appendChild(sep);
     }
-    if (!evVisible(ev)) return;
     const el = document.createElement('div');
     el.className = 'event-item';
     el.id = 'ev' + i;
@@ -590,9 +645,10 @@ function renderEventList() {
     el.innerHTML = `<div class="event-dot" style="background:${EV_COLORS[ev.type] || '#888'}"></div>` +
       `<span class="event-time">${ev.time.toFixed(2)}s</span>` +
       `<span class="event-type">${ev.type.replace(/_/g, ' ')}${ev.inferred ? ' <span class="c-muted" title="Missed by the decode, recovered from the spotter serve probability">· inferred</span>' : ''}</span>` +
-      `<span class="event-team ${teamClass(ev.team)}">${teamLabel(ev.team)}</span>`;
+      `<span class="event-team ${teamClass(team)}">${teamLabel(team)}</span>`;
     box.appendChild(el);
   });
+  if (!box.children.length) box.textContent = 'No events for these filters.';
 }
 
 /* ── Rally clips strip ───────────────────────────────── */
@@ -1805,14 +1861,15 @@ function setupEventMarkers() {
   const bar = document.getElementById('timelineBar');
   bar.querySelectorAll('.event-marker').forEach(m => m.remove());
   const dur = TOTAL_FRAMES / FPS;
-  for (const ev of EVENTS) {
-    if (!evVisible(ev)) continue;
+  for (const [index, ev] of EVENTS.entries()) {
+    const team = eventTeams[index];
+    if (!evVisible(ev, team)) continue;
     const pct = (ev.time / dur * 100);
     const m = document.createElement('div');
     m.className = 'event-marker';
     m.style.left = pct + '%';
     m.style.background = EV_COLORS[ev.type] || '#888';
-    m.title = ev.type + ' ' + ev.team + ' @' + ev.time + 's';
+    m.title = ev.type + ' ' + teamLabel(team) + ' @' + ev.time + 's';
     m.onclick = (e) => { e.stopPropagation(); seekAndPlay(ev.frame); };
     bar.appendChild(m);
   }
@@ -1833,6 +1890,7 @@ function updateActiveEvent() {
   const t = vid.currentTime;
   let closest = null, minDist = 1e9;
   EVENTS.forEach((ev, i) => {
+    if (!evVisible(ev, eventTeams[i])) return;
     const d = Math.abs(ev.time - t);
     if (d < minDist) { minDist = d; closest = i; }
   });
@@ -1897,6 +1955,7 @@ function ballStyle(source) {
 }
 
 function redraw() {
+  renderServeScore();
   if (!canvas.width) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!annotations) return;
@@ -2354,7 +2413,10 @@ function redraw() {
     let recentEv = null;
     for (let i = EVENTS.length - 1; i >= 0; i--) {
       const dt = t - EVENTS[i].time;
-      if (dt >= 0 && dt < FADE_SEC) { recentEv = EVENTS[i]; break; }
+      if (dt >= 0 && dt < FADE_SEC && evVisible(EVENTS[i], eventTeams[i])) {
+        recentEv = { ...EVENTS[i], team: eventTeams[i] };
+        break;
+      }
       if (dt >= FADE_SEC) break;
     }
     if (recentEv) {
