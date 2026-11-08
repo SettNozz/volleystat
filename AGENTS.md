@@ -425,7 +425,7 @@ Existing result URL:
 http://localhost:5050/load?video=game&results_dir=results/game
 ```
 
-Result library (`/library`, JSON at `/api/library`) indexes every `<stem>_stats.json` under `results/`. Entries without stats are listed as blocked, not hidden. Persisted upload jobs open through `/results/<job_id>`; all other directories through `/load`. `python viewer.py --port 5051` runs a second instance.
+Result library (`/library`, JSON at `/api/library`) skips hidden and pytest directories under `results/`. The page shows playable analyses by default. **Show unavailable results** reveals visible artifacts with missing video or stats. Persisted upload jobs open through `/results/<job_id>`; other directories through `/load`. `python viewer.py --port 5051` runs a second instance.
 
 ## Tests and validation
 

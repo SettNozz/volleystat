@@ -289,12 +289,14 @@ def _library_entry(directory: Path, stem: str) -> dict | None:
         "summary": _library_summary(stats_path) if stats_path.is_file() else None,
     }
 
-    # Both viewer routes read `<stem>_stats.json`, so a stats-less folder is
-    # listed for visibility but cannot be opened. Persisted upload jobs restore
-    # through /results/<job_id>; anything else is addressed by directory.
-    if not entry["has_stats"]:
+    if entry["summary"] is None:
         entry["open_url"] = None
-        entry["blocked_reason"] = f"{stem}_stats.json missing"
+        entry["blocked_reason"] = (
+            f"{stem}_stats.json is unreadable" if entry["has_stats"] else f"{stem}_stats.json missing"
+        )
+    elif not entry["playable"]:
+        entry["open_url"] = None
+        entry["blocked_reason"] = "Video file unavailable"
     elif job_id and entry["playable"]:
         entry["open_url"] = f"/results/{job_id}"
         entry["blocked_reason"] = None
@@ -306,20 +308,24 @@ def _library_entry(directory: Path, stem: str) -> dict | None:
 
 
 def _library_index() -> list[dict]:
-    """List every analysed result under results/, newest first."""
+    """Index visible analysis artifacts, excluding test and scratch trees."""
     if not RESULTS_ROOT.is_dir():
         return []
 
     entries: list[dict] = []
-    seen: set[tuple[Path, str]] = set()
-    for suffix in ("_stats.json", "_annotations.json"):
-        for path in RESULTS_ROOT.rglob(f"*{suffix}"):
-            stem = path.name[: -len(suffix)]
-            key = (path.parent, stem)
-            if key in seen:
-                continue
-            seen.add(key)
-            entry = _library_entry(path.parent, stem)
+    for folder, subdirs, files in os.walk(RESULTS_ROOT):
+        subdirs[:] = [
+            name for name in subdirs
+            if not name.startswith((".", "pytest-of-", "pytest-"))
+        ]
+        stems = {
+            name[:-len(suffix)]
+            for name in files
+            for suffix in ("_stats.json", "_annotations.json")
+            if not name.startswith(".") and name.endswith(suffix)
+        }
+        for stem in sorted(stems):
+            entry = _library_entry(Path(folder), stem)
             if entry:
                 entries.append(entry)
 

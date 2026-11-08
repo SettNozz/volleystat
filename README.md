@@ -215,7 +215,7 @@ Every analysed result under `results/` is listed at:
 http://localhost:5050/library
 ```
 
-Library scans for `<stem>_stats.json` / `<stem>_annotations.json` pairs, shows rallies, events, frames, length, ball rate and available artifacts, and opens a run in the viewer. Results without stats are listed but not openable. `/api/library` returns the same index as JSON.
+The library skips hidden and pytest folders and shows playable analyses by default. Enable **Show unavailable results** to inspect visible runs with missing video or stats. `/api/library` exposes the index as JSON.
 
 A single result directory can also be loaded directly:
 

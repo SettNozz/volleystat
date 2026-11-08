@@ -103,7 +103,7 @@ a.open:hover { background: var(--primary-dark); }
       <option value="stem">Video name (A→Z)</option>
       <option value="dir">Folder (A→Z)</option>
     </select>
-    <label class="check-label"><input type="checkbox" id="onlyOpenable" checked> Only openable</label>
+    <label class="check-label"><input type="checkbox" id="showUnavailable"> Show unavailable results</label>
     <button class="ghost-btn" id="refresh">Refresh</button>
   </div>
 
@@ -191,10 +191,10 @@ function card(entry) {
 function render() {
   const query = document.getElementById('filter').value.trim().toLowerCase();
   const sort = document.getElementById('sort').value;
-  const onlyOpenable = document.getElementById('onlyOpenable').checked;
+  const showUnavailable = document.getElementById('showUnavailable').checked;
 
   let list = entries.filter(e => {
-    if (onlyOpenable && !e.open_url) return false;
+    if (!showUnavailable && !e.open_url) return false;
     if (!query) return true;
     const haystack = [
       e.stem, e.results_dir, e.original_video || '', (e.summary || {}).video || '',
@@ -215,7 +215,7 @@ function render() {
   document.getElementById('grid').innerHTML = list.map(card).join('');
   document.getElementById('empty').style.display = list.length ? 'none' : 'block';
   document.getElementById('count').textContent =
-    `${list.length} of ${entries.length} result sets`;
+    `${list.length} result sets`;
 }
 
 function load() {
@@ -225,7 +225,7 @@ function load() {
     .then(data => {
       entries = data.entries || [];
       document.getElementById('subtitle').textContent =
-        `Every analysed result found under ${data.root}/`;
+        'Open a saved match analysis.';
       render();
     })
     .catch(e => {
@@ -235,7 +235,7 @@ function load() {
 
 document.getElementById('filter').addEventListener('input', render);
 document.getElementById('sort').addEventListener('change', render);
-document.getElementById('onlyOpenable').addEventListener('change', render);
+document.getElementById('showUnavailable').addEventListener('change', render);
 document.getElementById('refresh').addEventListener('click', load);
 load();
 </script>

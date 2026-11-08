@@ -584,6 +584,12 @@ class TestViewerResultsLibrary(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self._fixture_root(root)
+            for name in (".excel-test", "scratch/pytest-of-user", "missing_video"):
+                folder = root / "results" / name
+                folder.mkdir(parents=True)
+                (folder / "clip_stats.json").write_text("{}", encoding="utf-8")
+                if name != "missing_video":
+                    (folder / "clip_analyzed.mp4").write_bytes(b"video")
             with patch.object(viewer, "PROJECT_ROOT", root), \
                     patch.object(viewer, "RESULTS_ROOT", root / "results"), \
                     patch.object(viewer, "RESULTS_DIR", root / "results" / "viewer"):
@@ -594,8 +600,13 @@ class TestViewerResultsLibrary(unittest.TestCase):
         payload = api.get_json()
         self.assertEqual(api.status_code, 200)
         self.assertEqual(payload["root"], "results")
-        self.assertEqual(payload["count"], 3)
-        self.assertEqual(len(payload["entries"]), 3)
+        self.assertEqual(payload["count"], 4)
+        entries = {entry["results_dir"]: entry for entry in payload["entries"]}
+        self.assertEqual(len(entries), 4)
+        self.assertNotIn("results/.excel-test", entries)
+        self.assertNotIn("results/scratch/pytest-of-user", entries)
+        self.assertIsNone(entries["results/missing_video"]["open_url"])
+        self.assertEqual(entries["results/missing_video"]["blocked_reason"], "Video file unavailable")
         # Newest first keeps the run a user just finished at the top.
         modified = [entry["modified"] for entry in payload["entries"]]
         self.assertEqual(modified, sorted(modified, reverse=True))
@@ -603,7 +614,7 @@ class TestViewerResultsLibrary(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         markup = page.get_data(as_text=True)
         self.assertIn("/api/library", markup)
-        self.assertIn('id="onlyOpenable"', markup)
+        self.assertIn('id="showUnavailable"', markup)
         self.assertIn("Open in viewer", markup)
 
     def test_load_route_resolves_relative_results_dir_from_project_root(self):
