@@ -95,7 +95,12 @@ OSNet embeddings for every saved pose box are encoded during the loop by a
 `BackgroundEncoder` thread from the exact `ann['poses'][i]['bb']` the identity
 pass looks up, serialised off the main thread and stored in one transaction
 per drain. A cold run therefore needs no second decode for identity or contact
-authors; anything missing still falls back to decoding.
+authors; anything missing still falls back to decoding. `FrozenOSNet.encode`
+prepares crops with `src/models/osnet_fast.py`, whose network input is
+bit-identical to `OSNetEncoder.transform`, so the OSNet key (which hashes
+`player_reid_encoder.py`) stays valid. Stored values still vary ~1e-5 cosine
+between full runs because `cudnn.benchmark` picks convolution algorithms by
+timing.
 `tests/test_inference_cache.py::test_model_prefetch_matches_serial_pass_and_cache`
 checks identical annotations and identical stored checksums against
 `--no-model-prefetch`.

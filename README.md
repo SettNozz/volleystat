@@ -220,6 +220,18 @@ selection, FSM and all cache writes stay on the main thread in frame order.
   the contact-author runtime) read them from the cache instead of decoding the
   video again. Same encoder, crop and key (max 2.4e-6 cosine distance against a
   fresh identity-pass encode).
+- OSNet preprocessing goes through `src/models/osnet_fast.py`: only the PIL
+  resize stays on the CPU (four threads; PIL releases the GIL), and
+  `ToTensor` + `Normalize` become a 3x256 lookup table on the GPU built with
+  torchvision's own CPU operations. The network input is bit-identical, so on
+  the same batch the embeddings are identical; `player_reid_encoder.py` and
+  the OSNet key are unchanged. 128 crops: preprocessing 160 -> 36 ms, whole
+  encode 268 -> 141 ms.
+- The ball thread, OSNet and the event model each run on their own CUDA
+  stream (`src/utils/cuda_streams.py`). On the shared default stream every
+  small event-model call waited for a whole ball batch. Ultralytics' stage
+  timer no longer calls `torch.cuda.synchronize()`, a device-wide barrier
+  that only made its `speed` numbers exact.
 - A stopped MLflow server is detected by a 0.5 s TCP probe instead of ~8 s of
   HTTP retries per logical model.
 - `--ball-batch-size` stays 8: 16 was only 8% faster and the batch size is part
@@ -236,6 +248,15 @@ RTX 5070 Ti, i9-10900F, MLflow server not running:
 | + registry probe, in-loop OSNet, CUDA graph (2026-11-07) | 24 fps | 3 s | 61-64 s |
 | Replay of that run, `--require-model-cache` | - | - | 14 s |
 
+CPU-side follow-up (2026-11-08, against `main` in alternating runs on the same
+clip; the machine was slower that day, so compare within the pair): exact
+batched OSNet preprocessing plus per-thread CUDA streams took the loop from
+48.7/48.8 s to 41.1/37.8 s and processing time from 57.4/57.7 s to
+50.3/48.5 s. Events, poses, `player_id`s and contact authors were identical to
+the control. Before it, py-spy showed the OSNet thread busy 53 of ~67 s of the
+loop (69% of that in per-crop torchvision preprocessing) and the main thread
+waiting on it 30% of the time. The streams alone are worth ~2-3 s of loop.
+
 In-loop OSNet moves ~11 s of encoding into the loop (35.6 fps without identity,
 which is the decoder's ceiling) but removes the 24+ s second decode. GPU
 utilisation in the steady loop went 47% -> 67%. Repeated runs are not
@@ -243,11 +264,12 @@ bit-identical even serially (FP16 with `cudnn.benchmark`): two serial runs
 shared 822 of 899 raw ball outputs exactly and pose boxes moved by up to
 15 px, which is why replays should go through the cache.
 
-What limits the loop now (measured 2026-11-07, same clip): GPU work per frame
-is ~20 ms YOLO-pose at 2560, ~10 ms OSNet (0.84 ms per crop for the
-original+flip pair, ~12 crops per frame) plus ball and event models, about
-36 ms, so ~28 fps is the ceiling with identity on; the loop runs at 23-24 fps.
-Without identity it reaches 35.6 fps, which is the VP9 software decoder.
+What limits the loop now (py-spy, 2026-11-08): the ball thread is busy ~96%
+of the loop, a third of it in Ultralytics' CPU letterbox (`cv2.resize` 4K ->
+1280 with OpenCV limited to one thread by Ultralytics). Moving that to the GPU
+would change the ball cache key. GPU work per frame is ~20 ms YOLO-pose at
+2560 (11 ms with TensorRT, see below), ~10 ms OSNet and the ball/event
+models. Without identity the loop reaches the VP9 decoder's ~36 fps.
 Tried and not adopted:
 
 | Idea | Result |
@@ -256,11 +278,19 @@ Tried and not adopted:
 | FFmpeg decoder threads (`OPENCV_FFMPEG_CAPTURE_OPTIONS=threads;N`) | 34.2-35.1 fps for 1-16 threads; identical pixels, no gain. |
 | OSNet PIL resize in 3 spawned processes | Bit-identical embeddings, loop 24 -> 19.2 fps (pickling crops costs more GIL than it saves). |
 | CUDA graph for OSNet (bit-identical to eager) | Loop 23.1 fps, no gain: OSNet is GPU time, not dispatch. |
+| TensorRT FP16 YOLO-pose engine (2026-11-08) | Network 19.0 -> 11.0 ms, pose per frame 27.9 -> 20.8 ms, quality unchanged on a 5-min run (99.9% poses matched, 0 `player_id` changes, 4 of 48 events moved 1-3 frames, same gold-contact hits), but the loop gained only 0-5% because it was CPU-bound. Needs a new pose key, a ~2.3 GB TensorRT install and a 10 min engine build per GPU. |
+| Two ball prefetch threads, whole batches each (2026-11-08) | Loop 40-45 s vs 37-39 s with one, more GPU memory. |
 | OSNet `channels_last` / FP16 | -13% / -43% OSNet GPU time but 1.75e-5 / 3e-4 cosine change under the same cache key; would need a new OSNet key and recomputing cached embeddings. |
 
-The next real gains need a decision: a TensorRT FP16 engine for YOLO-pose (new
-pose key) or an FP16 OSNet with a new OSNet key (recomputes saved embeddings,
-including the imported JIZ3 cache).
+The next real gains need a decision: a GPU letterbox for the ball detector
+(new ball key), then a TensorRT FP16 engine for YOLO-pose (new pose key) or an
+FP16 OSNet with a new OSNet key (recomputes saved embeddings, including the
+imported JIZ3 cache).
+
+OSNet embeddings in a full run vary at ~1e-5 cosine between runs, on `main`
+too: `detect_ball_on_video.py` turns on `cudnn.benchmark` process-wide, so the
+convolution algorithm depends on timing under load. Rarely one of ~4000
+observations then ends up without a `player_id`.
 
 ### 3. Open viewer
 

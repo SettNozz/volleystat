@@ -15,6 +15,7 @@ from src.detection.player_pose import (
 from src.tracking.ball_track_gate import BallCandidate
 from src.utils.logger import get_logger
 from src.pipeline.model_prefetch import PrefetchJob
+from src.utils.cuda_streams import disable_ultralytics_device_sync, own_stream
 from src.models.inference_cache import (
     CacheMiss, LazyModel, digest, pack_pose_result, unpack_pose_result,
 )
@@ -154,17 +155,25 @@ class DetectionMixin:
         if any(primary(index) for index in frames):
             batch_state = {'enabled': self.ball_batch_size > 1 and self.ball_detector_2 is None}
 
-            def ball_batch(images):
-                if batch_state['enabled']:
-                    try:
-                        return self.ball_detector.detect_ball_batch(images)
-                    except Exception as error:
-                        log.warning(f'Ball batch unavailable ({error}); using single-frame model outputs')
-                        batch_state['enabled'] = False
-                return [self.ball_detector.detect_ball(image) for image in images]
+            # The ball thread gets its own CUDA stream and Ultralytics' stage
+            # timer stops being a device-wide barrier (src/utils/cuda_streams.py).
+            disable_ultralytics_device_sync()
 
-            jobs['ball_primary'] = PrefetchJob(primary, lambda image: self.ball_detector.detect_ball(image),
-                                               ball_batch)
+            def ball_batch(images):
+                with own_stream():
+                    if batch_state['enabled']:
+                        try:
+                            return self.ball_detector.detect_ball_batch(images)
+                        except Exception as error:
+                            log.warning(f'Ball batch unavailable ({error}); using single-frame model outputs')
+                            batch_state['enabled'] = False
+                    return [self.ball_detector.detect_ball(image) for image in images]
+
+            def ball_single(image):
+                with own_stream():
+                    return self.ball_detector.detect_ball(image)
+
+            jobs['ball_primary'] = PrefetchJob(primary, ball_single, ball_batch)
         if self.ball_detector_2 is not None and 'tiled' in self._ball_stages:
             tiled = missing(self._ball_stages['tiled'])
             if any(tiled(index) for index in frames):

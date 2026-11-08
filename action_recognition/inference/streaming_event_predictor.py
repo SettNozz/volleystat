@@ -36,6 +36,7 @@ from action_recognition.event_clips.feature_schema import (
     validate_feature_schema,
 )
 from action_recognition.models.sequence_event_model import load_checkpoint
+from src.utils.cuda_streams import own_stream
 
 
 def gate_event_probabilities(
@@ -174,7 +175,9 @@ class StreamingEventPredictor:
             x, self._mean, self._std, self._active_mask,
         )
 
-        with torch.no_grad():
+        # Own high-priority stream: on the shared default stream each call
+        # queued behind a whole ball batch from the prefetch thread.
+        with torch.no_grad(), own_stream(priority=-1):
             logits = self.model(torch.from_numpy(x[None]).to(self.device))
             probs = torch.softmax(logits, dim=1)[0].cpu().numpy()
 

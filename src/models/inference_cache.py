@@ -334,7 +334,15 @@ class FrozenOSNet:
         self.crop=OSNetEncoder.crop
 
     def encode(self,crops):
-        return self.lazy.encode(crops)
+        # Same embeddings as OSNetEncoder.encode, with batched exact preprocessing.
+        from src.models.osnet_fast import ExactOSNetPreprocess, encode_exact
+        if self.lazy.loaded is None:
+            self.lazy.loaded=self.lazy.factory()
+        encoder=self.lazy.loaded
+        preprocess=getattr(self,'_preprocess',None)
+        if preprocess is None:
+            preprocess=self._preprocess=ExactOSNetPreprocess(encoder.transform,encoder.device)
+        return encode_exact(encoder,crops,preprocess)
 
     @property
     def provenance(self):

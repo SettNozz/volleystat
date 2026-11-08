@@ -96,16 +96,28 @@ edit the other hashed sources (`PoseTracker`, `detect_ball_on_video.py`,
 `BackgroundEncoder` computes OSNet embeddings for every saved pose box in the
 loop (same encoder/crop/key, serialised off-thread, one transaction per drain),
 so identity/contact-author passes need no second decode. OSNet batch is 128.
+OSNet prefetch/identity encode through `FrozenOSNet.encode` ->
+`src/models/osnet_fast.py`: threaded PIL resize + GPU lookup table built with
+torchvision's CPU ops, bit-identical network input (tests in
+`test_osnet_fast.py`); the batch must stay contiguous NCHW or other conv
+kernels are chosen. Ball thread, OSNet and event model use per-thread CUDA
+streams (`src/utils/cuda_streams.py`); Ultralytics `Profile` no longer does a
+device-wide `torch.cuda.synchronize()`. 2026-11-08 vs `main`: loop
+48.7 -> 37.8-41.1 s on the 30 s clip, outputs identical.
 A stopped MLflow server costs one 0.5 s TCP probe (`_require_reachable`).
 30 s of `j0gRhgFCgIs_4_4k`, empty cache: 151 s -> 61-64 s wall, loop 15 -> 24 fps,
-identity 34 s -> 3 s, steady GPU 47% -> 67%; cache-only replay 14 s. Now ~GPU
-bound: pose ~20 ms + OSNet ~10 ms (0.84 ms/crop) + ball/event per frame
-(ceiling ~28 fps, actual 23-24); without identity 35.6 fps = VP9 decoder.
+identity 34 s -> 3 s, steady GPU 47% -> 67%; cache-only replay 14 s. Now the
+ball thread is the slowest producer (~96% busy; a third is Ultralytics' CPU
+letterbox, single-threaded OpenCV). A GPU letterbox there changes the ball key.
 Rejected 2026-11-07 (see README table): OpenCV D3D11/NVDEC decode (slower,
 different pixels under unchanged ball/OSNet keys), FFmpeg thread counts (no
 gain), OSNet resize process pool (24 -> 19.2 fps), OSNet CUDA graph (no gain).
-OSNet channels_last/FP16 change embeddings (1.75e-5/3e-4) and would need a new
-OSNet key; TensorRT pose needs a new pose key. Ask before either.
+Rejected 2026-11-08: TensorRT FP16 pose (network 19 -> 11 ms, quality same,
+loop only 0-5% faster, new pose key + TensorRT install), two ball threads (no
+gain). OSNet channels_last/FP16 change embeddings (1.75e-5/3e-4) and would
+need a new OSNet key. Ask before any key change. OSNet embeddings already vary
+~1e-5 cosine run to run because `detect_ball_on_video.py` enables
+`cudnn.benchmark` process-wide.
 GPU reruns are not bit-identical even serially (822/899 identical raw ball
 outputs between two serial runs), so judge speed changes against a serial
 control run and replay hypotheses through the cache.
