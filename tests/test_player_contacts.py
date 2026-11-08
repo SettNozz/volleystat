@@ -145,7 +145,8 @@ def test_viewer_review_persists_without_rewriting_analysis(client_result):
     statistics_url = "/player-statistics/contact-test"
     page = client.get(statistics_url)
     assert page.status_code == 200
-    assert b'<th scope="row">P1</th>' in page.data
+    assert b'<th scope="row"><span class="player">' in page.data
+    assert b"P1" in page.data
     assert b"<td>1</td>" in page.data
     response = client.post(url, json={"source": report["source"], "event_index": 0, "other_side": True})
     assert response.status_code == 200

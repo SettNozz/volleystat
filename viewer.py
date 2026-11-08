@@ -544,16 +544,36 @@ def contact_lab_data(job_id):
 _player_contact_lock = threading.Lock()
 
 
+def _roster_portrait_references(payload):
+    seed = (payload.get("player_identity") or {}).get("seed") or {}
+    keys = dict(seed.get("assignments") or {})
+    keys.update((item["key"], item["player_id"]) for item in seed.get("introductions") or [])
+    by_frame = {row["f"]: row for row in payload.get("frames") or []}
+    references = {}
+    for key, player in keys.items():
+        try:
+            frame, index = map(int, key.split(":"))
+            if frame < 0 or index < 0:
+                continue
+            box = tuple(by_frame[frame]["poses"][index]["bb"])
+            if len(box) == 4 and all(math.isfinite(value) for value in box):
+                references.setdefault(player, (frame, box))
+        except (ValueError, KeyError, IndexError, TypeError):
+            continue
+    return references
+
+
 @lru_cache(maxsize=2)
 def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp, experiment_stamp=None):
     """Cache derived proposals, not the large frame/pose payload."""
     stats_bytes, ann_bytes = Path(stats_path).read_bytes(), Path(ann_path).read_bytes()
     stats = json.loads(stats_bytes)
     source = source_fingerprint(stats_bytes, ann_bytes)
+    payload = json.loads(ann_bytes)
+    references = _roster_portrait_references(payload)
     if experiment_stamp is not None:
         bundle = load_experiment(experiment_path(stats_path), source, stats)
-        return bundle["reports"][bundle["selected_method"]], source, bundle
-    payload = json.loads(ann_bytes)
+        return bundle["reports"][bundle["selected_method"]], source, bundle, references
     if stats.get("video") != payload.get("video") or float(stats["fps"]) != float(payload["fps"]):
         raise ValueError("Stats and annotations must belong to the same analysis")
     report = payload.get("player_contacts")
@@ -563,7 +583,21 @@ def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp, experim
     else:
         report = build_player_contacts(stats.get("all_events") or [], payload["frames"],
                                        payload["fps"], payload.get("player_identity"))
-    return report, source, None
+    return report, source, None, references
+
+
+def _load_player_contact_inputs(job):
+    stats_path, ann_path = Path(job["stats_path"]), Path(job["annotations_path"])
+
+    def stamp(path):
+        info = path.stat()
+        return info.st_mtime_ns, info.st_size
+
+    experiment = experiment_path(stats_path)
+    return _player_contact_inputs(
+        str(stats_path.resolve()), str(ann_path.resolve()), stamp(stats_path), stamp(ann_path),
+        stamp(experiment) if experiment.exists() else None,
+    )
 
 
 @app.route("/api/player_contacts/<job_id>", methods=["GET", "POST"])
@@ -583,14 +617,8 @@ def _player_contact_response(job_id, *, statistics_page=False):
     try:
         # Serialize read-modify-append to preserve corrections from two tabs.
         with _player_contact_lock:
-            stats_path, ann_path = Path(job["stats_path"]), Path(job["annotations_path"])
-            def stamp(path):
-                info = path.stat()
-                return info.st_mtime_ns, info.st_size
-            path = experiment_path(stats_path)
-            report, source, bundle = _player_contact_inputs(
-                str(stats_path.resolve()), str(ann_path.resolve()), stamp(stats_path), stamp(ann_path),
-                stamp(path) if path.exists() else None)
+            stats_path = Path(job["stats_path"])
+            report, source, bundle, references = _load_player_contact_inputs(job)
             body = request.get_json(silent=True) or {} if request.method == "POST" else {}
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object")
@@ -638,7 +666,8 @@ def _player_contact_response(job_id, *, statistics_page=False):
                 if hashlib.sha256(stats_raw).hexdigest() != source["stats_sha256"]:
                     return jsonify({"error": "Analysis changed; reload statistics"}), 409
                 summary = build_player_match_statistics(json.loads(stats_raw), result)
-                return render_template("player_statistics.html", job=job, summary=summary)
+                return render_template("player_statistics.html", job=job, summary=summary,
+                                       portraits=references.keys())
             result["source"] = source
             result["review_count"] = len(reviews)
             result["method_id"] = method
@@ -974,7 +1003,7 @@ _thumb_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
 _thumb_lock = threading.Lock()
 
 
-def _decode_thumbnail(video_path: Path, frame: int):
+def _decode_thumbnail(video_path: Path, frame: int, box=None):
     import cv2
     cap = cv2.VideoCapture(str(video_path))
     try:
@@ -984,11 +1013,48 @@ def _decode_thumbnail(video_path: Path, frame: int):
         cap.release()
     if not ok or image is None:
         return None
+    if box is not None:
+        height, width = image.shape[:2]
+        left, top, right, bottom = box
+        # Keep the head and upper torso within the identity reference crop.
+        bottom = min(bottom, top + 1.45 * (right - left))
+        x1, y1 = max(0, math.floor(left)), max(0, math.floor(top))
+        x2, y2 = min(width, math.ceil(right)), min(height, math.ceil(bottom))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        image = image[y1:y2, x1:x2]
     height, width = image.shape[:2]
     size = (_THUMB_WIDTH, max(1, round(height * _THUMB_WIDTH / width)))
     image = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
     ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 80])
     return encoded.tobytes() if ok else None
+
+
+@app.route("/api/player-portrait/<job_id>/<player_id>")
+def player_portrait(job_id, player_id):
+    job = _get_job(job_id)
+    if not job or job["status"] != "done":
+        return "Result not found", 404
+    try:
+        with _player_contact_lock:
+            report, _, _, references = _load_player_contact_inputs(job)
+        reference = references.get(player_id)
+        original = job.get("original_video_path")
+        source = _resolve_video_path(original) if original else None
+        if player_id not in report["roster_ids"] or not reference or not source or not source.is_file():
+            return "Portrait unavailable", 404
+        info = source.stat()
+        data = _decode_player_portrait(source, info.st_mtime_ns, info.st_size, reference)
+    except (ValueError, KeyError, TypeError, OSError, ExperimentSourceChanged):
+        return "Portrait unavailable", 404
+    if data is None:
+        return "Portrait unavailable", 404
+    return Response(data, mimetype="image/jpeg")
+
+
+@lru_cache(maxsize=96)
+def _decode_player_portrait(source, mtime, size, reference):
+    return _decode_thumbnail(source, *reference)
 
 
 @app.route("/api/frame/<job_id>/<int:frame>")
