@@ -200,6 +200,8 @@ python viewer.py
 
 Open `http://localhost:5050`. Viewer can upload a source video, launch analysis, restore saved jobs, edit court geometry, and show ball trail, reconstructed gaps, players, net, FSM events, attacks and match statistics.
 
+Viewer selects the ball detector batch automatically. It prefers compatible cached detections and otherwise uses available GPU memory, reducing the batch if CUDA runs out of memory.
+
 Every analysed result under `results/` is listed at:
 
 ```text

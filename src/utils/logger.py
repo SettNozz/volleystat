@@ -37,6 +37,18 @@ _LEVEL_CFG = {
 _t0 = time.time()
 
 
+def _print_line(line: str, *, flush: bool = False) -> None:
+    stream = sys.stdout
+    try:
+        print(line, file=stream, flush=flush)
+    except UnicodeEncodeError as exc:
+        # Redirected Windows output can use a legacy code page. Keep logs
+        # readable without letting unsupported characters abort analysis.
+        encoding = getattr(stream, "encoding", None) or exc.encoding
+        safe_line = line.encode(encoding, errors="backslashreplace").decode(encoding)
+        print(safe_line, file=stream, flush=flush)
+
+
 class Logger:
     def __init__(self, name: str):
         self.name = name
@@ -46,7 +58,7 @@ class Logger:
         color, label = _LEVEL_CFG[level]
         ts = f"{elapsed:7.1f}s"
         line = f"{_GRAY}{ts}{_R} {color}{label}{_R} {_CYAN}[{self.name}]{_R} {msg}"
-        print(line, flush=True)
+        _print_line(line, flush=True)
 
     def debug(self, msg: str):   self._log("DEBUG",   msg)
     def info(self, msg: str):    self._log("INFO",    msg)
@@ -56,9 +68,9 @@ class Logger:
     # Convenience: print a section header
     def section(self, title: str):
         sep = "─" * 50
-        print(f"\n{_BOLD}{sep}{_R}")
-        print(f"{_BOLD}  {title}{_R}")
-        print(f"{_BOLD}{sep}{_R}")
+        _print_line(f"\n{_BOLD}{sep}{_R}")
+        _print_line(f"{_BOLD}  {title}{_R}")
+        _print_line(f"{_BOLD}{sep}{_R}")
 
 
 def get_logger(name: str) -> Logger:

@@ -13,6 +13,7 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 import hashlib
 import inspect
+import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -271,7 +272,7 @@ class GameAnalyzer:
         refresh_net_floor: bool = False,
         ball_ensemble: bool = False,
         ball_trajectory_dp: bool = True,
-        ball_batch_size: int = 1,
+        ball_batch_size: Optional[int] = 1,
         net_height_m: float = 2.34,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         enable_pose: bool = True,
@@ -310,8 +311,8 @@ class GameAnalyzer:
                        video has been read (see BallTrajectoryDP). The live gate
                        still runs, because the annotated video needs a position
                        while the frame is in hand.
-            ball_batch_size: Batch this many frames for the ball YOLO. Pose
-                       tracking remains sequential so ByteTrack IDs stay valid.
+            ball_batch_size: Ball YOLO batch size. None chooses automatically.
+                       Pose tracking remains sequential so ByteTrack IDs stay valid.
             net_height_m: Physical net-top height. Mixed games default to
                        2.34 m; men's games use 2.43 m.
             progress_callback: Optional observer receiving phase, real frame
@@ -389,7 +390,8 @@ class GameAnalyzer:
         self.net_y_override = net_y_override
         self.ball_ensemble = ball_ensemble
         self.ball_trajectory_dp = ball_trajectory_dp
-        self.ball_batch_size = max(1, int(ball_batch_size))
+        self._auto_ball_batch = ball_batch_size is None
+        self.ball_batch_size = 1 if self._auto_ball_batch else max(1, int(ball_batch_size))
         self.net_height_m = float(net_height_m)
         if not 2.0 <= self.net_height_m <= 2.6:
             raise ValueError("net_height_m must be between 2.0 and 2.6")
@@ -447,6 +449,8 @@ class GameAnalyzer:
         self._model_cache = ModelOutputCache(source, self.model_cache_dir, self.require_model_cache,
                                              source_identity=source_identity)
         cache = self._model_cache
+        if getattr(self, '_auto_ball_batch', False):
+            self._select_ball_batch(cache, limit)
         self._ball_stages = {name: cache.stage('ball_'+name, spec) for name,spec in self._ball_specs.items()}
         scope = {'limit': limit, 'skip_frames': self.skip_frames, 'fps': fps, 'size': [width,height]}
         self._pose_sequence = None
@@ -463,9 +467,28 @@ class GameAnalyzer:
         if previous is None:
             length = cache.get('source_video', 'decoded_total') if source_identity is None else None
             count = min(limit,length['count']) if length else limit
-            frames = list(range(0,count,self.skip_frames+1))
-            if (all(cache.covers(stage,frames) for stage in self._ball_stages.values())
-                    and (not self.enable_pose or cache.covers(self._raw_pose_stage,frames))):
+            stages = list(self._ball_stages.values())
+            if self.enable_pose:
+                stages.append(self._raw_pose_stage)
+
+            def covers(count):
+                return count > 0 and all(
+                    cache.covers(stage, range(0, count, self.skip_frames + 1)) for stage in stages
+                )
+
+            complete = covers(count)
+            if (not complete and length is None and source_identity is None
+                    and getattr(self, '_cache_full_source_limit', None) == limit and stages
+                    and all(cache.covers(stage, [0]) for stage in stages)):
+                # A prior run may have cached every real frame but failed EOF
+                # validation before it could publish the decoded source length.
+                verified_count = self._verified_decoded_frame_count()
+                if verified_count is not None and 0 < verified_count < limit and covers(verified_count):
+                    count = verified_count
+                    complete = True
+                    cache.put('source_video', 'decoded_total', {'count': count})
+            if complete:
+                frames = range(0,count,self.skip_frames+1)
                 previous = {'total_frames':count,'frame_indices':list(range(count)),
                             'processed_frames':len(frames)}
         if self.require_model_cache and previous is None:
@@ -499,12 +522,56 @@ class GameAnalyzer:
         log.info(f'Model cache: {cache.path}; completed detection pass={previous is not None}')
         return previous
 
+    def _select_ball_batch(self, cache, limit):
+        import torch
+
+        primary = self._ball_specs['primary']
+        settings = {key: value for key, value in primary['settings'].items() if key != 'batch_size'}
+        best_coverage = 0
+        batch_size = 1
+        stride = self.skip_frames + 1
+        rows = cache.db.execute(
+            "SELECT item FROM outputs WHERE stage='stage_manifests' AND item LIKE 'ball_primary:%'"
+        ).fetchall()
+        for (stage,) in rows:
+            spec = cache.get('stage_manifests', stage)['spec']
+            cached_batch = spec['settings'].get('batch_size')
+            if not isinstance(cached_batch, int) or cached_batch < 1:
+                continue
+            if spec != {**primary, 'settings': {**settings, 'batch_size': cached_batch}}:
+                continue
+            coverage = cache.db.execute(
+                'SELECT COUNT(*) FROM outputs WHERE stage=? AND CAST(item AS INTEGER) < ? '
+                'AND CAST(item AS INTEGER) % ? = 0', (stage, limit, stride),
+            ).fetchone()[0]
+            if coverage > best_coverage:
+                best_coverage, batch_size = coverage, cached_batch
+
+        if best_coverage == 0 and torch.cuda.is_available() and self.ball_detector_2 is None:
+            free_bytes, _ = torch.cuda.mem_get_info()
+            # Leave room for pose inference and CUDA workspaces. If actual ball
+            # inference needs more memory, the batch is reduced on demand.
+            free_gib = free_bytes / (1024 ** 3)
+            batch_size = max(1, min(16, int((free_gib - 2) / 0.5)))
+        self.ball_batch_size = batch_size
+        self._ball_specs['primary'] = {**primary, 'settings': {**settings, 'batch_size': batch_size}}
+        reason = 'cached detections' if best_coverage else 'available device memory'
+        log.info(f'Automatic ball batch: {batch_size} ({reason})')
+
     def _finish_detection_cache(self, stats):
         cache = getattr(self, '_model_cache', None)
         if cache is not None:
             if (getattr(self, '_cache_full_source_limit', None)==self._cache_scope_limit
                     and stats.total_frames < self._cache_scope_limit-1):
-                raise RuntimeError('Video ended early; raw cache retained but detection pass is not complete')
+                # Container frame counts can include samples hidden by MP4 edit
+                # lists. Verify a clean independent decode before sealing a
+                # shorter pass; never treat an arbitrary read failure as EOF.
+                length = cache.get('source_video', 'decoded_total')
+                verified_count = length['count'] if length else self._verified_decoded_frame_count()
+                if not stats.total_frames or verified_count != stats.total_frames:
+                    raise RuntimeError('Video ended early; raw cache retained but detection pass is not complete')
+                log.warning(f'Container reports {self._cache_scope_limit} frames; '
+                            f'clean decode verified {verified_count} frames')
             if self._pose_sequence and not self._pose_cache_read:
                 cache.seal_sequence(self._pose_sequence)
             cache.put('detection_passes', self._cache_pass,
@@ -512,6 +579,23 @@ class GameAnalyzer:
                        'frame_indices': self._cache_visited_frames})
             if getattr(self, '_cache_full_source_limit', None)==self._cache_scope_limit:
                 cache.put('source_video','decoded_total',{'count':stats.total_frames})
+
+    def _verified_decoded_frame_count(self):
+        source = getattr(self, '_cache_video_path', None)
+        if source is None:
+            return None
+        try:
+            result = subprocess.run(
+                ['ffprobe', '-v', 'error', '-threads', '0', '-select_streams', 'v:0',
+                 '-count_frames', '-show_entries', 'stream=nb_read_frames',
+                 '-of', 'json', str(source)],
+                capture_output=True, text=True,
+            )
+            if result.returncode or result.stderr.strip():
+                return None
+            return int(json.loads(result.stdout)['streams'][0]['nb_read_frames'])
+        except (OSError, ValueError, KeyError, IndexError, TypeError):
+            return None
 
     def _cached_frame_iterator(self):
         # Pixel-free replay: detectors only read cached values, downstream uses
@@ -1547,6 +1631,7 @@ class GameAnalyzer:
             )
 
         batch_enabled = self.ball_batch_size > 1 and self.ball_detector_2 is None
+        batch_limit = self.ball_batch_size
         if batch_enabled:
             log.info(f"Ball YOLO batch size: {self.ball_batch_size}")
 
@@ -1554,11 +1639,32 @@ class GameAnalyzer:
             chunk = []
             for item in frame_iter:
                 chunk.append(item)
-                if len(chunk) >= self.ball_batch_size:
+                if len(chunk) >= batch_limit:
                     yield chunk
                     chunk = []
             if chunk:
                 yield chunk
+
+        def detect_cached_batch(images):
+            nonlocal batch_limit, batch_enabled
+            if not batch_enabled or len(images) == 1:
+                return [self.ball_detector.detect_ball(image) for image in images]
+            if len(images) > batch_limit:
+                return [value for start in range(0, len(images), batch_limit)
+                        for value in detect_cached_batch(images[start:start + batch_limit])]
+            try:
+                return self.ball_detector.detect_ball_batch(images)
+            except Exception as error:
+                if getattr(self, '_auto_ball_batch', False) and 'out of memory' in str(error).lower():
+                    batch_limit = max(1, len(images) // 2)
+                    log.warning(f'GPU ran out of memory; retrying ball detection with batch {batch_limit}')
+                else:
+                    log.warning(f'Ball batch unavailable ({error}); using single-frame model outputs')
+                    batch_enabled = False
+            if batch_enabled:
+                import torch
+                torch.cuda.empty_cache()
+            return detect_cached_batch(images)
 
         def frames_with_ball_candidates():
             nonlocal batch_enabled
@@ -1578,17 +1684,9 @@ class GameAnalyzer:
                     if missing and cache.require:
                         raise CacheMiss(f'Missing ball model outputs at frame {missing[0][0]}')
                     if missing:
-                        if batch_enabled and len(missing) > 1:
-                            try:
-                                values = self.ball_detector.detect_ball_batch([image for _,image in missing])
-                            except Exception as error:
-                                log.warning(f'Ball batch unavailable ({error}); using single-frame model outputs')
-                                batch_enabled = False
-                                values = [self.ball_detector.detect_ball(image) for _,image in missing]
-                            if len(values) != len(missing):
-                                raise ValueError('Ball batch output count differs from input')
-                        else:
-                            values = [self.ball_detector.detect_ball(image) for _,image in missing]
+                        values = detect_cached_batch([image for _,image in missing])
+                        if len(values) != len(missing):
+                            raise ValueError('Ball batch output count differs from input')
                         cache.computed['ball_primary'] += len(missing)
                         for (idx,_),value in zip(missing,values):
                             raw[idx] = [[float(v) for v in row] for row in value]
@@ -2800,6 +2898,7 @@ class GameAnalyzer:
         max_frames = int(max_duration_sec * fps) if max_duration_sec else total
         max_frames = min(max_frames, total) if total > 0 else max_frames
         self._cache_full_source_limit = total
+        self._cache_video_path = vp
         try:
             cached_pass = self._prepare_model_cache(vp, fps, w, h, max_frames)
         except Exception:

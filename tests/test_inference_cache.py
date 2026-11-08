@@ -14,6 +14,43 @@ from src.models.inference_cache import (
 from src.pipeline.game_analyzer import CalibrationData, GameAnalyzer
 
 
+@pytest.mark.parametrize('verified,accepted', [(180, True), (179, False), (None, False)])
+def test_short_video_pass_requires_independent_clean_decode(tmp_path, verified, accepted):
+    source = tmp_path / 'video'
+    source.write_bytes(b'video')
+    cache = ModelOutputCache(source, tmp_path / 'cache')
+    analyzer = GameAnalyzer.__new__(GameAnalyzer)
+    analyzer._model_cache = cache
+    analyzer._cache_full_source_limit = analyzer._cache_scope_limit = 192
+    analyzer._cache_pass = 'pass'
+    analyzer._cache_visited_frames = list(range(180))
+    analyzer._pose_sequence = None
+    analyzer._verified_decoded_frame_count = lambda: verified
+    stats = SimpleNamespace(total_frames=180, processed_frames=180)
+    try:
+        if accepted:
+            analyzer._finish_detection_cache(stats)
+            assert cache.get('source_video', 'decoded_total') == {'count': 180}
+            assert cache.get('detection_passes', 'pass')['frame_indices'] == list(range(180))
+        else:
+            with pytest.raises(RuntimeError, match='Video ended early'):
+                analyzer._finish_detection_cache(stats)
+            assert cache.get('detection_passes', 'pass') is None
+            assert cache.get('source_video', 'decoded_total') is None
+    finally:
+        cache.db.close()
+
+
+@pytest.mark.parametrize('stderr,returncode,count', [('', 0, 180), ('decode error', 0, None), ('', 1, None)])
+def test_independent_frame_count_rejects_decoder_errors(monkeypatch, stderr, returncode, count):
+    import src.pipeline.game_analyzer as module
+    analyzer = GameAnalyzer.__new__(GameAnalyzer)
+    analyzer._cache_video_path = Path('clip.mp4')
+    monkeypatch.setattr(module.subprocess, 'run', lambda *a, **kw: SimpleNamespace(
+        returncode=returncode, stderr=stderr, stdout='{"streams":[{"nb_read_frames":"180"}]}'))
+    assert analyzer._verified_decoded_frame_count() == count
+
+
 def tracker_yaml():
     return metadata.distribution('ultralytics').locate_file('ultralytics/cfg/trackers/bytetrack.yaml')
 
@@ -179,7 +216,7 @@ def test_production_cold_then_cache_only_replay_never_calls_models_or_decodes(tm
             return [unpack_pose_result({'boxes':array_payload(boxes),'keypoints':array_payload(kp)})]
     def init_ball(a,path):
         a.ball_detector=Ball(); a.ball_detector_2=None
-        a._ball_specs={'primary':model_spec(path or checkpoint,backend='fake-ball',batch_size=8)}
+        a._ball_specs={'primary':model_spec(path or checkpoint,backend='fake-ball',batch_size=a.ball_batch_size)}
         a._configure_ball_selection_for(600)
     def init_pose(a,path):
         a.pose_model=Pose(); a._pose_tracker_path=tracker_yaml()
@@ -197,7 +234,9 @@ def test_production_cold_then_cache_only_replay_never_calls_models_or_decodes(tm
     assert calls['ball'] and calls['pose']==8 and calls['reads']==8
     calls.update(ball=0,pose=0,reads=0)
     deny_pixels[0]=True
-    second=GameAnalyzer(**options,require_model_cache=True).process_video(str(source),str(tmp_path/'second'))
+    auto = GameAnalyzer(**{**options, 'ball_batch_size': None}, require_model_cache=True)
+    second = auto.process_video(str(source), str(tmp_path/'second'))
+    assert auto.ball_batch_size == 8
     assert calls=={'ball':0,'pose':0,'reads':0}
     assert first.frame_annotations==second.frame_annotations
     geometry[0]=150.
