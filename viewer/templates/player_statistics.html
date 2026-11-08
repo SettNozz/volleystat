@@ -29,6 +29,10 @@
   .section-head { padding: 1.15rem 1.35rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; }
   h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.02em; }
   .section-head p { color: var(--muted); margin: 0; font-size: .85rem; }
+  .stat-modes { display: flex; flex-wrap: wrap; gap: 4px; padding: .7rem 1.35rem; border-bottom: 1px solid var(--border-soft); }
+  .stat-modes a { padding: 8px 16px; border-radius: 8px; color: var(--muted2); text-decoration: none; font-size: .85rem; font-weight: 600; }
+  .stat-modes a:hover { background: var(--head-bg); }
+  .stat-modes a[aria-current="page"] { background: var(--primary-soft); color: var(--primary); }
   .table-wrap { overflow-x: auto; }
   table { width: 100%; min-width: 39rem; border-spacing: 0; font-variant-numeric: tabular-nums; }
   th, td { padding: .7rem .85rem; text-align: right; border-top: 1px solid var(--border-soft); }
@@ -73,8 +77,20 @@
   {% set attacks = [('total', 'Attempts'), ('point', 'Point-winning'), ('continued', 'Play continued'), ('out', 'Out'), ('net', 'Into net'), ('lost', 'Point lost, cause unknown'), ('unknown', 'Unresolved')] %}
   {% set receptions = [('total', 'Attempts'), ('controlled', 'Controlled'), ('overpass', 'Overpass'), ('error', 'Errors'), ('unknown', 'Unresolved')] %}
   {% set serves = [('total', 'Attempts'), ('in_play', 'In play'), ('ace', 'Aces'), ('error', 'Errors'), ('unknown', 'Unresolved')] %}
-  {% for kind, title, columns, subtitle in [('attack', 'Attacks', attacks, 'Attempts and rally outcomes'), ('serve', 'Serves', serves, 'Service attempts by player'), ('reception', 'Serve reception', receptions, 'First touches after a serve')] %}
+  {% set modes = {
+    'attack': ('Attacks', attacks, 'Attempts and rally outcomes'),
+    'serve': ('Serves', serves, 'Service attempts by player'),
+    'reception': ('Serve reception', receptions, 'First touches after a serve')
+  } %}
+  {% set requested = request.args.get('view') %}
+  {% set kind = requested if requested in modes else 'attack' %}
+  {% set title, columns, subtitle = modes[kind] %}
   <section aria-labelledby="{{ kind }}">
+  <nav class="stat-modes" aria-label="Statistics category">
+    {% for mode, config in modes.items() %}
+    <a href="{{ url_for('player_statistics', job_id=job.job_id, view=mode) }}"{% if mode == kind %} aria-current="page"{% endif %}>{{ config[0] }}</a>
+    {% endfor %}
+  </nav>
   <div class="section-head">
     <h2 id="{{ kind }}">{{ title }}</h2>
     <p>{{ subtitle }}</p>
@@ -99,7 +115,7 @@
               {% endif %}
             </span>
             {{ player }}
-            {% if kind == 'attack' and portraits.get(player, 0) > 1 %}
+            {% if portraits.get(player, 0) > 1 %}
             <button type="button" class="change-photo" data-player="{{ player }}" data-count="{{ portraits[player] }}" aria-label="Change photo for {{ player }}">Change photo</button>
             {% endif %}
           </span></th>
@@ -119,7 +135,6 @@
     </table>
   </div>
   </section>
-  {% endfor %}
   <details class="notes">
     <summary>How these statistics are counted</summary>
     <p>Without an assigned player: {{ summary.unassigned.get('attack', 0) }} attacks, {{ summary.unassigned.get('serve', 0) }} serves and {{ summary.unassigned.get('reception', 0) }} receptions. These contacts may include either side when the side is unknown.</p>
