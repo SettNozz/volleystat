@@ -186,8 +186,8 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
       <canvas id="overlay"></canvas>
       <div class="video-badge" id="videoBadge">{{ job.video_stem }}</div>
       <div class="scoreboard" aria-label="Points inferred from serves" title="Points inferred from the next serve.">
-        <label><input aria-label="Near team name" value="Near team" maxlength="32"><output id="nearScore">0</output></label>
-        <label><input aria-label="Far team name" value="Far team" maxlength="32"><output id="farScore">0</output></label>
+        <label><input aria-label="Near team name" value="Near team" maxlength="32" data-team-job="{{ job.job_id }}" data-team-side="b"><output id="nearScore">0</output></label>
+        <label><input aria-label="Far team name" value="Far team" maxlength="32" data-team-job="{{ job.job_id }}" data-team-side="a"><output id="farScore">0</output></label>
         <small id="unknownScore" title="Points with an unidentified next server" hidden></small>
       </div>
     </div>
@@ -459,6 +459,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 <script src="{{ url_for('static', filename='player_contacts.js') }}"></script>
 <script src="{{ url_for('static', filename='pose_completion.js') }}"></script>
 <script src="{{ url_for('static', filename='serve_score.js') }}"></script>
+<script src="{{ url_for('static', filename='team_names.js') }}"></script>
 <script>
 const JOB_ID = "{{ job.job_id }}";
 const FPS = {{ stats.fps | default(30) }};

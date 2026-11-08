@@ -28,7 +28,6 @@
   section { margin-top: 1.5rem; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
   .section-head { padding: 1.15rem 1.35rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; }
   h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.02em; }
-  .section-head p { color: var(--muted); margin: 0; font-size: .85rem; }
   .stat-modes { display: flex; flex-wrap: wrap; gap: 4px; padding: .7rem 1.35rem; border-bottom: 1px solid var(--border-soft); }
   .stat-modes a { padding: 8px 16px; border-radius: 8px; color: var(--muted2); text-decoration: none; font-size: .85rem; font-weight: 600; }
   .stat-modes a:hover { background: var(--head-bg); }
@@ -36,8 +35,9 @@
   .table-wrap { overflow-x: auto; }
   table { width: 100%; min-width: 39rem; border-spacing: 0; font-variant-numeric: tabular-nums; }
   th, td { padding: .7rem .85rem; text-align: right; border-top: 1px solid var(--border-soft); }
+  tr > * + * { border-inline-start: 1px solid var(--border); }
   thead th { background: var(--head-bg); color: var(--muted2); font-size: .76rem; font-weight: 650; }
-  th:first-child { position: sticky; left: 0; z-index: 1; text-align: left; padding-left: 1.35rem; }
+  th:first-child { position: sticky; left: 0; z-index: 1; text-align: left; padding-left: 1.35rem; box-shadow: 1px 0 var(--border); }
   tbody th { background: var(--card); }
   tbody tr:nth-child(even) > * { background: var(--bg); }
   tbody tr:hover > *, tbody tr:focus-within > * { background: var(--primary-soft); }
@@ -68,7 +68,7 @@
     <p class="eyebrow">Match report</p>
     <h1>Player statistics</h1>
     <p class="meta">
-      <span class="pill">{{ {'b': 'Near side', 'a': 'Far side'}.get(summary.side, 'Court side unavailable') }}</span>
+      <span class="pill" data-team-job="{{ job.job_id }}" data-team-side="{{ summary.side or '' }}">{{ {'b': 'Near team', 'a': 'Far team'}.get(summary.side, 'Court side unavailable') }}</span>
       <span>{{ summary.players | length }} tracked players</span>
     </p>
   </header>
@@ -77,13 +77,13 @@
   {% set receptions = [('total', 'Attempts'), ('controlled', 'Controlled'), ('overpass', 'Overpass'), ('error', 'Errors'), ('unknown', 'Unresolved')] %}
   {% set serves = [('total', 'Attempts'), ('in_play', 'In play'), ('ace', 'Aces'), ('error', 'Errors'), ('unknown', 'Unresolved')] %}
   {% set modes = {
-    'attack': ('Attacks', attacks, 'Attempts and rally outcomes'),
-    'serve': ('Serves', serves, 'Service attempts by player'),
-    'reception': ('Serve reception', receptions, 'First touches after a serve')
+    'attack': ('Attacks', attacks),
+    'serve': ('Serves', serves),
+    'reception': ('Serve reception', receptions)
   } %}
   {% set requested = request.args.get('view') %}
   {% set kind = requested if requested in modes else 'attack' %}
-  {% set title, columns, subtitle = modes[kind] %}
+  {% set title, columns = modes[kind] %}
   <section aria-labelledby="{{ kind }}">
   <nav class="stat-modes" aria-label="Statistics category">
     {% for mode, config in modes.items() %}
@@ -93,7 +93,6 @@
   <p id="mode-error" role="status" hidden>Could not load statistics. Try again.</p>
   <div class="section-head">
     <h2 id="{{ kind }}">{{ title }}</h2>
-    <p>{{ subtitle }}</p>
   </div>
   <div class="table-wrap" tabindex="0" role="region" aria-labelledby="{{ kind }}">
     <table aria-labelledby="{{ kind }}">
@@ -155,6 +154,7 @@
     <form method="dialog"><button>Cancel</button></form>
   </div>
 </dialog>
+<script src="{{ url_for('static', filename='team_names.js') }}"></script>
 <script>
 const modeLinks = Array.from(document.querySelectorAll('.stat-modes a'));
 const modeError = document.getElementById('mode-error');
@@ -185,7 +185,6 @@ for (const link of modeLinks) {
       const heading = document.querySelector('.section-head');
       const nextHeading = page.querySelector('.section-head');
       heading.querySelector('h2').textContent = nextHeading.querySelector('h2').textContent;
-      heading.querySelector('p').textContent = nextHeading.querySelector('p').textContent;
       for (const item of modeLinks) item.removeAttribute('aria-current');
       link.setAttribute('aria-current', 'page');
       history.replaceState(null, '', link.href);
