@@ -49,7 +49,7 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertIn("Object.prototype.hasOwnProperty.call(pose, 'player_id')", template)
         self.assertIn("pose.player_id || 'P?'", template)
         self.assertIn("Number(ann.f) !== currentFrameIdx", template)
-        self.assertIn("player IDs unavailable", template)
+        self.assertNotIn("player IDs unavailable", template)
 
     def test_lifecycle_stats_keep_only_confirmed_playable_rallies(self):
         stats = viewer._prepare_viewer_stats({
@@ -180,7 +180,9 @@ class TestViewerUploadWorkflow(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         page = response.get_data(as_text=True)
-        self.assertIn("3 playable rallies", page)
+        self.assertNotIn("3 playable rallies", page)
+        self.assertIn('id="nearScore">0', page)
+        self.assertIn('<details class="card side-card" id="playerContactsPanel">', page)
         self.assertIn("Service attempts", page)
         self.assertIn("Confirmed serves", page)
         self.assertIn("serve_fault", page)

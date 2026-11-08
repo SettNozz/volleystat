@@ -186,6 +186,7 @@ function renderPlayerContacts() {
           return;
         }
         playerContactReport = data;
+        if (typeof updateContactTeams === 'function') updateContactTeams(data);
         document.getElementById('playerContactStatus').textContent = 'Attribution saved. Event type remains a model prediction.';
         renderPlayerContacts();
       } catch (error) {
@@ -207,6 +208,7 @@ async function loadPlayerContacts(method) {
     if (!response.ok) throw new Error(data.error || 'Contacts unavailable');
     if (requestId !== playerContactRequest) return;
     playerContactReport = data;
+    if (typeof updateContactTeams === 'function') updateContactTeams(data);
     renderPlayerContacts();
     document.getElementById('playerContactStatus').textContent = data.roster_ids.length
       ? 'Automatic attribution is unverified. Review via dropdown; unknowns are excluded from player totals.'
