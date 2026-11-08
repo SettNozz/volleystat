@@ -557,9 +557,33 @@ def _roster_portrait_references(payload):
                 continue
             box = tuple(by_frame[frame]["poses"][index]["bb"])
             if len(box) == 4 and all(math.isfinite(value) for value in box):
-                references.setdefault(player, (frame, box))
+                references.setdefault(player, [(frame, box)])
         except (ValueError, KeyError, IndexError, TypeError):
             continue
+    # Sample the tracked roster across the match so one bad initial frame
+    # does not decide every portrait. Only poses on the roster's court side qualify.
+    identity = payload.get("player_identity") or {}
+    target = {"a": "a", "b": "b", "team_a": "a", "team_b": "b"}.get(identity.get("side"))
+    interval = max(1, (max(by_frame, default=0) + 8) // 8)
+    samples = {}
+    for frame, row in by_frame.items():
+        for pose in row.get("poses") or []:
+            player = pose.get("player_id")
+            if not target or pose.get("team") not in (target, f"team_{target}") or not player:
+                continue
+            box = tuple(pose.get("bb") or ())
+            if len(box) != 4 or not all(math.isfinite(value) for value in box):
+                continue
+            width, height = box[2] - box[0], box[3] - box[1]
+            if width <= 0 or height <= 0:
+                continue
+            key = (player, frame // interval)
+            if key not in samples or width * height > samples[key][0]:
+                samples[key] = (width * height, (frame, box))
+    for (player, _), (_, reference) in samples.items():
+        choices = references.setdefault(player, [])
+        if reference not in choices:
+            choices.append(reference)
     return references
 
 
@@ -667,7 +691,8 @@ def _player_contact_response(job_id, *, statistics_page=False):
                     return jsonify({"error": "Analysis changed; reload statistics"}), 409
                 summary = build_player_match_statistics(json.loads(stats_raw), result)
                 return render_template("player_statistics.html", job=job, summary=summary,
-                                       portraits=references.keys())
+                                       portraits={player: len(choices) for player, choices in references.items()},
+                                       portrait_version=source["annotations_sha256"])
             result["source"] = source
             result["review_count"] = len(reviews)
             result["method_id"] = method
@@ -1038,13 +1063,15 @@ def player_portrait(job_id, player_id):
     try:
         with _player_contact_lock:
             report, _, _, references = _load_player_contact_inputs(job)
-        reference = references.get(player_id)
+        choices = references.get(player_id, [])
+        index = request.args.get("candidate", default=0, type=int)
         original = job.get("original_video_path")
         source = _resolve_video_path(original) if original else None
-        if player_id not in report["roster_ids"] or not reference or not source or not source.is_file():
+        if (player_id not in report["roster_ids"] or not 0 <= index < len(choices)
+                or not source or not source.is_file()):
             return "Portrait unavailable", 404
         info = source.stat()
-        data = _decode_player_portrait(source, info.st_mtime_ns, info.st_size, reference)
+        data = _decode_player_portrait(source, info.st_mtime_ns, info.st_size, choices[index])
     except (ValueError, KeyError, TypeError, OSError, ExperimentSourceChanged):
         return "Portrait unavailable", 404
     if data is None:

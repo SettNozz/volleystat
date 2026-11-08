@@ -34,6 +34,13 @@
   .portrait { position: relative; display: inline-grid; place-items: center; width: 46px; height: 52px; overflow: hidden;
     background: #294055; color: #d7e5f3; border: 1px solid #476075; border-radius: 11px; font-size: .75rem; }
   .portrait img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
+  button { cursor: pointer; border: 1px solid #476075; border-radius: 8px; padding: .5rem .7rem; background: #203147; color: inherit; }
+  button:disabled { cursor: default; opacity: .5; }
+  .change-photo { padding: .25rem .4rem; font-size: .75rem; }
+  dialog { background: var(--surface); color: inherit; border: 1px solid var(--line); border-radius: 18px; padding: 1.25rem; max-width: calc(100% - 2rem); }
+  dialog::backdrop { background: #050a12cc; }
+  #photo-preview { display: block; width: 160px; height: 200px; object-fit: contain; margin: 1rem auto; }
+  .photo-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
   .positive { color: var(--mint); font-weight: 720; }
   .zero { color: var(--muted); }
   .notes { color: var(--muted); font-size: .88rem; line-height: 1.6; margin: 1.35rem .15rem 0; }
@@ -74,10 +81,13 @@
             <span class="portrait" aria-hidden="true">
               {{ player }}
               {% if player in portraits %}
-              <img src="{{ url_for('player_portrait', job_id=job.job_id, player_id=player) }}" alt="" loading="lazy" onerror="this.remove()">
+              <img data-player-photo="{{ player }}" src="{{ url_for('player_portrait', job_id=job.job_id, player_id=player) }}" alt="" loading="lazy" onerror="this.hidden = true" onload="this.hidden = false">
               {% endif %}
             </span>
             {{ player }}
+            {% if kind == 'attack' and portraits.get(player, 0) > 1 %}
+            <button type="button" class="change-photo" data-player="{{ player }}" data-count="{{ portraits[player] }}" aria-label="Change photo for {{ player }}">Change photo</button>
+            {% endif %}
           </span></th>
           {% for key, label in columns %}
           {% set count = row[kind].get(key, 0) %}
@@ -104,4 +114,80 @@
   <p>This result has no tracked player roster.</p>
   {% endif %}
 </main>
+<dialog id="photo-picker" aria-labelledby="photo-title">
+  <h2 id="photo-title">Change photo</h2>
+  <img id="photo-preview" alt="Player photo candidate">
+  <p id="photo-status" role="status"></p>
+  <div class="photo-actions">
+    <button type="button" id="next-photo">Next photo</button>
+    <button type="button" id="save-photo">Use this photo</button>
+    <form method="dialog"><button>Cancel</button></form>
+  </div>
+</dialog>
+<script>
+const photoScope = {{ [job.job_id | default(''), portrait_version] | tojson }};
+const photos = Array.from(document.querySelectorAll('[data-player-photo]'));
+const picker = document.getElementById('photo-picker');
+const preview = document.getElementById('photo-preview');
+const photoStatus = document.getElementById('photo-status');
+const save = document.getElementById('save-photo');
+const selected = new Map();
+let player, index, count;
+
+function storageKey(id) {
+  return JSON.stringify(['player-photo', ...photoScope, id]);
+}
+
+function photoUrl(img, candidate) {
+  const url = new URL(img.src);
+  url.searchParams.set('candidate', candidate);
+  return url.href;
+}
+
+function updatePhotos(id, candidate) {
+  selected.set(id, candidate);
+  for (const img of photos.filter(img => img.dataset.playerPhoto === id)) {
+    img.src = photoUrl(img, candidate);
+  }
+}
+
+function nextPhoto() {
+  index = (index + 1) % count;
+  save.disabled = true;
+  photoStatus.textContent = 'Loading photo…';
+  preview.src = photoUrl(photos.find(img => img.dataset.playerPhoto === player), index);
+}
+
+preview.onload = () => {
+  save.disabled = false;
+  photoStatus.textContent = 'Photo ' + (index + 1) + ' of ' + count;
+};
+preview.onerror = () => {
+  save.disabled = true;
+  photoStatus.textContent = 'Photo unavailable. Try the next one.';
+};
+document.getElementById('next-photo').onclick = nextPhoto;
+save.onclick = () => {
+  updatePhotos(player, index);
+  try { localStorage.setItem(storageKey(player), index); } catch {}
+  picker.close();
+};
+
+for (const button of document.querySelectorAll('.change-photo')) {
+  const id = button.dataset.player;
+  const total = Number(button.dataset.count);
+  try {
+    const saved = Number(localStorage.getItem(storageKey(id)));
+    if (Number.isInteger(saved) && saved > 0 && saved < total) updatePhotos(id, saved);
+  } catch {}
+  button.onclick = () => {
+    player = id;
+    count = total;
+    index = selected.get(id) ?? 0;
+    document.getElementById('photo-title').textContent = 'Change photo · ' + id;
+    picker.showModal();
+    nextPhoto();
+  };
+}
+</script>
 </html>
