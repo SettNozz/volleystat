@@ -140,8 +140,14 @@ Video / frame directory
 Main code:
 
 - `analyze_video.py`: production CLI.
-- `src/pipeline/game_analyzer.py`: orchestration and result export.
-- `src/detection/ball_detector.py`: ball inference.
+- `src/pipeline/game_analyzer.py`: `GameAnalyzer` frame loop, offline passes
+  (`_run_offline_passes`), `process_video`/`process_frames`, result export.
+  Re-exports `GameStats`, `CalibrationData` from `src/pipeline/analyzer/`.
+- `src/pipeline/analyzer/`: one `GameAnalyzer` mixin per concern: `cache`,
+  `calibration` (incl. net detection), `models` (loading/warm-up/FSM),
+  `detection` (ball/pose inference, prefetch), `ball_trajectory` (DP, smoothing),
+  `events` (clean FSM replay, features, spotter), `identity` (OSNet roster,
+  contact authors), `rendering`; plus `defaults.py` and `types.py`.
 - `src/detection/player_pose.py`: poses, court projection, player gate.
 - `src/detection/net_detector.py`: tape/post/floor detection.
 - `src/tracking/ball_track_gate.py`: live ball choice.
@@ -151,7 +157,13 @@ Main code:
 - `src/tracking/ball_trajectory_smoother.py`: contact-safe smoothing.
 - `src/tracking/integrated_volleyball_fsm.py`: rally/contact FSM.
 - `src/tracking/match_analytics.py`: set/team/score derivation.
-- `viewer.py`: upload, background analysis, court editor, overlays, dashboards.
+- `viewer.py`: Flask routes, jobs, upload/background analysis, library index.
+  State-free helpers live in `src/viewer_app/` (stats, library, calibration
+  preview, player-contact inputs, court-correction I/O, media/thumbnails).
+- `viewer/templates/viewer.html`: results-page markup and Jinja boot constants;
+  its scripts are `viewer/static/viewer_page.js` (state, listeners, init, loaded
+  last), `viewer_charts.js`, `viewer_tables.js`, `viewer_overlay.js` (redraw)
+  and `viewer_page.css`. The three feature scripts only declare functions/state.
 
 ## Ball trajectory invariants
 
@@ -510,8 +522,10 @@ analyze_video.py
 viewer.py
 configs/
 src/detection/
-src/pipeline/
+src/pipeline/            game_analyzer.py + analyzer/ mixins
 src/tracking/
+src/viewer_app/          viewer.py helpers
+viewer/templates/ viewer/static/
 src/models/model_registry.py
 action_recognition/event_clips/
 action_recognition/annotator/

@@ -731,3 +731,14 @@ reuses the existing full-video frozen OSNet cache without inference. The old
 JIZ3exHe3hA annotations cannot recreate discarded raw YOLO proposals, but their
 93155 frozen embeddings have been imported and a full cached ID replay took
 about 47 s with OSNet unloaded. See `docs/model_output_cache.md`.
+
+## Removed dead modules (2026-11-08)
+
+Removed from the working tree because nothing imported them and they had no
+entry point; restore with `git checkout c2acb60 -- <path>`:
+
+- `src/detection/ball_detector.py`: legacy UNet ball model; production ball
+  inference is YOLO in `src/pipeline/analyzer/detection.py`.
+- `src/tracking/contact_author_identity_graph.py`,
+  `src/tracking/contact_author_identity_adapters.py`: unused contact-author
+  identity experiment scaffolding.

@@ -498,9 +498,15 @@ configs/
   match_config.example.json              set boundaries and stable team IDs
 src/
   detection/                              ball, pose, court and net detection
-  pipeline/game_analyzer.py               end-to-end orchestration
+  pipeline/game_analyzer.py               end-to-end orchestration (frame loop, export)
+  pipeline/analyzer/                      GameAnalyzer mixins: cache, calibration, models,
+                                          detection, ball trajectory, events, identity, rendering
   tracking/                               trajectory, reconstruction, FSM, analytics
   models/model_registry.py                model resolution and provenance
+  viewer_app/                             viewer.py helpers (library, media, court editor I/O)
+viewer/
+  templates/                              Flask page templates
+  static/                                 page scripts and styles (viewer_page.js, viewer_*.js)
 action_recognition/
   event_clips/                            schemas, features and gold dataset builders
   annotator/                              clip and full-video labeling tools
