@@ -210,7 +210,7 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertTrue(captured["started"])
         self.assertTrue(captured["daemon"])
         self.assertIs(captured["target"], viewer._run_analysis)
-        self.assertEqual(captured["args"][2:], (0, True, 8, 2.34))
+        self.assertEqual(captured["args"][2:], (0, True, 2.34))
 
     def test_upload_defaults_to_refreshing_sam3_post_bases(self):
         captured = {}
@@ -228,7 +228,7 @@ class TestViewerUploadWorkflow(unittest.TestCase):
                     response = client.post("/analyze", json={"video_path": video.name})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(captured["args"][2:], (0, True, 8, 2.34))
+        self.assertEqual(captured["args"][2:], (0, True, 2.34))
 
     def test_upload_can_select_mens_net_height(self):
         captured = {}

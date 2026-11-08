@@ -329,7 +329,6 @@ def _run_analysis(
     video_path: str,
     skip_frames: int,
     refresh_net_floor: bool = True,
-    ball_batch_size: int = 8,
     net_height_m: float = 2.34,
 ):
     """Run analysis in background thread."""
@@ -357,15 +356,12 @@ def _run_analysis(
             pose_imgsz=2560,
             max_players_per_team=6,
             refresh_net_floor=refresh_net_floor,
-            ball_batch_size=ball_batch_size,
+            ball_batch_size=None,
             net_height_m=net_height_m,
             progress_callback=update_progress,
             contact_spotter_path=(
                 str(CONTACT_SPOTTER_PATH) if CONTACT_SPOTTER_PATH.is_file() else None
             ),
-        )
-        jobs[job_id]["message"] = (
-            f"GPU batch {ball_batch_size}: skeletons + SAM3 net posts + heatmap..."
         )
         stats = analyzer.process_video(
             video_path=video_path,
@@ -468,7 +464,6 @@ def analyze():
     data = request.get_json(silent=True) or {}
     video_path_raw = str(data.get("video_path", "")).strip()
     skip_frames = int(data.get("skip_frames", 0))
-    ball_batch_size = max(1, min(16, int(data.get("ball_batch_size", 8))))
     net_profile = str(data.get("net_profile", "mixed")).lower()
     net_height_m = 2.43 if net_profile == "men" else 2.34
     if data.get("net_height_m") is not None:
@@ -488,7 +483,7 @@ def analyze():
         target=_run_analysis,
         args=(
             job_id, str(video_path), skip_frames, refresh_net_floor,
-            ball_batch_size, net_height_m,
+            net_height_m,
         ),
         daemon=True,
     )

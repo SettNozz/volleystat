@@ -93,13 +93,6 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
       <option value="4">Every 5th frame (fastest)</option>
     </select>
 
-    <label>GPU ball batch</label>
-    <select id="ballBatchSize">
-      <option value="4">4 frames (low VRAM)</option>
-      <option value="8" selected>8 frames (recommended for 10 GB)</option>
-      <option value="12">12 frames (maximum throughput)</option>
-    </select>
-
     <label>Net profile</label>
     <select id="netProfile">
       <option value="mixed" selected>Mixed — 2.34 m</option>
@@ -140,7 +133,6 @@ let pollInterval = null;
 function startAnalysis() {
   const path = document.getElementById('videoPath').value.trim();
   const skip = document.getElementById('skipFrames').value;
-  const ballBatchSize = document.getElementById('ballBatchSize').value;
   const netProfile = document.getElementById('netProfile').value;
   const refreshNetFloor = document.getElementById('refreshNetFloor').checked;
   if (!path) return;
@@ -154,7 +146,6 @@ function startAnalysis() {
     body: JSON.stringify({
       video_path: path,
       skip_frames: parseInt(skip),
-      ball_batch_size: parseInt(ballBatchSize),
       net_profile: netProfile,
       refresh_net_floor: refreshNetFloor,
     })

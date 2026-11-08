@@ -411,6 +411,8 @@ results/game/game_analyzed.mp4
 
 Viewer reads actual annotations, not redrawn guesses. It supports ball/trail, reconstruction provenance, players, net/court, FSM/events, attack heatmap, match analytics, upload jobs, persisted result restore, and court editing.
 
+Viewer uploads select the ball batch automatically. Prefer compatible cached detections before sizing from available GPU memory. Reduce the batch on CUDA memory exhaustion. Explicit CLI batches remain supported.
+
 Existing result URL:
 
 ```text
