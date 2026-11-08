@@ -14,16 +14,13 @@ import base64
 import hashlib
 import json
 import math
-import mimetypes
 import os
-import re
 import sys
 import threading
 import time
 import urllib.parse
 import uuid
 from collections import OrderedDict
-from functools import lru_cache
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_file, Response
@@ -42,13 +39,17 @@ from src.tracking.court_setups import (
     validate_corners,
 )
 from src.utils.path_utils import local_path_from_uri
-from src.tracking.player_contacts import (
-    apply_reviews, build_player_contacts, source_fingerprint,
-)
+from src.tracking.player_contacts import apply_reviews, source_fingerprint
 from src.tracking.player_match_statistics import build_player_match_statistics
 from src.tracking.player_statistics_excel import STATISTICS_VIEWS, export_player_statistics, player_statistic_value
-from src.tracking.contact_author_experiments import ExperimentSourceChanged, experiment_path, load_experiment
+from src.tracking.contact_author_experiments import ExperimentSourceChanged
 from src.tracking.volleyball_contact_lab import load_lab
+from src.viewer_app.stats import _prepare_viewer_stats
+from src.viewer_app.library import _annotation_original_video, _library_summary
+from src.viewer_app.calibration_preview import _manual_calibration, _calibration_frame
+from src.viewer_app.player_contacts_io import _load_player_contact_inputs, _player_contact_inputs  # noqa: F401 (tests clear its cache)
+from src.viewer_app.court_correction import _read_annotations, _write_annotations, _validated_corners, _projector_for
+from src.viewer_app.media import _stream_video, _decode_thumbnail, _decode_player_portrait
 
 app = Flask(__name__, template_folder="viewer/templates", static_folder="viewer/static")
 # Jinja caches compiled templates in memory, so UI edits need a server restart
@@ -74,73 +75,6 @@ def _setup_store() -> CourtSetupStore:
 
 # Track running jobs
 jobs: dict = {}
-
-_LIFECYCLE_COUNTERS = (
-    "service_attempts",
-    "confirmed_serves",
-    "playable_rallies",
-    "aces_no_reception",
-    "reception_failed",
-    "serve_faults",
-    # Spotter-built rallies: a serve the decode missed but its serve
-    # probability recovered, and serves that no contact followed.
-    "inferred_serves",
-    "serves_not_played",
-)
-
-
-def _prepare_viewer_stats(stats: dict) -> dict:
-    """Add a small, stable presentation contract without reclassifying events.
-
-    New analysis results provide canonical rally lifecycle metadata.  Legacy
-    results predate that schema, so the viewer keeps their original rally list
-    and total instead of guessing service outcomes from noisy contact events.
-    """
-    prepared = dict(stats)
-    prepared["rallies"] = list(stats.get("rallies") or [])
-    prepared["service_attempts"] = list(stats.get("service_attempts") or [])
-    prepared.setdefault("all_events", [])
-
-    lifecycle = stats.get("rally_lifecycle")
-    lifecycle_available = isinstance(lifecycle, dict)
-    if lifecycle_available:
-        # A counter the producer did not measure stays None: the spotter
-        # cannot tell an ace from a fault, so it must not read as zero aces.
-        counters = {
-            key: int(lifecycle.get(key) or 0) if key in lifecycle else None
-            for key in _LIFECYCLE_COUNTERS
-        }
-        counters["playable_rallies"] = counters["playable_rallies"] or 0
-        prepared["rallies"] = [
-            rally for rally in prepared["rallies"]
-            if isinstance(rally, dict)
-            and isinstance(rally.get("lifecycle"), dict)
-            and rally["lifecycle"].get("status") == "playable_rally"
-            and rally["lifecycle"].get("is_playable") is True
-        ]
-        # The canonical lifecycle counter is the user-facing rally total.
-        prepared["total_rallies"] = counters["playable_rallies"]
-    else:
-        legacy_total = int(
-            stats.get("total_rallies", len(prepared["rallies"])) or 0
-        )
-        counters = {
-            "service_attempts": None,
-            "confirmed_serves": None,
-            "playable_rallies": legacy_total,
-            "aces_no_reception": None,
-            "reception_failed": None,
-            "serve_faults": None,
-            "inferred_serves": None,
-            "serves_not_played": None,
-        }
-        prepared.setdefault("total_rallies", legacy_total)
-
-    prepared["viewer_lifecycle"] = {
-        "available": lifecycle_available,
-        **counters,
-    }
-    return prepared
 
 
 def _resolve_video_path(value: str) -> Path:
@@ -199,65 +133,6 @@ def _restore_completed_job(job_id: str):
 
 def _get_job(job_id: str):
     return jobs.get(job_id) or _restore_completed_job(job_id)
-
-
-# ---------------------------------------------------------------------------
-# Results library
-# ---------------------------------------------------------------------------
-
-_ORIGINAL_VIDEO_RE = re.compile(r'"original_video_path"\s*:\s*"((?:[^"\\]|\\.)*)"')
-
-
-def _annotation_original_video(path: Path) -> str:
-    """Read the recorded source video without parsing a multi-megabyte file.
-
-    Analysis writes ``original_video_path`` into the annotation header, well
-    inside the first kilobytes, so the library never loads the frame array.
-    """
-    try:
-        with open(path, "rb") as handle:
-            head = handle.read(8192).decode("utf-8", errors="ignore")
-    except OSError:
-        return ""
-    match = _ORIGINAL_VIDEO_RE.search(head)
-    if not match:
-        return ""
-    try:
-        return json.loads(f'"{match.group(1)}"')
-    except json.JSONDecodeError:
-        return ""
-
-
-def _library_summary(stats_path: Path) -> dict | None:
-    """Summarise one result for the library card."""
-    try:
-        stats = json.loads(stats_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
-    if not isinstance(stats, dict):
-        return None
-
-    fps = float(stats.get("fps") or 0.0)
-    total_frames = int(stats.get("total_frames") or 0)
-    lifecycle = stats.get("rally_lifecycle")
-    lifecycle_available = isinstance(lifecycle, dict)
-    rallies = (
-        int(lifecycle.get("playable_rallies", 0) or 0) if lifecycle_available
-        else int(stats.get("total_rallies", 0) or 0)
-    )
-    return {
-        "video": stats.get("video", ""),
-        "fps": round(fps, 2) if fps else None,
-        "total_frames": total_frames or None,
-        "duration_sec": round(total_frames / fps, 1) if fps > 0 and total_frames else None,
-        "ball_detection_rate": stats.get("ball_detection_rate"),
-        "total_rallies": rallies,
-        "total_events": len(stats.get("all_events") or []),
-        "processing_time_sec": stats.get("processing_time_sec"),
-        "has_lifecycle": lifecycle_available,
-        "has_match_analytics": bool(stats.get("match_analytics")),
-        "has_reconstruction": bool(stats.get("ball_reconstruction")),
-    }
 
 
 def _library_entry(directory: Path, stem: str) -> dict | None:
@@ -472,67 +347,6 @@ def load_existing():
     return redirect(f"/results/{job_id}")
 
 
-def _manual_calibration(edit: dict, width: int, height: int, net_height: float) -> dict:
-    corners = validate_corners(edit["court_corners"])
-    matrix = homography_from_corners(corners)
-    tape = edit["net_tape"]
-    if len(tape) == 3:  # Older preview clients submitted one shared height.
-        left, right, top = map(float, tape)
-        left_y = right_y = top
-    else:
-        (left, left_y), (right, right_y) = [tuple(map(float, point)) for point in tape]
-    if not (0 <= left < right < width and 0 < left_y < height and 0 < right_y < height):
-        raise ValueError("Net tape must have two ordered endpoints inside the frame")
-    center_left, center_right = sorted(court_guide_lines(matrix)["center_line"])
-    if center_right[0] - center_left[0] < 1e-6:
-        raise ValueError("Court centre line must span the frame horizontally")
-    slope = (center_right[1] - center_left[1]) / (center_right[0] - center_left[0])
-    floor = [(x, center_left[1] + (x - center_left[0]) * slope) for x in (left, right)]
-    if not all(math.isfinite(v) for point in floor for v in point) or any(
-        tape_y >= floor_point[1] for tape_y, floor_point in zip((left_y, right_y), floor)
-    ):
-        raise ValueError("Net tape must be above the court centre line")
-    top = (left_y + right_y) / 2
-    return {
-        "frame_width": width, "frame_height": height,
-        "court_corners": corners, "perspective_matrix": matrix,
-        "back_line_points": max((corners[:2], corners[2:]), key=lambda p: sum(y for _, y in p)),
-        "left_sideline_points": [corners[0], corners[3]],
-        "right_sideline_points": [corners[1], corners[2]],
-        "net_line_points": [[left, left_y], [right, right_y]],
-        "net_detection_sam": {
-            "net_top_y_720p": top * 720 / height,
-            "net_floor_left_720p": [floor[0][0] * 1280 / width, floor[0][1] * 720 / height],
-            "net_floor_right_720p": [floor[1][0] * 1280 / width, floor[1][1] * 720 / height],
-            "net_floor_method": "manual_court_midline",
-            "net_height_m": net_height,
-        },
-    }
-
-
-def _calibration_frame(video_path: Path, seconds: float = 0):
-    import cv2
-
-    cap = cv2.VideoCapture(str(video_path))
-    try:
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        last_second = None
-        if math.isfinite(fps) and fps > 0 and math.isfinite(count) and count >= 1:
-            last_second = (count - 1) / fps
-        if seconds:
-            if last_second is not None:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, round(min(seconds, last_second) * fps))
-            else:
-                cap.set(cv2.CAP_PROP_POS_MSEC, seconds * 1000)
-        ok, frame = cap.read()
-        if not ok:
-            raise ValueError("Could not read preview frame. Try an earlier time.")
-        return frame, last_second
-    finally:
-        cap.release()
-
-
 @app.route("/api/analysis_calibration", methods=["POST"])
 def analysis_calibration():
     import cv2
@@ -680,97 +494,6 @@ def contact_lab_data(job_id):
 _player_contact_lock = threading.Lock()
 
 
-def _roster_portrait_references(payload):
-    seed = (payload.get("player_identity") or {}).get("seed") or {}
-    keys = dict(seed.get("assignments") or {})
-    keys.update((item["key"], item["player_id"]) for item in seed.get("introductions") or [])
-    by_frame = {row["f"]: row for row in payload.get("frames") or []}
-    references = {}
-    for key, player in keys.items():
-        try:
-            frame, index = map(int, key.split(":"))
-            if frame < 0 or index < 0:
-                continue
-            box = tuple(by_frame[frame]["poses"][index]["bb"])
-            if len(box) == 4 and all(math.isfinite(value) for value in box):
-                references.setdefault(player, [(frame, box)])
-        except (ValueError, KeyError, IndexError, TypeError):
-            continue
-    # Sample the tracked roster across the match so one bad initial frame
-    # does not decide every portrait. Only poses on the roster's court side qualify.
-    identity = payload.get("player_identity") or {}
-    target = {"a": "a", "b": "b", "team_a": "a", "team_b": "b"}.get(identity.get("side"))
-    interval = max(1, (max(by_frame, default=0) + 8) // 8)
-    samples = {}
-    for frame, row in by_frame.items():
-        for pose in row.get("poses") or []:
-            player = pose.get("player_id")
-            if not target or pose.get("team") not in (target, f"team_{target}") or not player:
-                continue
-            box = tuple(pose.get("bb") or ())
-            if len(box) != 4 or not all(math.isfinite(value) for value in box):
-                continue
-            width, height = box[2] - box[0], box[3] - box[1]
-            if width <= 0 or height <= 0:
-                continue
-            key = (player, frame // interval)
-            if key not in samples or width * height > samples[key][0]:
-                samples[key] = (width * height, (frame, box))
-    for (player, _), (_, reference) in samples.items():
-        choices = references.setdefault(player, [])
-        if reference not in choices:
-            choices.append(reference)
-    return references
-
-
-@lru_cache(maxsize=2)
-def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp, experiment_stamp=None):
-    """Cache derived proposals, not the large frame/pose payload."""
-    stats_bytes, ann_bytes = Path(stats_path).read_bytes(), Path(ann_path).read_bytes()
-    stats = json.loads(stats_bytes)
-    source = source_fingerprint(stats_bytes, ann_bytes)
-    payload = json.loads(ann_bytes)
-    references = _roster_portrait_references(payload)
-    # Older contact reports omit explicit serve faults. Attribute these
-    # separately for statistics without changing saved reports or reviews.
-    faults = [(index, dict(event, type="serve")) for index, event in enumerate(stats.get("all_events") or [])
-              if event.get("type") == "serve_fault"]
-    fault_contacts = []
-    if faults:
-        fault_contacts = build_player_contacts(
-            [event for _, event in faults], payload["frames"], payload["fps"], payload.get("player_identity"),
-        )["contacts"]
-        for contact in fault_contacts:
-            contact["event_index"] = faults[contact["event_index"]][0]
-    if experiment_stamp is not None:
-        bundle = load_experiment(experiment_path(stats_path), source, stats)
-        return bundle["reports"][bundle["selected_method"]], source, bundle, references, fault_contacts
-    if stats.get("video") != payload.get("video") or float(stats["fps"]) != float(payload["fps"]):
-        raise ValueError("Stats and annotations must belong to the same analysis")
-    report = payload.get("player_contacts")
-    if report:
-        from src.tracking.player_contacts import validate_saved_report
-        validate_saved_report(report, stats)
-    else:
-        report = build_player_contacts(stats.get("all_events") or [], payload["frames"],
-                                       payload["fps"], payload.get("player_identity"))
-    return report, source, None, references, fault_contacts
-
-
-def _load_player_contact_inputs(job):
-    stats_path, ann_path = Path(job["stats_path"]), Path(job["annotations_path"])
-
-    def stamp(path):
-        info = path.stat()
-        return info.st_mtime_ns, info.st_size
-
-    experiment = experiment_path(stats_path)
-    return _player_contact_inputs(
-        str(stats_path.resolve()), str(ann_path.resolve()), stamp(stats_path), stamp(ann_path),
-        stamp(experiment) if experiment.exists() else None,
-    )
-
-
 @app.route("/api/player_contacts/<job_id>", methods=["GET", "POST"])
 def player_contacts(job_id):
     return _player_contact_response(job_id)
@@ -880,37 +603,6 @@ def _player_contact_response(job_id, *, statistics_page=False):
         return jsonify({"error": str(error)}), 409
 
 
-def _read_annotations(path: str) -> dict:
-    with open(path, encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def _write_annotations(path: str, payload: dict) -> None:
-    """Atomically persist viewer-only calibration corrections."""
-    target = Path(path)
-    temporary = target.with_suffix(target.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
-    temporary.replace(target)
-
-
-def _validated_corners(value, width: float, height: float) -> list[list[float]]:
-    if not isinstance(value, list) or len(value) != 4:
-        raise ValueError("court_corners must contain exactly four [x, y] points")
-    corners: list[list[float]] = []
-    for point in value:
-        if not isinstance(point, (list, tuple)) or len(point) != 2:
-            raise ValueError("each court corner must be an [x, y] pair")
-        x, y = float(point[0]), float(point[1])
-        if not math.isfinite(x) or not math.isfinite(y):
-            raise ValueError("court corners must be finite numbers")
-        # A wide lens routinely pushes a real court corner outside the frame,
-        # so only obviously broken coordinates are rejected here.
-        if not (-width <= x <= width * 2 and -height <= y <= height * 2):
-            raise ValueError("court corner lies implausibly far outside the video")
-        corners.append([round(x, 2), round(y, 2)])
-    return corners
-
-
 def _annotation_corners(payload: dict) -> list | None:
     """Best available court corners for a result, in its own pixel space.
 
@@ -938,26 +630,6 @@ def _annotation_corners(payload: dict) -> list | None:
             (payload.get("frame_width", 1280), payload.get("frame_height", 720)),
         )
     ]
-
-
-def _projector_for(payload: dict, corners: list):
-    """Court projector for a result from its (possibly corrected) corners."""
-    from src.detection.player_pose import CourtProjector
-
-    homography = homography_from_corners(corners)
-    floor_left = payload.get("net_floor_left")
-    floor_right = payload.get("net_floor_right")
-    floor_line = (
-        (tuple(floor_left), tuple(floor_right))
-        if floor_left and floor_right else None
-    )
-    tape_band = None
-    if floor_line and payload.get("net_tape_top") and payload.get("net_tape_bottom"):
-        x1, x2 = sorted((floor_left[0], floor_right[0]))
-        tape_band = (x1, x2, payload["net_tape_top"], payload["net_tape_bottom"])
-    return CourtProjector(
-        homography, net_floor_line=floor_line, net_tape_band=tape_band,
-    ), homography
 
 
 def _recompute_attack_heatmap(job: dict, payload: dict) -> dict:
@@ -1139,46 +811,6 @@ def delete_court_setup(setup_id):
     return jsonify({"deleted": setup_id})
 
 
-def _stream_video(video_path: str):
-    """Stream a video file with HTTP Range support for HTML5 player."""
-    p = Path(video_path)
-    if not p.exists():
-        return ("Video not found", 404)
-
-    mimetype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-    file_size = os.path.getsize(video_path)
-    range_header = request.headers.get("Range")
-
-    if range_header:
-        byte_start, byte_end = 0, file_size - 1
-        match = range_header.replace("bytes=", "").split("-")
-        byte_start = int(match[0])
-        if match[1]:
-            byte_end = int(match[1])
-        chunk_size = byte_end - byte_start + 1
-
-        def generate():
-            with open(video_path, "rb") as f:
-                f.seek(byte_start)
-                remaining = chunk_size
-                while remaining > 0:
-                    data = f.read(min(65536, remaining))
-                    if not data:
-                        break
-                    remaining -= len(data)
-                    yield data
-
-        headers = {
-            "Content-Range": f"bytes {byte_start}-{byte_end}/{file_size}",
-            "Accept-Ranges": "bytes",
-            "Content-Length": chunk_size,
-            "Content-Type": mimetype,
-        }
-        return Response(generate(), 206, headers=headers)
-
-    return send_file(video_path, mimetype=mimetype)
-
-
 @app.route("/api/video/<job_id>")
 def video(job_id):
     job = _get_job(job_id)
@@ -1191,41 +823,9 @@ def video(job_id):
 def original_video():
     """Serve the original (unannotated) video for canvas overlay mode."""
     return _stream_video(request.args.get("path", ""))
-
-
-# Rally clip thumbnails are decoded from the video on demand and kept only in
-# memory: a result directory is never written to just to show a preview.
-_THUMB_WIDTH = 320
 _THUMB_CACHE_SIZE = 256
 _thumb_cache: "OrderedDict[tuple, bytes]" = OrderedDict()
 _thumb_lock = threading.Lock()
-
-
-def _decode_thumbnail(video_path: Path, frame: int, box=None):
-    import cv2
-    cap = cv2.VideoCapture(str(video_path))
-    try:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame)
-        ok, image = cap.read()
-    finally:
-        cap.release()
-    if not ok or image is None:
-        return None
-    if box is not None:
-        height, width = image.shape[:2]
-        left, top, right, bottom = box
-        # Keep the head and upper torso within the identity reference crop.
-        bottom = min(bottom, top + 1.45 * (right - left))
-        x1, y1 = max(0, math.floor(left)), max(0, math.floor(top))
-        x2, y2 = min(width, math.ceil(right)), min(height, math.ceil(bottom))
-        if x2 <= x1 or y2 <= y1:
-            return None
-        image = image[y1:y2, x1:x2]
-    height, width = image.shape[:2]
-    size = (_THUMB_WIDTH, max(1, round(height * _THUMB_WIDTH / width)))
-    image = cv2.resize(image, size, interpolation=cv2.INTER_AREA)
-    ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 80])
-    return encoded.tobytes() if ok else None
 
 
 @app.route("/api/player-portrait/<job_id>/<player_id>")
@@ -1250,11 +850,6 @@ def player_portrait(job_id, player_id):
     if data is None:
         return "Portrait unavailable", 404
     return Response(data, mimetype="image/jpeg")
-
-
-@lru_cache(maxsize=96)
-def _decode_player_portrait(source, mtime, size, reference):
-    return _decode_thumbnail(source, *reference)
 
 
 @app.route("/api/frame/<job_id>/<int:frame>")
