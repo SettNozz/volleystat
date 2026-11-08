@@ -284,25 +284,26 @@ python scripts/inference/predict_rally_spotting_results.py --help
 
 ## Model registry
 
-`configs/model_registry.json` defines logical models and local fallbacks:
+`configs/model_registry.json` lists every production model:
 
-```text
-ball_detector
-ball_detector_tiled
-pose_estimator
-net_sam
-event_sequence
-spotting
-```
+- ball_detector, ball_detector_tiled, pose_estimator, player_reid, event_sequence, contact_spotter, contact_author, net_sam;
+- the optional legacy `spotting` entry.
 
-MLflow alias `production` is authoritative when registry is reachable. Local fallback is used otherwise. Every run must record resolved source, version/path, and checksum.
+Each entry pins `sha256` of its fallback file, and `files` pins companions (OSNet code/licence, spotter sidecar, contact-author deployment.json, event fold checkpoints).
+
+MLflow alias `production` is authoritative when the registry is reachable; otherwise the local fallback is used. Every run records the resolved source, version/path and sha256, and a fallback with other bytes than its pin gets `sha256_mismatch: true`.
 
 ```powershell
-python scripts/models/run_mlflow_server.py
-python scripts/models/register_models.py --all
+python scripts/models/run_mlflow_server.py          # mlflow.db + mlartifacts/ in repo root
+python scripts/models/register_models.py --all      # backs up main + companion files
+python scripts/models/verify_models.py [--restore]  # pins/backup check; restores missing files only
 ```
 
-Explicit model CLI paths override registry. Note: logical `spotting` entry still points at older checkpoint naming; verify checkpoint schema against `action_recognition/rally_spotting` before using it.
+Never register bytes that differ from a pin; change `fallback` and `sha256` together when promoting. The viewer resolves `contact_spotter` from the config. Explicit model CLI paths override the registry.
+
+Incident 2026-11-08: `git worktree remove --force` followed Windows junctions and emptied `models/` and `experiments_three_full_gold_multiscale_v2`. Everything was restored and verified byte-identical: by a cache-only replay of a pre-incident run, and the event checkpoints from `shutil.copy2` copies in `results/event_team_pose_offline_20261027_v3/historical_checkpoints`.
+
+Before removing a worktree, `rmdir` its junctions, and never `--force` while a junction exists. Run `verify_models.py` after any model-file change.
 
 ## Viewer and artifacts
 

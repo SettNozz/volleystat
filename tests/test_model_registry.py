@@ -50,7 +50,7 @@ def config_for(weights: Path, **overrides):
 
 def register(name: str, entry: dict, path: Path, alias: str = "production", **kw):
     from scripts.models.register_models import register_one
-    return register_one(name, entry, path, alias, kw.get("note"), kw.get("force", False))
+    return register_one(name, entry, path, alias, kw.get("note"), kw.get("force", False), kw.get("companions"))
 
 
 # ------------------------------------------------------------------ resolving
@@ -198,3 +198,115 @@ def test_stopped_local_server_is_detected_without_mlflow_retries(monkeypatch):
     with pytest.raises(ConnectionError):
         mr._require_reachable(uri)
     mr._require_reachable("sqlite:///unused.db")  # file stores are never probed
+
+
+# ------------------------------------------------------------------ pins, backup, restore
+
+
+def _bundle(tmp_path):
+    """A main file plus two companions, one of them in a sibling folder."""
+    main = tmp_path / "run" / "final" / "model.pt"
+    main.parent.mkdir(parents=True)
+    main.write_bytes(b"final-weights" * 100)
+    sidecar = main.parent / "model.pt.json"
+    sidecar.write_text('{"members": 3}', encoding="utf-8")
+    fold = tmp_path / "run" / "fold_a" / "model.pt"
+    fold.parent.mkdir()
+    fold.write_bytes(b"fold-weights" * 100)
+    entry = {"registry_name": "test_bundle", "alias": "production", "artifact": "model.pt",
+             "fallback": str(main), "sha256": mr.sha256_of(main),
+             "files": {"model.pt.json": mr.sha256_of(sidecar), "../fold_a/model.pt": mr.sha256_of(fold)}}
+    return entry, main, sidecar, fold
+
+
+def test_shipped_config_pins_every_required_model():
+    for name, entry in mr.load_config().items():
+        if entry.get("required", True):
+            assert len(entry.get("sha256") or "") == 64, f"{name} has no sha256 pin"
+    assert "contact_spotter" in mr.load_config()
+
+
+def test_fallback_records_its_sha_and_flags_other_bytes(registry, weights):
+    config = config_for(weights, sha256=mr.sha256_of(weights))
+    resolved = mr.resolve_model("ball_detector", config=config)
+    assert resolved.sha256 == mr.sha256_of(weights) and "sha256_mismatch" not in resolved.extra
+    weights.write_bytes(b"retrained")
+    resolved = mr.resolve_model("ball_detector", config=config)
+    assert resolved.extra.get("sha256_mismatch") is True
+    assert "differs from the pinned" in resolved.warning
+    assert resolved.as_dict()["sha256_mismatch"] is True
+
+
+def test_missing_fallback_points_at_the_restore_command(registry, tmp_path):
+    config = config_for(tmp_path / "gone.pt", sha256="0" * 64)
+    resolved = mr.resolve_model("ball_detector", config=config)
+    assert resolved.sha256 is None and "verify_models.py --restore" in resolved.warning
+
+
+def test_check_files_reports_each_state(tmp_path):
+    entry, main, sidecar, fold = _bundle(tmp_path)
+    assert {r["name"]: r["status"] for r in mr.check_files(entry)} == {
+        "model.pt": "ok", "model.pt.json": "ok", "../fold_a/model.pt": "ok"}
+    sidecar.write_text("changed", encoding="utf-8")
+    fold.unlink()
+    states = {r["name"]: r["status"] for r in mr.check_files(entry)}
+    assert states == {"model.pt": "ok", "model.pt.json": "mismatch", "../fold_a/model.pt": "missing"}
+    assert mr.check_files(dict(entry, sha256=None))[0]["status"] == "unpinned"
+
+
+def test_register_backs_up_companions_and_restore_brings_them_back(registry, tmp_path, monkeypatch):
+    from scripts.models import verify_models as vm
+    from mlflow.tracking import MlflowClient
+    entry, main, sidecar, fold = _bundle(tmp_path)
+    companions = [(f["name"], f["path"], f["sha256"]) for f in mr.check_files(entry) if f["role"] == "companion"]
+    register("bundle", entry, main, companions=companions)
+    client = MlflowClient(tracking_uri=registry, registry_uri=registry)
+    info = (client, registry, False)
+    assert vm.verify({"bundle": entry}, client_info=info) == 0
+
+    originals = {p: p.read_bytes() for p in (main, sidecar, fold)}
+    main.unlink(); fold.unlink()
+    assert vm.verify({"bundle": entry}, client_info=info) == 1
+    assert vm.verify({"bundle": entry}, restore=True, client_info=info) == 0
+    assert all(p.read_bytes() == data for p, data in originals.items())
+
+
+def test_restore_never_overwrites_and_reports_other_bytes(registry, tmp_path):
+    from scripts.models import verify_models as vm
+    from mlflow.tracking import MlflowClient
+    entry, main, sidecar, fold = _bundle(tmp_path)
+    register("bundle", entry, main, companions=[])
+    client = MlflowClient(tracking_uri=registry, registry_uri=registry)
+    main.write_bytes(b"someone else's weights")
+    assert vm.verify({"bundle": entry}, restore=True, client_info=(client, registry, False)) == 1
+    assert main.read_bytes() == b"someone else's weights"
+
+
+def test_unbacked_pinned_model_is_a_problem_even_without_a_registry(tmp_path):
+    from scripts.models import verify_models as vm
+    entry, *_ = _bundle(tmp_path)
+    assert vm.verify({"bundle": entry}, client_info=(None, None, False)) == 1
+    assert vm.verify({"opt": dict(entry, required=False)}, client_info=(None, None, False)) == 0
+
+
+def test_local_artifact_store_is_read_without_a_server(tmp_path):
+    from scripts.models import verify_models as vm
+    store = tmp_path / "mlartifacts" / "1" / "run" / "artifacts" / "m"
+    store.mkdir(parents=True)
+    (store / "w.pt").write_bytes(b"x")
+    out = tmp_path / "out"; out.mkdir()
+    got = vm.fetch("mlflow-artifacts:/1/run/artifacts/m/w.pt", out, None, False, tmp_path / "mlartifacts")
+    assert got.read_bytes() == b"x"
+
+
+def test_companion_artifact_names_are_unique_and_safe():
+    from scripts.models.register_models import companion_artifact
+    a = companion_artifact("../fold_a/model.pt")
+    b = companion_artifact("../fold_b/model.pt")
+    assert a != b and ".." not in a and a.endswith("/model.pt")
+
+
+def test_entry_without_registry_copy_is_not_a_backup_problem(tmp_path):
+    from scripts.models import verify_models as vm
+    entry, *_ = _bundle(tmp_path)
+    assert vm.verify({"big": dict(entry, backup=False)}, client_info=(None, None, False)) == 0

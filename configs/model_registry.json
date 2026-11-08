@@ -1,27 +1,23 @@
 {
   "_comment": [
-    "Logical model names used by the pipeline, and where their weights come from.",
-    "The MLflow registry is authoritative; 'fallback' is the local file used when",
-    "the registry is unreachable or the name was never registered, and every result",
-    "records which of the two it actually got.",
-    "Register with: python scripts/models/register_models.py --all"
+    "Every model file the pipeline loads, by logical name. The MLflow registry is",
+    "authoritative; 'fallback' is the local file used when the registry is unreachable",
+    "or the name was never registered, and every result records which one it got.",
+    "'sha256' pins the bytes of the fallback file and 'files' pins companion files that",
+    "must sit next to it (paths relative to the fallback's directory). A pinned file",
+    "with other bytes is reported, never silently used as the same model.",
+    "Back up / check / restore: python scripts/models/register_models.py --all,",
+    "python scripts/models/verify_models.py [--restore]"
   ],
   "models": {
-    "contact_author": {
-      "registry_name": "volleystat_contact_author",
-      "alias": "production",
-      "artifact": "model.joblib",
-      "fallback": "models/contact_author/expanded_20261106_v1/model.joblib",
-      "sha256": "4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091",
-      "note": "Promoted 2026-11-07: all-side temporal OSNet + soft HGB. Known-contact author LOSO 470/565 (83.19%); new7 307/381 (80.58%). Human photo roster in evaluation; automatic-roster accuracy unmeasured. Final all10 fit has no held-out score."
-    },
     "ball_detector": {
       "registry_name": "volleystat_ball_detector",
       "alias": "production",
       "artifact": "best.pt",
       "fallback": "models/best_fullframe/weights/best.pt",
       "imgsz": 1280,
-      "note": "recall 0.72 at imgsz 1280 on the video-3 GT window (232 labelled frames)"
+      "note": "recall 0.72 at imgsz 1280 on the video-3 GT window (232 labelled frames)",
+      "sha256": "65006d22d09ddb0868be3cedec2b5b6b68e17c4c4e8a196a73c017e32470764a"
     },
     "ball_detector_tiled": {
       "registry_name": "volleystat_ball_detector_tiled",
@@ -29,22 +25,68 @@
       "artifact": "best.pt",
       "fallback": "models/yolov8_curated_training/yolov8n_volleyball_curated8/weights/best.pt",
       "imgsz": 640,
-      "tile_grid": [3, 2],
-      "note": "second opinion for --ball-ensemble; union recall 0.93 with the primary"
+      "tile_grid": [
+        3,
+        2
+      ],
+      "note": "second opinion for --ball-ensemble; union recall 0.93 with the primary",
+      "sha256": "f11b9236b2f75e5933160908e973b4b8114056ae6a9e79c2b112e963038ef74a"
     },
     "pose_estimator": {
       "registry_name": "volleystat_pose_estimator",
       "alias": "production",
       "artifact": "yolo11m-pose.pt",
       "fallback": "models/pretrained/yolo11m-pose.pt",
-      "note": "stock ultralytics weights; registered so a run records which ones"
+      "note": "stock ultralytics weights; registered so a run records which ones",
+      "sha256": "29b17eaf3a3117cbea906090dbedf9159f7c6a49db58ec8b99ed2dfde1cf6eb2"
     },
     "player_reid": {
       "registry_name": "volleystat_player_reid",
       "alias": "production",
       "artifact": "osnet_msmt17.pth",
       "fallback": "models/player_reid/osnet_msmt17_v1/osnet_msmt17.pth",
-      "note": "Pinned frozen OSNet-x1.0/MSMT17. Install matching code/license bundle with scripts/models/install_player_reid.py; raw tracker IDs remain unchanged. Confirmed roster additions supported; no contact attribution."
+      "note": "Pinned frozen OSNet-x1.0/MSMT17. Install matching code/license bundle with scripts/models/install_player_reid.py; raw tracker IDs remain unchanged. Confirmed roster additions supported; no contact attribution.",
+      "sha256": "48df972f72887b95cf3b43b3a07c3a7d2398381aea0f9cae64a7ef11d512b727",
+      "files": {
+        "osnet.py": "c7c1c29187d6330f859c91da229271531920464c7011aec13842a086b2263cae",
+        "manifest.json": "fbe2bbb0d27da35f418596d715023a35d1ae88bca1bc51a262e10db10d22710e",
+        "LICENSE": "3ac8ce2a83d170cb1c7c84152e0c1faca1f187794303514383960d2441716247"
+      }
+    },
+    "event_sequence": {
+      "registry_name": "volleystat_event_sequence",
+      "alias": "production",
+      "artifact": "final_event_sequence.pt",
+      "fallback": "action_recognition/models/experiments_three_full_gold_multiscale_v2/multiscale_final_three_videos_seed42/final_event_sequence.pt",
+      "note": "four-class causal multiscale final fit (410 core clips, seed 42); fold checkpoints are the leave-one-video-out models it was selected with. Restored 2026-11-08 from the byte-identical copies in results/event_team_pose_offline_20261027_v3.",
+      "sha256": "b199a523231432843787731324daf72df83ba3776969f87f64063df0cb281930",
+      "files": {
+        "../multiscale_val_j0_seed42/best_event_sequence.pt": "ab0be74ca3859b9e352377405ccd303644e1235a37cba78d3d090ebb04116709",
+        "../multiscale_val_j3_seed42/best_event_sequence.pt": "7fe2bf2c2ec654b946e8753ef9c58f3518f088f20eff13159646fe09435c9ed7",
+        "../multiscale_val_khe_seed42/best_event_sequence.pt": "afb9d13749217fb8c4b1b956a73940c1fb79f8e342864e50750e07e9fb267467"
+      }
+    },
+    "contact_spotter": {
+      "registry_name": "volleystat_contact_spotter",
+      "alias": "production",
+      "artifact": "spotter_20261028_v1.pt",
+      "fallback": "models/contact_spotter/spotter_20261028_v1.pt",
+      "sha256": "86a2999795939ad3fb0cdd726fb1fa927d9db80555fdd9b0945aa09d635c7042",
+      "files": {
+        "spotter_20261028_v1.pt.json": "d6a85c47c5c8e806a1459b4e455bc38942516a95bf9ee4bd5ee525295adc9baf"
+      },
+      "note": "contact_spotter_v1 final fit on the three gold videos (members, normalisation and decode constraints inside). Used by viewer uploads and --contact-spotter."
+    },
+    "contact_author": {
+      "registry_name": "volleystat_contact_author",
+      "alias": "production",
+      "artifact": "model.joblib",
+      "fallback": "models/contact_author/expanded_20261106_v1/model.joblib",
+      "sha256": "4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091",
+      "note": "Promoted 2026-11-07: all-side temporal OSNet + soft HGB. Known-contact author LOSO 470/565 (83.19%); new7 307/381 (80.58%). Human photo roster in evaluation; automatic-roster accuracy unmeasured. Final all10 fit has no held-out score.",
+      "files": {
+        "deployment.json": "3266557c40e9a4d006edc52b291af07a68e9e26d7acea176daaf2945d1005111"
+      }
     },
     "net_sam": {
       "registry_name": "volleystat_net_sam",
@@ -52,21 +94,18 @@
       "artifact": "sam_vit_h_4b8939.pth",
       "fallback": "~/Downloads/sam_vit_h_4b8939.pth",
       "model_type": "vit_h",
-      "note": "net tape/post segmentation. The fallback keeps today's behaviour (vit_h from ~/Downloads); models/sam_vit_b_01ec64.pth is a different checkpoint that was never the one being used. Register whichever should win and the ambiguity is gone — but re-run scripts/run_sam_net_detection.py if you switch, because calibration caches the result"
-    },
-    "event_sequence": {
-      "registry_name": "volleystat_event_sequence",
-      "alias": "production",
-      "artifact": "final_event_sequence.pt",
-      "fallback": "action_recognition/models/experiments_three_full_gold_multiscale_v2/multiscale_final_three_videos_seed42/final_event_sequence.pt",
-      "note": "four-class causal fit; register the new run once training finishes"
+      "note": "net tape/post segmentation. The fallback keeps today's behaviour (vit_h from ~/Downloads); models/sam_vit_b_01ec64.pth is a different checkpoint that was never the one being used. Register whichever should win and the ambiguity is gone — but re-run scripts/run_sam_net_detection.py if you switch, because calibration caches the result. Not copied into the registry (2.5 GB stock Meta weights; an upload through the MLflow server did not finish in 40 min): the sha256 pin identifies the file, re-download it from source_url.",
+      "sha256": "a7bf3b02f3ebf1267aba913ff637d9a2d5c33d3173bb679e46d9f338c26f262e",
+      "backup": false,
+      "source_url": "https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth"
     },
     "spotting": {
       "registry_name": "volleystat_spotting",
       "alias": "production",
       "artifact": "best_spotting.pt",
       "fallback": "action_recognition/models/checkpoints_spotting_v1/best_spotting.pt",
-      "note": "SpottingTCN, frame-level contact detection"
+      "note": "SpottingTCN, frame-level contact detection. Superseded by contact_spotter and not loaded by the pipeline; its file was already absent on 2026-11-08.",
+      "required": false
     }
   }
 }

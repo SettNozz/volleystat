@@ -133,6 +133,59 @@ def sha256_of(path: Path, chunk: int = 1 << 20) -> str:
     return digest.hexdigest()
 
 
+_SHA_CACHE: Dict[tuple, str] = {}
+
+
+def cached_sha256(path: Path) -> str:
+    """``sha256_of`` remembered per (path, size, mtime) for this process."""
+    stat = Path(path).stat()
+    key = (str(Path(path).resolve()), stat.st_size, stat.st_mtime_ns)
+    value = _SHA_CACHE.get(key)
+    if value is None:
+        value = _SHA_CACHE[key] = sha256_of(Path(path))
+    return value
+
+
+def fallback_path(entry: Dict[str, Any]) -> Optional[Path]:
+    """The configured local file of an entry, absolute."""
+    raw = entry.get("fallback")
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    return path if path.is_absolute() else _ROOT / path
+
+
+def pinned_files(entry: Dict[str, Any]) -> List[tuple]:
+    """``(role, relative name, absolute path, pinned sha256 or None)`` of an entry.
+
+    The main file is the fallback; ``files`` are companions that must sit next
+    to it (an OSNet bundle's code and licence, a spotter's sidecar, the fold
+    checkpoints a final fit was selected with), relative to its directory.
+    """
+    main = fallback_path(entry)
+    if main is None:
+        return []
+    rows = [("main", main.name, main, entry.get("sha256"))]
+    for relative, sha in (entry.get("files") or {}).items():
+        # normpath, not resolve(): keep the configured location even through a junction.
+        rows.append(("companion", relative, Path(os.path.normpath(main.parent / relative)), sha))
+    return rows
+
+
+def check_files(entry: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """State of every pinned file of an entry: ok | missing | mismatch | unpinned."""
+    out = []
+    for role, relative, path, pinned in pinned_files(entry):
+        row = {"role": role, "name": relative, "path": path, "pinned": pinned, "sha256": None}
+        if not path.is_file():
+            row["status"] = "missing"
+        else:
+            row["sha256"] = cached_sha256(path)
+            row["status"] = "unpinned" if not pinned else ("ok" if row["sha256"] == pinned else "mismatch")
+        out.append(row)
+    return out
+
+
 # ----------------------------------------------------------------------
 # Resolution
 # ----------------------------------------------------------------------
@@ -196,22 +249,31 @@ def _cached_file(name: str, version: str, artifact: Optional[str]) -> Optional[P
 def _fallback(
     name: str, entry: Dict[str, Any], reason: str, allow_fallback: bool
 ) -> ResolvedModel:
-    fallback = entry.get("fallback")
-    if not fallback:
+    path = fallback_path(entry)
+    if path is None:
         raise FileNotFoundError(
             f"model '{name}' is not in the registry ({reason}) and has no fallback path"
         )
-    path = Path(fallback).expanduser()
-    if not path.is_absolute():
-        path = _ROOT / path
     if not allow_fallback:
         raise FileNotFoundError(f"model '{name}' unavailable from the registry: {reason}")
     warning = f"registry unavailable ({reason}); using local file {path}"
+    extra = {k: v for k, v in entry.items() if k in ("imgsz", "tile_grid", "model_type")}
+    sha = None
+    if not path.is_file():
+        warning += ("; the file is missing - restore it with "
+                    "python scripts/models/verify_models.py --restore")
+    else:
+        sha = cached_sha256(path)
+        pinned = entry.get("sha256")
+        if pinned and sha != pinned:
+            # Other bytes under the same name are another model: say so in the
+            # result, so nothing downstream mistakes it for the pinned one.
+            warning += (f"; sha256 {sha[:12]} differs from the pinned {pinned[:12]} in "
+                        f"{CONFIG_PATH.name}")
+            extra["sha256_mismatch"] = True
     log.warning(f"{name}: {warning}")
-    return ResolvedModel(
-        name=name, path=path, source="fallback", warning=warning,
-        extra={k: v for k, v in entry.items() if k in ("imgsz", "tile_grid", "model_type")},
-    )
+    return ResolvedModel(name=name, path=path, source="fallback", sha256=sha,
+                         warning=warning, extra=extra)
 
 
 def resolve_model(
@@ -278,7 +340,7 @@ def resolve_model(
                 log.warning(f"{name}: {warning}")
                 return ResolvedModel(
                     name=name, path=path, source="cache", version=newest,
-                    alias=alias, warning=warning, extra=extra,
+                    alias=alias, sha256=cached_sha256(path), warning=warning, extra=extra,
                 )
         return _fallback(name, entry, _short(exc), allow_fallback)
 
@@ -293,7 +355,7 @@ def resolve_model(
         log.info(f"{name}: registry v{version.version} (cached) {cached_path.name}")
         return ResolvedModel(
             name=name, path=cached_path, source="registry", version=str(version.version),
-            alias=alias, run_id=version.run_id, extra=extra,
+            alias=alias, run_id=version.run_id, sha256=cached_sha256(cached_path), extra=extra,
         )
 
     try:
@@ -304,7 +366,7 @@ def resolve_model(
     log.info(f"{name}: registry v{version.version} -> {path}")
     return ResolvedModel(
         name=name, path=path, source="registry", version=str(version.version),
-        alias=alias, run_id=version.run_id, extra=extra,
+        alias=alias, run_id=version.run_id, sha256=cached_sha256(path), extra=extra,
     )
 
 

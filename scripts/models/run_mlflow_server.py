@@ -43,7 +43,9 @@ def main() -> int:
     cmd = [
         sys.executable, "-m", "mlflow", "server",
         "--backend-store-uri", db_uri,
-        "--artifacts-destination", str(args.artifacts),
+        # A URI, not a path: MLflow reads "C:\..." as an unknown "c" scheme and
+        # every artifact upload then fails with HTTP 500.
+        "--artifacts-destination", args.artifacts.resolve().as_uri(),
         "--serve-artifacts",
         "--host", args.host,
         "--port", str(args.port),
