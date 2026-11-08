@@ -1,0 +1,831 @@
+// Results page main script: state, video page, annotations load, court editing,
+// timeline, listeners and init. Moved verbatim from viewer/templates/viewer.html.
+// Needs the page boot constants (JOB_ID, FPS, ...) and is loaded after
+// viewer_charts.js, viewer_tables.js and viewer_overlay.js.
+
+function isPlayableRally(r) {
+  const lc = r && r.lifecycle;
+  if (!lc) return !LIFECYCLE.available;
+  return lc.status === 'playable_rally' && lc.is_playable === true;
+}
+
+function lifecycleFrame(item, key, fallback = null) {
+  const lc = (item && item.lifecycle) || {};
+  const value = lc[key];
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function rallyStartFrame(r) {
+  return lifecycleFrame(r, 'start_frame', r.start_frame);
+}
+
+function isSuccessfulOutcome(outcome) {
+  return outcome === 'success' || outcome === 'playable_rally';
+}
+
+function isFailedOutcome(outcome) {
+  return outcome === 'failed' || outcome === 'reception_failed' || outcome === 'serve_fault';
+}
+
+// Canonical results are metadata-gated. Legacy results retain their original
+// behaviour because they have no lifecycle classification to consume.
+const RALLIES = RAW_RALLIES.filter(isPlayableRally);
+let eventTeams = EVENTS.map(event => event.team);
+const scoreAttempts = SERVICE_ATTEMPTS.length ? SERVICE_ATTEMPTS : RALLIES;
+let scorePoints = buildServeScore(EVENTS, scoreAttempts, eventTeams);
+
+const EV_COLORS = {
+  serve: '#eab308', attack: '#ef4444', block: '#f97316',
+  reception: '#10b981', reception_pass: '#10b981', dig: '#14b8a6',
+  setting_pass: '#3b82f6', pass: '#8b5cf6', ace: '#facc15',
+  serve_out: '#9ca3af', out: '#9ca3af', ball_out: '#9ca3af', goal_or_out: '#9ca3af',
+};
+const GREEN = 'oklch(62% 0.15 150)', RED = 'oklch(60% 0.18 25)', INK = 'oklch(30% 0.03 260)';
+
+const vid = document.getElementById('vid');
+const canvas = document.getElementById('overlay');
+const ctx = canvas.getContext('2d');
+const courtEditor = {
+  active: false, dragIndex: null, originalCorners: null,
+  setups: [], setupId: null,
+  // Lines, not corners, is the default: on a wide lens the corners are often
+  // off-frame while every line is visible.
+  mode: 'lines', anchors: null, drag: null,
+};
+
+let annotations = null;
+let currentFrameIdx = 0;
+
+/* ── Page navigation ─────────────────────────────────── */
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n =>
+    n.classList.toggle('active', n.dataset.page === name));
+  if (name === 'charts') renderCharts();
+  if (name === 'table') renderTables();
+  if (name === 'video') resizeCanvas();
+}
+
+/* ── Filters (video page) ────────────────────────────── */
+const allTypes = [...new Set(EVENTS.map(e => e.type))];
+const filterState = { types: new Set(allTypes), teams: new Set(['team_a', 'team_b']) };
+
+function buildChips(containerId, items, activeSet, labelFn, onToggle) {
+  const box = document.getElementById(containerId);
+  box.innerHTML = '';
+  for (const it of items) {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'chip' + (activeSet.has(it) ? ' on' : '');
+    el.textContent = labelFn ? labelFn(it) : it;
+    el.setAttribute('aria-pressed', String(activeSet.has(it)));
+    el.onclick = () => {
+      onToggle(it);
+      el.classList.toggle('on', activeSet.has(it));
+      el.setAttribute('aria-pressed', String(activeSet.has(it)));
+    };
+    box.appendChild(el);
+  }
+}
+
+function initVideoFilters() {
+  buildChips('typeChips', allTypes, filterState.types,
+    t => t.replace(/_/g, ' '),
+    t => { toggleSet(filterState.types, t); applyEventFilters(); });
+  buildChips('teamChips', ['team_a', 'team_b'], filterState.teams,
+    t => t === 'team_a' ? 'Team A' : 'Team B',
+    t => { toggleSet(filterState.teams, t); applyEventFilters(); });
+}
+
+function toggleSet(set, v) { set.has(v) ? set.delete(v) : set.add(v); }
+function evVisible(ev, team) {
+  const allTeams = filterState.teams.has('team_a') && filterState.teams.has('team_b');
+  const unattributed = team !== 'team_a' && team !== 'team_b';
+  return filterState.types.has(ev.type) &&
+    (filterState.teams.has(team) || (allTeams && unattributed));
+}
+
+function applyEventFilters() {
+  renderEventList();
+  setupEventMarkers();
+  updateActiveEvent();
+  redraw();
+}
+
+function updateContactTeams(report) {
+  eventTeams = EVENTS.map(event => event.team);
+  if (report.side === 'a' || report.side === 'b') {
+    const opposite = report.side === 'a' ? 'b' : 'a';
+    for (const contact of report.contacts) {
+      const index = contact.event_index;
+      const event = EVENTS[index];
+      if (!event || event.frame !== contact.frame || event.type !== contact.type) continue;
+      if (contact.label_source !== 'human' && event.team) continue;
+      if (contact.status === 'assigned') eventTeams[index] = 'team_' + report.side;
+      else if (contact.status === 'other_side') eventTeams[index] = 'team_' + opposite;
+      else if (contact.label_source === 'human') eventTeams[index] = null;
+    }
+  }
+  scorePoints = buildServeScore(EVENTS, scoreAttempts, eventTeams);
+  applyEventFilters();
+}
+
+function renderServeScore() {
+  const score = serveScoreAt(scorePoints, currentFrameIdx);
+  const near = document.getElementById('nearScore');
+  const far = document.getElementById('farScore');
+  const unknown = document.getElementById('unknownScore');
+  if (near.value !== String(score.near)) near.value = score.near;
+  if (far.value !== String(score.far)) far.value = score.far;
+  unknown.hidden = !score.unknown;
+  const missing = `+?${score.unknown}`;
+  if (unknown.textContent !== missing) unknown.textContent = missing;
+}
+
+/* ── Event list (video page sidebar) ─────────────────── */
+function renderEventList() {
+  const box = document.getElementById('eventList');
+  box.innerHTML = '';
+  const rallyFirst = new Map();
+  RALLIES.forEach((r, i) => { if (r.events && r.events.length) rallyFirst.set(r.events[0].frame, i + 1); });
+  EVENTS.forEach((ev, i) => {
+    const team = eventTeams[i];
+    if (!evVisible(ev, team)) return;
+    if (rallyFirst.has(ev.frame)) {
+      const sep = document.createElement('div');
+      sep.className = 'rally-sep';
+      sep.innerHTML = `<span class="rally-sep-label">Rally ${rallyFirst.get(ev.frame)}</span><div class="rally-sep-line"></div>`;
+      sep.onclick = () => seekAndPlay(ev.frame);
+      box.appendChild(sep);
+    }
+    const el = document.createElement('div');
+    el.className = 'event-item';
+    el.id = 'ev' + i;
+    el.onclick = () => seekAndPlay(ev.frame);
+    el.innerHTML = `<div class="event-dot" style="background:${EV_COLORS[ev.type] || '#888'}"></div>` +
+      `<span class="event-time">${ev.time.toFixed(2)}s</span>` +
+      `<span class="event-type">${ev.type.replace(/_/g, ' ')}${ev.inferred ? ' <span class="c-muted" title="Missed by the decode, recovered from the spotter serve probability">· inferred</span>' : ''}</span>` +
+      `<span class="event-team ${teamClass(team)}">${teamLabel(team)}</span>`;
+    box.appendChild(el);
+  });
+  if (!box.children.length) box.textContent = 'No events for these filters.';
+}
+
+/* ── Rally clips strip ───────────────────────────────── */
+function renderRallyClips() {
+  const box = document.getElementById('rallyClips');
+  box.innerHTML = '';
+  RALLIES.forEach((r, i) => {
+    const sr = r.serve_reception || {};
+    const outcome = sr.outcome || '—';
+    const outColor = isSuccessfulOutcome(outcome) ? GREEN : (isFailedOutcome(outcome) ? RED : 'var(--muted)');
+    const el = document.createElement('div');
+    el.className = 'clip-card';
+    el.onclick = () => seekAndPlay(rallyStartFrame(r));
+    const widthPct = Math.min(100, (r.duration_sec / 15) * 100);
+    el.innerHTML =
+      // The rally's first frame (its serve), decoded server-side on demand.
+      `<div class="clip-thumb"><img loading="lazy" alt="" src="/api/frame/${JOB_ID}/${rallyStartFrame(r)}" onerror="this.remove()">` +
+      `<div class="bar" style="width:${widthPct}%"></div></div>` +
+      `<div class="clip-name">Rally ${i + 1} · ${r.duration_sec}s</div>` +
+      `<div class="clip-meta">${rallyContactsLabel(r)} · <span style="color:${outColor};font-weight:700">${outcome.replace(/_/g, ' ')}</span></div>`;
+    box.appendChild(el);
+  });
+}
+
+/* ── Annotations load ────────────────────────────────── */
+fetch('/api/annotations/' + JOB_ID)
+  .then(r => r.json())
+  .then(data => {
+    annotations = {};
+    for (const f of data.frames) annotations[f.f] = f;
+    window._annData = data;
+    initPoseEstimates(data, Boolean(playerContactReport && playerContactReport.parameters && playerContactReport.parameters.estimates));
+    courtEditor.originalCorners = Array.isArray(data.court_corners)
+      ? JSON.parse(JSON.stringify(data.court_corners)) : null;
+    const slider = document.getElementById('netYSlider');
+    const fw = data.frame_width || 1280;
+    const fh = data.frame_height || 720;
+    slider.max = fh;
+    slider.value = data.net_y;
+    document.getElementById('netYVal').textContent = Math.round(data.net_y);
+    const xLSlider = document.getElementById('netXLSlider');
+    const xRSlider = document.getElementById('netXRSlider');
+    const postLeftX = data.net_floor_left ? data.net_floor_left[0] : data.net_x_left;
+    const postRightX = data.net_floor_right ? data.net_floor_right[0] : data.net_x_right;
+    xLSlider.max = fw; xLSlider.value = postLeftX || Math.round(fw * 0.29);
+    xRSlider.max = fw; xRSlider.value = postRightX || Math.round(fw * 0.66);
+    document.getElementById('netXLVal').textContent = Math.round(xLSlider.value);
+    document.getElementById('netXRVal').textContent = Math.round(xRSlider.value);
+    renderAttackHeatmapSummary(data.attack_heatmap);
+    setupEventMarkers();
+    startRenderLoop();
+    redraw();
+    if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
+    loadCourtState();
+  });
+
+function updateNetY(val) {
+  if (!window._annData) return;
+  const d = window._annData;
+  const newY = parseFloat(val);
+  const tapeH = (d.net_tape_bottom != null && d.net_tape_top != null)
+    ? (d.net_tape_bottom - d.net_tape_top) : 50;
+  if (d.net_tape_endpoint_y) {
+    const shift = newY - d.net_tape_top;
+    d.net_tape_endpoint_y = d.net_tape_endpoint_y.map(y => y + shift);
+  }
+  d.net_y = newY;
+  d.net_tape_top = newY;
+  d.net_tape_bottom = newY + tapeH;
+  document.getElementById('netYVal').textContent = Math.round(newY);
+  redraw();
+  if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
+}
+
+function updateNetX() {
+  if (!window._annData) return;
+  const l = parseFloat(document.getElementById('netXLSlider').value);
+  const r = parseFloat(document.getElementById('netXRSlider').value);
+  window._annData.net_x_left = l;
+  window._annData.net_x_right = r;
+  if (window._annData.net_floor_left) window._annData.net_floor_left[0] = l;
+  if (window._annData.net_floor_right) window._annData.net_floor_right[0] = r;
+  document.getElementById('netXLVal').textContent = Math.round(l);
+  document.getElementById('netXRVal').textContent = Math.round(r);
+  redraw();
+  if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
+}
+
+function defaultCourtCorners() {
+  const d = window._annData || {};
+  const w = Number(d.frame_width || 1280), h = Number(d.frame_height || 720);
+  return [[w * .20, h * .40], [w * .80, h * .40], [w * .97, h * .94], [w * .03, h * .94]];
+}
+
+function toggleCourtEdit() {
+  if (!window._annData) return;
+  const d = window._annData;
+  if (!Array.isArray(d.court_corners) || d.court_corners.length !== 4) {
+    d.court_corners = defaultCourtCorners();
+    if (!courtEditor.originalCorners) courtEditor.originalCorners = JSON.parse(JSON.stringify(d.court_corners));
+  }
+  courtEditor.active = !courtEditor.active;
+  courtEditor.dragIndex = null;
+  courtEditor.drag = null;
+  canvas.classList.toggle('court-editing', courtEditor.active);
+  document.getElementById('courtEditBtn').textContent = courtEditor.active ? 'Done editing' : 'Edit court';
+  document.getElementById('courtSaveBtn').disabled = !courtEditor.active;
+  document.getElementById('courtResetBtn').disabled = !courtEditor.active;
+  document.getElementById('courtSetupSaveBtn').disabled = !courtEditor.active;
+  document.getElementById('courtModeBtn').disabled = !courtEditor.active;
+  if (courtEditor.active) {
+    setCourtEditMode(courtEditor.mode);
+    return;
+  }
+  setCourtHint('Drag the court lines into place. Dashed guides show the centre line and both 3 m attack lines — align those, the far baseline is usually hidden.');
+  redraw();
+}
+
+function setCourtHint(text) {
+  document.getElementById('courtEditHint').textContent = text;
+}
+
+function resetCourtCorrection() {
+  if (!window._annData || !courtEditor.originalCorners) return;
+  window._annData.court_corners = JSON.parse(JSON.stringify(courtEditor.originalCorners));
+  syncEdgeAnchors();
+  redraw();
+}
+
+async function saveCourtCorrection(setupName) {
+  const d = window._annData;
+  if (!d || !Array.isArray(d.court_corners) || d.court_corners.length !== 4) return;
+  if (!courtCornersAreConvex(d.court_corners)) {
+    setCourtHint('Those four points cross over each other. Order them A, B (near baseline) then C, D (far baseline).');
+    return;
+  }
+  const button = document.getElementById('courtSaveBtn');
+  button.disabled = true;
+  button.textContent = 'Saving…';
+  setCourtHint('Saving and rebuilding the attack map…');
+  try {
+    const response = await fetch('/api/court/' + JOB_ID, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        court_corners: d.court_corners,
+        net_y: d.net_y,
+        net_x_left: d.net_x_left,
+        net_x_right: d.net_x_right,
+        save_as_setup: setupName || undefined,
+        court_setup_id: setupName ? (courtEditor.setupId || undefined) : undefined,
+      }),
+    });
+    const saved = await response.json();
+    if (!response.ok) throw new Error(saved.error || 'Could not save court correction');
+    d.court_corners = saved.court_corners;
+    if (saved.attack_heatmap) d.attack_heatmap = saved.attack_heatmap;
+    courtEditor.originalCorners = JSON.parse(JSON.stringify(saved.court_corners));
+    courtEditor.setupId = saved.court_setup_id || null;
+    renderCourtSetups(saved.setups || [], courtEditor.setupId);
+    renderAttackHeatmapSummary(d.attack_heatmap);
+    if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
+    const total = (d.attack_heatmap || {}).total_attacks;
+    setCourtHint(`Saved${saved.court_setup_name ? ' as “' + saved.court_setup_name + '”' : ''}. Attack map rebuilt from ${total} attacks.`);
+  } catch (error) {
+    setCourtHint('Save failed: ' + error.message);
+  } finally {
+    button.textContent = 'Save';
+    button.disabled = !courtEditor.active;
+  }
+}
+
+/* ── Court setups (one camera placement, reusable across games) ───── */
+function renderCourtSetups(setups, selectedId) {
+  courtEditor.setups = setups || [];
+  const select = document.getElementById('courtSetupSelect');
+  select.innerHTML = '<option value="">— this game only —</option>';
+  for (const setup of courtEditor.setups) {
+    const option = document.createElement('option');
+    option.value = setup.id;
+    option.textContent = setup.name;
+    select.appendChild(option);
+  }
+  select.value = selectedId || '';
+  courtEditor.setupId = selectedId || null;
+  document.getElementById('courtSetupDeleteBtn').disabled = !select.value;
+}
+
+function applyCourtSetup(setupId) {
+  const d = window._annData;
+  document.getElementById('courtSetupDeleteBtn').disabled = !setupId;
+  courtEditor.setupId = setupId || null;
+  if (!setupId || !d) return;
+  const setup = (courtEditor.setups || []).find(item => item.id === setupId);
+  if (!setup) return;
+  // A setup is stored in the pixels of the game it was drawn on; this result
+  // may be a different resolution.
+  const sx = Number(d.frame_width || 1280) / Number(setup.frame_width || 1280);
+  const sy = Number(d.frame_height || 720) / Number(setup.frame_height || 720);
+  d.court_corners = setup.court_corners.map(([x, y]) => [x * sx, y * sy]);
+  syncEdgeAnchors();
+  setCourtHint(`Loaded “${setup.name}”. Check it against the lines, then Save to rebuild the attack map.`);
+  redraw();
+}
+
+async function saveCourtSetup() {
+  const suggested = (courtEditor.setups || []).find(
+    item => item.id === courtEditor.setupId,
+  );
+  const name = prompt(
+    'Name this camera setup (reusable for other games shot from the same spot):',
+    suggested ? suggested.name : '',
+  );
+  if (!name) return;
+  await saveCourtCorrection(name.trim());
+}
+
+async function deleteCourtSetup() {
+  const setupId = document.getElementById('courtSetupSelect').value;
+  if (!setupId) return;
+  const setup = (courtEditor.setups || []).find(item => item.id === setupId);
+  if (!confirm(`Delete court setup “${setup ? setup.name : setupId}”? Results already saved with it keep their corners.`)) return;
+  const response = await fetch('/api/court_setups/' + setupId, {method: 'DELETE'});
+  if (!response.ok) {
+    setCourtHint('Could not delete that setup.');
+    return;
+  }
+  const list = await (await fetch('/api/court_setups')).json();
+  renderCourtSetups(list.setups || [], null);
+}
+
+async function loadCourtState() {
+  try {
+    const state = await (await fetch('/api/court/' + JOB_ID)).json();
+    if (state.error) return;
+    renderCourtSetups(state.setups || [], state.court_setup_id || null);
+    const d = window._annData;
+    if (d && !Array.isArray(d.court_corners) && Array.isArray(state.court_corners)) {
+      // Results analysed before corners were stored fall back to the shared
+      // calibration, so the editor starts from the geometry actually used.
+      d.court_corners = state.court_corners;
+      redraw();
+    }
+    if (state.heatmap_version !== state.current_heatmap_version) {
+      await recomputeAttackMap(state.heatmap_version);
+    }
+  } catch (error) {
+    /* the court panel is optional; the rest of the viewer still works */
+  }
+}
+
+async function recomputeAttackMap(oldVersion) {
+  setCourtHint(oldVersion
+    ? 'This result predates measured shot directions — rebuilding the attack map…'
+    : 'Rebuilding the attack map…');
+  try {
+    const response = await fetch('/api/court/' + JOB_ID + '/recompute', {method: 'POST'});
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'recompute failed');
+    window._annData.attack_heatmap = data.attack_heatmap;
+    renderAttackHeatmapSummary(data.attack_heatmap);
+    if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
+    setCourtHint(`Attack map rebuilt: ${data.attack_heatmap.total_attacks} attacks. Correct the court if the zones look wrong.`);
+  } catch (error) {
+    setCourtHint('Attack map could not be rebuilt: ' + error.message);
+  }
+}
+
+function eventImagePoint(event) {
+  const rect = canvas.getBoundingClientRect();
+  const d = window._annData || {};
+  const w = Number(d.frame_width || vid.videoWidth || 1280);
+  const h = Number(d.frame_height || vid.videoHeight || 720);
+  return [
+    (event.clientX - rect.left) * w / Math.max(rect.width, 1),
+    (event.clientY - rect.top) * h / Math.max(rect.height, 1),
+  ];
+}
+
+/* ── Line editing ───────────────────────────────────────────────────
+   A wide lens puts court corners outside the frame — the near baseline of
+   this footage meets the left sideline at a point the camera never saw. The
+   lines themselves are always visible, so the court is edited as four lines
+   and the corners are read off as their intersections. */
+const EDGE_NAMES = ['near baseline', 'right sideline', 'far baseline', 'left sideline'];
+
+function syncEdgeAnchors() {
+  const d = window._annData;
+  if (!d || !Array.isArray(d.court_corners)) return;
+  courtEditor.anchors = courtEdgeAnchors(
+    d.court_corners,
+    Number(d.frame_width || 1280),
+    Number(d.frame_height || 720),
+  );
+}
+
+function applyEdgeAnchors() {
+  const d = window._annData;
+  if (!d || !courtEditor.anchors) return;
+  d.court_corners = cornersFromEdgeAnchors(courtEditor.anchors, d.court_corners);
+}
+
+function setCourtEditMode(mode) {
+  courtEditor.mode = mode;
+  courtEditor.drag = null;
+  if (mode === 'lines') syncEdgeAnchors();
+  document.getElementById('courtModeBtn').textContent =
+    mode === 'lines' ? 'Editing: lines' : 'Editing: corners';
+  setCourtHint(mode === 'lines'
+    ? 'Drag a line to slide it, or its round handles to pivot it. Corners are the intersections — they may sit outside the frame.'
+    : 'Drag A/B/C/D. Only works for corners the camera actually sees; switch to line mode for the rest.');
+  redraw();
+}
+
+function toggleCourtEditMode() {
+  setCourtEditMode(courtEditor.mode === 'lines' ? 'corners' : 'lines');
+}
+
+function distanceToSegment(point, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared < 1e-9) return Math.hypot(point[0] - a[0], point[1] - a[1]);
+  let t = ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / lengthSquared;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(point[0] - (a[0] + t * dx), point[1] - (a[1] + t * dy));
+}
+
+canvas.addEventListener('pointerdown', event => {
+  if (!courtEditor.active || !window._annData) return;
+  const point = eventImagePoint(event);
+  const scale = Number(window._annData.frame_width || 1280) / 1280;
+  const grab = 26 * Math.max(1, scale);
+
+  if (courtEditor.mode === 'lines') {
+    if (!courtEditor.anchors) syncEdgeAnchors();
+    let best = grab, found = null;
+    courtEditor.anchors.forEach((anchor, edge) => {
+      anchor.forEach((handle, index) => {
+        const distance = Math.hypot(handle[0] - point[0], handle[1] - point[1]);
+        if (distance <= best) { best = distance; found = {edge, handle: index}; }
+      });
+    });
+    if (!found) {
+      let bestLine = grab * 0.8;
+      courtEditor.anchors.forEach((anchor, edge) => {
+        const distance = distanceToSegment(point, anchor[0], anchor[1]);
+        if (distance <= bestLine) { bestLine = distance; found = {edge, handle: null}; }
+      });
+    }
+    if (found) {
+      courtEditor.drag = {...found, last: point};
+      canvas.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    }
+    return;
+  }
+
+  const corners = window._annData.court_corners || [];
+  let selected = -1, best = grab;
+  corners.forEach((corner, index) => {
+    const distance = Math.hypot(corner[0] - point[0], corner[1] - point[1]);
+    if (distance <= best) { best = distance; selected = index; }
+  });
+  if (selected >= 0) {
+    courtEditor.dragIndex = selected;
+    canvas.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+});
+
+canvas.addEventListener('pointermove', event => {
+  if (!courtEditor.active || !window._annData) return;
+  const [x, y] = eventImagePoint(event);
+  const d = window._annData;
+
+  if (courtEditor.mode === 'lines') {
+    const drag = courtEditor.drag;
+    if (!drag) return;
+    const anchor = courtEditor.anchors[drag.edge];
+    if (drag.handle === null) {
+      const dx = x - drag.last[0], dy = y - drag.last[1];
+      anchor[0] = [anchor[0][0] + dx, anchor[0][1] + dy];
+      anchor[1] = [anchor[1][0] + dx, anchor[1][1] + dy];
+      drag.last = [x, y];
+    } else {
+      anchor[drag.handle] = [x, y];
+    }
+    applyEdgeAnchors();
+    redraw();
+    return;
+  }
+
+  if (courtEditor.dragIndex === null) return;
+  // Corner mode stays inside the frame; a corner you cannot see is a corner
+  // you cannot aim, and line mode is the tool for those.
+  d.court_corners[courtEditor.dragIndex] = [
+    Math.max(0, Math.min(d.frame_width, x)),
+    Math.max(0, Math.min(d.frame_height, y)),
+  ];
+  redraw();
+});
+
+canvas.addEventListener('pointerup', event => {
+  if ((courtEditor.dragIndex !== null || courtEditor.drag) && canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId);
+  }
+  courtEditor.dragIndex = null;
+  courtEditor.drag = null;
+  if (courtEditor.mode === 'lines' && courtEditor.active) syncEdgeAnchors();
+});
+
+function attackZoneCounts(heatmap) {
+  const counts = {left: 0, center: 0, right: 0};
+  for (const zone of ((heatmap && heatmap.zones) || [])) {
+    const id = String(zone.id || '').toLowerCase();
+    if (id === 'left' || id.endsWith('_left')) counts.left += zone.count || 0;
+    else if (id === 'center' || id === 'middle' || id.endsWith('_middle')) counts.center += zone.count || 0;
+    else if (id === 'right' || id.endsWith('_right')) counts.right += zone.count || 0;
+  }
+  return counts;
+}
+
+function renderAttackHeatmapSummary(heatmap) {
+  if (!heatmap) return;
+  document.getElementById('attackHeatmapPanel').style.display = 'block';
+  const counts = attackZoneCounts(heatmap);
+  const total = heatmap.total_attacks != null
+    ? heatmap.total_attacks : counts.left + counts.center + counts.right;
+  document.getElementById('attackHeatmapTotal').textContent = total;
+  const rows = {};
+  for (const zone of (heatmap.zones || [])) {
+    rows[String(zone.id || '').toLowerCase()] = zone;
+  }
+  const zones = document.getElementById('attackHeatmapZones');
+  zones.innerHTML = '';
+  for (const id of ['left', 'center', 'right']) {
+    const zone = rows[id] || {};
+    const item = document.createElement('div');
+    item.style.cssText = 'background:var(--head-bg);border-radius:5px;padding:5px 8px;font-size:11.5px;';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;justify-content:space-between;gap:6px;';
+    const name = document.createElement('span');
+    name.textContent = id;
+    name.style.color = 'var(--muted)';
+    const count = document.createElement('strong');
+    count.textContent = counts[id];
+    count.style.color = 'var(--primary)';
+    head.append(name, count);
+    item.appendChild(head);
+    if (zone.front != null || zone.back != null) {
+      const split = document.createElement('div');
+      split.style.cssText = 'font-size:10px;color:var(--muted);margin-top:2px';
+      split.textContent = `${zone.front || 0} front · ${zone.back || 0} back`;
+      item.appendChild(split);
+    }
+    zones.appendChild(item);
+  }
+  const directions = heatmap.directions;
+  let note = document.getElementById('attackHeatmapDirections');
+  if (directions) {
+    if (!note) {
+      note = document.createElement('div');
+      note.id = 'attackHeatmapDirections';
+      note.style.cssText = 'font-size:11px;color:var(--muted);margin-top:6px';
+      zones.parentElement.appendChild(note);
+    }
+    note.textContent = `${directions.line || 0} down the line · ${directions.diagonal || 0} diagonal`
+      + (directions.unknown ? ` · ${directions.unknown} not measured` : '');
+  }
+}
+
+let _syncOffset = 0;
+function changeSyncOffset(d) {
+  _syncOffset = Math.max(-5, Math.min(5, _syncOffset + d));
+  document.getElementById('syncOffsetVal').textContent = _syncOffset;
+  redraw();
+}
+
+/* ── Canvas sizing / render loop ─────────────────────── */
+function resizeCanvas() {
+  const vr = vid.getBoundingClientRect();
+  if (!vr.width) return;
+  const vw = vid.videoWidth || (window._annData && window._annData.frame_width) || 1280;
+  const vh = vid.videoHeight || (window._annData && window._annData.frame_height) || 720;
+  const scale = Math.min(vr.width / vw, vr.height / vh);
+  canvas.width = vw * scale;
+  canvas.height = vh * scale;
+  canvas.style.width = canvas.width + 'px';
+  canvas.style.height = canvas.height + 'px';
+  redraw();
+}
+
+vid.addEventListener('loadedmetadata', () => { resizeCanvas(); startRenderLoop(); });
+window.addEventListener('resize', resizeCanvas);
+
+vid.addEventListener('timeupdate', () => {
+  updateTimeline();
+  updateActiveEvent();
+});
+
+// rAF and rVFC are both suspended while the tab is in the background, and
+// neither fires for a seek performed while paused. Sync the overlay straight
+// from the seek so it never shows a stale frame.
+vid.addEventListener('seeked', () => {
+  currentFrameIdx = Math.max(0, Math.round(vid.currentTime * FPS) + _syncOffset);
+  _lastDrawnFrame = currentFrameIdx;
+  updateTimeline();
+  redraw();
+});
+
+let _rafId = null;
+let _lastDrawnFrame = -1;
+const SYNC_OFFSET_FRAMES = 0;
+
+function _drawAtMediaTime(mediaTime) {
+  const fi = Math.max(0, Math.round(vid.currentTime * FPS) + _syncOffset);
+  if (fi !== _lastDrawnFrame) {
+    currentFrameIdx = fi;
+    _lastDrawnFrame = fi;
+    redraw();
+  }
+}
+
+function startRenderLoop() {
+  // rVFC gives exact per-frame sync, but some embedded browsers expose the
+  // method and never invoke it — which leaves the overlay frozen on frame 0.
+  // The rAF loop always runs so the overlay can never stall; rVFC refines it
+  // to the presented frame where it genuinely works. Both write the same
+  // fields, so whichever fires first wins and the other is a no-op.
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) {
+    function rVFCLoop(now, meta) {
+      _drawAtMediaTime(meta.mediaTime);
+      vid.requestVideoFrameCallback(rVFCLoop);
+    }
+    vid.requestVideoFrameCallback(rVFCLoop);
+  }
+  if (_rafId) return;
+  function rafLoop() {
+    const fi = Math.max(0, Math.round(vid.currentTime * FPS) - SYNC_OFFSET_FRAMES + _syncOffset);
+    if (fi !== _lastDrawnFrame) {
+      currentFrameIdx = fi;
+      _lastDrawnFrame = fi;
+      redraw();
+    }
+    _rafId = requestAnimationFrame(rafLoop);
+  }
+  _rafId = requestAnimationFrame(rafLoop);
+}
+
+vid.addEventListener('play', () => document.getElementById('playBtn').textContent = '⏸ Pause');
+vid.addEventListener('pause', () => document.getElementById('playBtn').textContent = '▶ Play');
+
+function togglePlay() { vid.paused ? vid.play() : vid.pause(); }
+function toggleMute() {
+  vid.muted = !vid.muted;
+  document.getElementById('muteBtn').textContent = vid.muted ? '🔇' : '🔊';
+}
+function setSpeed(s, btn) {
+  vid.playbackRate = s;
+  document.querySelectorAll('.btn-row .ctrl').forEach(b => {
+    if (b.textContent.endsWith('×')) b.classList.remove('active');
+  });
+  if (btn) btn.classList.add('active');
+}
+function stepFrame(d) {
+  vid.pause();
+  vid.currentTime = Math.max(0, vid.currentTime + d / FPS);
+}
+function seekToFrame(f) { vid.currentTime = f / FPS; }
+function seekAndPlay(f, autoPlay = true) {
+  vid.currentTime = f / FPS;
+  if (autoPlay) vid.play(); else vid.pause();
+}
+function seekTo(e) {
+  const bar = document.getElementById('timelineBar');
+  const rect = bar.getBoundingClientRect();
+  const pct = (e.clientX - rect.left) / rect.width;
+  vid.currentTime = pct * vid.duration;
+}
+
+function updateTimeline() {
+  const pct = vid.duration ? (vid.currentTime / vid.duration * 100) : 0;
+  document.getElementById('timelineProgress').style.width = pct + '%';
+  const cur = formatTime(vid.currentTime);
+  const tot = formatTime(vid.duration || 0);
+  document.getElementById('timeDisplay').textContent = cur + ' / ' + tot;
+  const badge = document.getElementById('videoBadge');
+  badge.textContent = `${VIDEO_STEM} · f${currentFrameIdx} · ${cur}`;
+}
+
+function formatTime(s) {
+  const m = Math.floor(s / 60);
+  const ss = Math.floor(s % 60).toString().padStart(2, '0');
+  return m + ':' + ss;
+}
+
+function setupEventMarkers() {
+  const bar = document.getElementById('timelineBar');
+  bar.querySelectorAll('.event-marker').forEach(m => m.remove());
+  const dur = TOTAL_FRAMES / FPS;
+  for (const [index, ev] of EVENTS.entries()) {
+    const team = eventTeams[index];
+    if (!evVisible(ev, team)) continue;
+    const pct = (ev.time / dur * 100);
+    const m = document.createElement('div');
+    m.className = 'event-marker';
+    m.style.left = pct + '%';
+    m.style.background = EV_COLORS[ev.type] || '#888';
+    m.title = ev.type + ' ' + teamLabel(team) + ' @' + ev.time + 's';
+    m.onclick = (e) => { e.stopPropagation(); seekAndPlay(ev.frame); };
+    bar.appendChild(m);
+  }
+  for (const r of RALLIES) {
+    const startFrame = rallyStartFrame(r);
+    if (!Number.isFinite(startFrame)) continue;
+    const pct = (startFrame / TOTAL_FRAMES * 100);
+    const m = document.createElement('div');
+    m.className = 'event-marker rally_start';
+    m.style.left = pct + '%';
+    m.title = (LIFECYCLE.available ? 'Confirmed playable rally' : 'Rally start') + ' @f' + startFrame;
+    m.onclick = (e) => { e.stopPropagation(); seekAndPlay(startFrame); };
+    bar.appendChild(m);
+  }
+}
+
+function updateActiveEvent() {
+  const t = vid.currentTime;
+  let closest = null, minDist = 1e9;
+  EVENTS.forEach((ev, i) => {
+    if (!evVisible(ev, eventTeams[i])) return;
+    const d = Math.abs(ev.time - t);
+    if (d < minDist) { minDist = d; closest = i; }
+  });
+  document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
+  if (closest !== null && minDist < 1.5) {
+    const el = document.getElementById('ev' + closest);
+    if (el) {
+      el.classList.add('active');
+      // Scroll inside the event list only — scrollIntoView would drag the
+      // whole page down and push the video out of view.
+      const list = document.getElementById('eventList');
+      const top = el.offsetTop - list.offsetTop;
+      if (top < list.scrollTop || top + el.offsetHeight > list.scrollTop + list.clientHeight) {
+        list.scrollTop = top - list.clientHeight / 2 + el.offsetHeight / 2;
+      }
+    }
+  }
+}
+
+vid.addEventListener('play',  () => { document.title = `▶ CourtSense — ${VIDEO_STEM}`; });
+vid.addEventListener('pause', () => { document.title = `⏸ f${currentFrameIdx} — CourtSense`; });
+
+/* ── Init ────────────────────────────────────────────── */
+initVideoFilters();
+initChartFilters();
+initTableFilters();
+renderEventList();
+renderRallyClips();
+renderTables();

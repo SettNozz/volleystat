@@ -7,6 +7,16 @@ import json
 import viewer
 
 
+def _results_page_source() -> str:
+    """viewer.html plus the static scripts it loads (moved out of the template)."""
+    static = Path(viewer.app.static_folder)
+    parts = [Path(viewer.app.template_folder) / "viewer.html"]
+    parts += [static / name for name in (
+        "viewer_charts.js", "viewer_tables.js", "viewer_overlay.js", "viewer_page.js",
+    )]
+    return "\n".join(path.read_text(encoding="utf-8") for path in parts)
+
+
 class TestViewerUploadWorkflow(unittest.TestCase):
     def test_home_page_describes_cached_repeats_and_explicit_video_export(self):
         with viewer.app.test_client() as client:
@@ -23,9 +33,7 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertIn("job.eta_sec", page)
 
     def test_results_template_guards_jumps_and_draws_three_attack_zones(self):
-        template = (
-            Path(viewer.app.template_folder) / "viewer.html"
-        ).read_text(encoding="utf-8")
+        template = _results_page_source()
 
         self.assertIn("step > MAX_TRAIL_STEP", template)
         self.assertIn("const GAP_BREAK = 5", template)
@@ -103,9 +111,7 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertEqual(stats["rallies"], legacy_rallies)
 
     def test_results_template_consumes_canonical_lifecycle_metadata(self):
-        template = (
-            Path(viewer.app.template_folder) / "viewer.html"
-        ).read_text(encoding="utf-8")
+        template = _results_page_source()
 
         self.assertIn("Service attempts", template)
         self.assertIn("Confirmed serves", template)
@@ -681,7 +687,7 @@ class TestViewerResultsLibrary(unittest.TestCase):
         self.assertEqual(unknown.status_code, 404)
 
     def test_rally_clips_show_their_first_frame(self):
-        template = (Path(viewer.__file__).parent / "viewer" / "templates" / "viewer.html").read_text(encoding="utf-8")
+        template = _results_page_source()
         self.assertIn("/api/frame/${JOB_ID}/${rallyStartFrame(r)}", template)
 
 

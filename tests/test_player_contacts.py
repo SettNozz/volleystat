@@ -186,7 +186,8 @@ def test_viewer_serves_saved_learned_report_and_rejects_mismatched_pair(client_r
     saved.update(method="osnet_temporal_all_sides_soft_hgb_v1", attribution={"status": "completed"})
     a["player_contacts"] = s["player_contacts"] = saved
     ann.write_text(json.dumps(a), encoding="utf-8"); stats.write_text(json.dumps(s), encoding="utf-8")
-    monkeypatch.setattr(viewer, "build_player_contacts", lambda *_: pytest.fail("old geometry ran"))
+    import src.viewer_app.player_contacts_io as contacts_io
+    monkeypatch.setattr(contacts_io, "build_player_contacts", lambda *_: pytest.fail("old geometry ran"))
     result = client.get("/api/player_contacts/contact-test")
     assert result.status_code == 200 and result.get_json()["method_id"] == saved["method"]
     s["all_events"][0]["frame"] += 1; stats.write_text(json.dumps(s), encoding="utf-8")

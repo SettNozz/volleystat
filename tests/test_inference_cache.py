@@ -44,7 +44,7 @@ def test_short_video_pass_requires_independent_clean_decode(tmp_path, verified, 
 
 @pytest.mark.parametrize('stderr,returncode,count', [('', 0, 180), ('decode error', 0, None), ('', 1, None)])
 def test_independent_frame_count_rejects_decoder_errors(monkeypatch, stderr, returncode, count):
-    import src.pipeline.game_analyzer as module
+    import src.pipeline.analyzer.cache as module
     analyzer = GameAnalyzer.__new__(GameAnalyzer)
     analyzer._cache_video_path = Path('clip.mp4')
     monkeypatch.setattr(module.subprocess, 'run', lambda *a, **kw: SimpleNamespace(

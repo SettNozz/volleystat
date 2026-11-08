@@ -64,7 +64,7 @@ def main():
             print(f'[render] {frame}/{limit}', flush=True)
             last[0] = frame
     analyzer.progress_callback = progress
-    renderer_fingerprint = file_sha256(Path(__file__).resolve().parents[1]/'src/pipeline/game_analyzer.py')
+    renderer_fingerprint = file_sha256(Path(__file__).resolve().parents[1]/'src/pipeline/analyzer/rendering.py')
     script_fingerprint = file_sha256(Path(__file__))
     started = time.monotonic()
     ok = analyzer._render_final_video(source, args.output_video, data['frames'], data['fps'],
