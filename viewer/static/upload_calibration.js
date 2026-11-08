@@ -86,7 +86,9 @@ const uploadCalibration = (() => {
           frame_width: w, frame_height: h,
           court_corners: data.court_corners ||
             [[w * .2, h * .4], [w * .8, h * .4], [w * .97, h * .94], [w * .03, h * .94]],
-          net_tape: data.net_tape,
+          net_tape: data.net_tape.length === 3
+            ? [[data.net_tape[0], data.net_tape[2]], [data.net_tape[1], data.net_tape[2]]]
+            : data.net_tape,
         };
         reset();
         status.textContent = data.court_corners ? '' : 'No saved court found. Align the starting outline before analyzing.';
@@ -103,10 +105,7 @@ const uploadCalibration = (() => {
     }
   }
 
-  const netPoints = () => {
-    const [left, right, y] = edit.net_tape;
-    return [[left, y], [right, y]];
-  };
+  const netPoints = () => edit.net_tape;
 
   function handles() {
     if (mode.value === 'net') return netPoints();
@@ -149,7 +148,7 @@ const uploadCalibration = (() => {
     hint.textContent = !valid ? 'Court edges cross. Adjust the handles before analyzing.' : {
       lines: 'Drag either handle to rotate an edge. Drag between handles to move the whole edge.',
       corners: 'Drag visible corners. Switch to Court lines for corners outside the frame.',
-      net: 'Drag the gold handles to set tape height and endpoints. The floor divider follows the court centre line.',
+      net: 'Drag each gold handle independently to match its end of the net tape. The floor divider follows the court centre line.',
     }[mode.value];
   }
 
@@ -195,10 +194,10 @@ const uploadCalibration = (() => {
     const p = point(event);
     if (mode.value === 'net') {
       const net = edit.net_tape;
-      net[drag.index] = drag.index === 0
-        ? Math.max(0, Math.min(net[1] - 1, p[0]))
-        : Math.max(net[0] + 1, Math.min(canvas.width - 1, p[0]));
-      net[2] = Math.max(1, Math.min(canvas.height - 1, p[1]));
+      const x = drag.index === 0
+        ? Math.max(0, Math.min(net[1][0] - 1, p[0]))
+        : Math.max(net[0][0] + 1, Math.min(canvas.width - 1, p[0]));
+      net[drag.index] = [x, Math.max(1, Math.min(canvas.height - 1, p[1]))];
     } else if (mode.value === 'corners') {
       edit.court_corners[drag.index] = p;
     } else {

@@ -249,7 +249,7 @@ class TestViewerUploadWorkflow(unittest.TestCase):
             shared.write_text(json.dumps({
                 "frame_width": 1280, "frame_height": 720,
                 "court_corners": [[200, 300], [1080, 320], [1200, 690], [80, 670]],
-                "net_line_points": [[160, 210], [1100, 210]],
+                "net_line_points": [[160, 210], [1100, 218]],
             }), encoding="utf-8")
             original = shared.read_bytes()
             with patch.object(viewer, "PROJECT_ROOT", root), \
@@ -261,10 +261,10 @@ class TestViewerUploadWorkflow(unittest.TestCase):
                 geometry = preview.get_json()
                 self.assertTrue(geometry.pop("image").startswith("data:image/jpeg;base64,"))
                 self.assertEqual(geometry["court_corners"][0], [100, 150])
-                self.assertEqual(geometry["net_tape"], [80, 550, 105])
+                np.testing.assert_allclose(geometry["net_tape"], [[80, 105], [550, 109]])
                 thread.assert_not_called()
 
-                geometry["net_tape"] = [90, 540, 112]
+                geometry["net_tape"] = [[90, 108], [540, 116]]
                 geometry["court_corners"][0] = [110, 155]
                 request = {"video_path": "clip.avi", "calibration": geometry}
                 self.assertEqual(client.post("/analyze", json=request).status_code, 200)
@@ -278,6 +278,7 @@ class TestViewerUploadWorkflow(unittest.TestCase):
                 self.assertEqual(calibration.court_corners[0], (110, 155))
                 self.assertEqual((calibration.net_x_left, calibration.net_x_right, calibration.net_tape_top),
                                  (90, 540, 112))
+                self.assertEqual(calibration.net_tape_endpoint_y, (108, 116))
                 self.assertNotEqual(calibration.net_floor_left[1], calibration.net_floor_right[1])
                 self.assertEqual(calibration.net_floor_method, "manual_court_midline")
                 self.assertEqual(shared.read_bytes(), original)

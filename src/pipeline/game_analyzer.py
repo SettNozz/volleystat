@@ -149,6 +149,7 @@ class CalibrationData:
     # Full court outline in image pixels:
     # front-left, front-right, back-right, back-left.
     court_corners: Optional[List[Tuple[float, float]]] = None
+    net_tape_endpoint_y: Optional[Tuple[float, float]] = None
 
 
 @dataclass
@@ -733,6 +734,8 @@ class GameAnalyzer:
             frame_height=data.get("frame_height", 2160),
             net_tape_top=net_tape_top,
             net_tape_bottom=net_tape_bottom,
+            net_tape_endpoint_y=tuple(float(point[1]) for point in sorted(net_pts))
+            if net_floor_method == "manual_court_midline" and len(net_pts) == 2 else None,
             net_floor_left=net_floor_left,
             net_floor_right=net_floor_right,
             net_floor_method=net_floor_method,
@@ -824,6 +827,8 @@ class GameAnalyzer:
                 frame_height=actual_h,
                 net_tape_top=c.net_tape_top * sy if c.net_tape_top else None,
                 net_tape_bottom=c.net_tape_bottom * sy if c.net_tape_bottom else None,
+                net_tape_endpoint_y=tuple(y * sy for y in c.net_tape_endpoint_y)
+                if c.net_tape_endpoint_y is not None else None,
                 net_floor_left=(c.net_floor_left[0] * sx, c.net_floor_left[1] * sy)
                     if c.net_floor_left else None,
                 net_floor_right=(c.net_floor_right[0] * sx, c.net_floor_right[1] * sy)
@@ -846,6 +851,7 @@ class GameAnalyzer:
                 court_left=c.court_left, court_right=c.court_right,
                 frame_width=c.frame_width, frame_height=c.frame_height,
                 net_tape_top=c.net_tape_top, net_tape_bottom=c.net_tape_bottom,
+                net_tape_endpoint_y=c.net_tape_endpoint_y,
                 net_floor_left=c.net_floor_left, net_floor_right=c.net_floor_right,
                 net_floor_method=c.net_floor_method,
                 net_height_m=c.net_height_m,
@@ -1263,7 +1269,10 @@ class GameAnalyzer:
                 'refresh_floor': refresh_floor,
                 'sam3_worker':sam3}
         def stage():
-            return cache.stage('net_geometry', {**base, 'calibration': asdict(self.calibration) if self.calibration else None})
+            calibration = asdict(self.calibration) if self.calibration else None
+            if calibration is not None and calibration["net_tape_endpoint_y"] is None:
+                calibration.pop("net_tape_endpoint_y")
+            return cache.stage('net_geometry', {**base, 'calibration': calibration})
         key = stage()
         def infer():
             self._run_net_detection_uncached(video_path, frame_w, frame_h, refresh_floor)
@@ -1487,12 +1496,16 @@ class GameAnalyzer:
             if c.net_floor_left and c.net_floor_right:
                 x0, x1 = sorted((int(c.net_floor_left[0]), int(c.net_floor_right[0])))
             if c.net_tape_top is not None and c.net_tape_bottom is not None:
-                t, b = int(c.net_tape_top), int(c.net_tape_bottom)
+                left_y, right_y = c.net_tape_endpoint_y or (c.net_tape_top, c.net_tape_top)
+                depth = c.net_tape_bottom - c.net_tape_top
+                top_left, top_right = (x0, int(left_y)), (x1, int(right_y))
+                bottom_left, bottom_right = (x0, int(left_y + depth)), (x1, int(right_y + depth))
                 band = out.copy()
-                cv2.rectangle(band, (x0, t), (x1, b), (0, 180, 255), -1)
+                polygon = np.array([top_left, top_right, bottom_right, bottom_left], dtype=np.int32)
+                cv2.fillConvexPoly(band, polygon, (0, 180, 255))
                 cv2.addWeighted(band, 0.25, out, 0.75, 0, out)
-                cv2.line(out, (x0, t), (x1, t), (0, 140, 255), 2)
-                cv2.line(out, (x0, b), (x1, b), (0, 90, 220), 2)
+                cv2.line(out, top_left, top_right, (0, 140, 255), 2)
+                cv2.line(out, bottom_left, bottom_right, (0, 90, 220), 2)
             else:
                 ny = int(c.net_y)
                 cv2.line(out, (x0, ny), (x1, ny), (255, 220, 0), 4)
@@ -3137,6 +3150,7 @@ class GameAnalyzer:
             "net_x_left": calib.net_x_left if calib else 0.0,
             "net_x_right": calib.net_x_right if calib else 1280.0,
             "net_tape_top": calib.net_tape_top if calib else None,
+            "net_tape_endpoint_y": calib.net_tape_endpoint_y if calib else None,
             "net_tape_bottom": calib.net_tape_bottom if calib else None,
             "net_floor_left": list(calib.net_floor_left) if calib and calib.net_floor_left else None,
             "net_floor_right": list(calib.net_floor_right) if calib and calib.net_floor_right else None,

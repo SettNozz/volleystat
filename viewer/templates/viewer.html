@@ -1185,6 +1185,10 @@ function updateNetY(val) {
   const newY = parseFloat(val);
   const tapeH = (d.net_tape_bottom != null && d.net_tape_top != null)
     ? (d.net_tape_bottom - d.net_tape_top) : 50;
+  if (d.net_tape_endpoint_y) {
+    const shift = newY - d.net_tape_top;
+    d.net_tape_endpoint_y = d.net_tape_endpoint_y.map(y => y + shift);
+  }
   d.net_y = newY;
   d.net_tape_top = newY;
   d.net_tape_bottom = newY + tapeH;
@@ -1947,24 +1951,32 @@ function redraw() {
     const xR = px(Math.max(postLeftX, postRightX));
 
     if (d.net_tape_top != null && d.net_tape_bottom != null) {
-      const yTop = py(d.net_tape_top);
-      const yBot = py(d.net_tape_bottom);
+      const [leftY, rightY] = d.net_tape_endpoint_y || [d.net_tape_top, d.net_tape_top];
+      const yTop = py(leftY), yTopRight = py(rightY);
+      const depth = py(d.net_tape_bottom) - py(d.net_tape_top);
+      const yBot = yTop + depth, yBotRight = yTopRight + depth;
 
       ctx.fillStyle = 'rgba(255, 220, 80, 0.08)';
-      ctx.fillRect(xL, yTop, xR - xL, yBot - yTop);
+      ctx.beginPath();
+      ctx.moveTo(xL, yTop);
+      ctx.lineTo(xR, yTopRight);
+      ctx.lineTo(xR, yBotRight);
+      ctx.lineTo(xL, yBot);
+      ctx.closePath();
+      ctx.fill();
 
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(xL, yTop);
-      ctx.lineTo(xR, yTop);
+      ctx.lineTo(xR, yTopRight);
       ctx.stroke();
 
       ctx.strokeStyle = 'rgba(255, 140, 0, 0.9)';
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.moveTo(xL, yBot);
-      ctx.lineTo(xR, yBot);
+      ctx.lineTo(xR, yBotRight);
       ctx.stroke();
 
       ctx.fillStyle = 'rgba(255,255,255,0.9)';
@@ -1976,8 +1988,8 @@ function redraw() {
     ctx.lineWidth = 2;
     ctx.setLineDash([Math.round(10*sx), Math.round(6*sx)]);
     ctx.beginPath();
-    ctx.moveTo(xL, py(d.net_y));
-    ctx.lineTo(xR, py(d.net_y));
+    ctx.moveTo(xL, py(d.net_tape_endpoint_y?.[0] ?? d.net_y));
+    ctx.lineTo(xR, py(d.net_tape_endpoint_y?.[1] ?? d.net_y));
     ctx.stroke();
     ctx.setLineDash([]);
     if (d.net_tape_top == null) {

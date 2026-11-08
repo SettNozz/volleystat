@@ -475,23 +475,31 @@ def load_existing():
 def _manual_calibration(edit: dict, width: int, height: int, net_height: float) -> dict:
     corners = validate_corners(edit["court_corners"])
     matrix = homography_from_corners(corners)
-    left, right, top = map(float, edit["net_tape"])
-    if not (0 <= left < right < width and 0 < top < height):
+    tape = edit["net_tape"]
+    if len(tape) == 3:  # Older preview clients submitted one shared height.
+        left, right, top = map(float, tape)
+        left_y = right_y = top
+    else:
+        (left, left_y), (right, right_y) = [tuple(map(float, point)) for point in tape]
+    if not (0 <= left < right < width and 0 < left_y < height and 0 < right_y < height):
         raise ValueError("Net tape must have two ordered endpoints inside the frame")
     center_left, center_right = sorted(court_guide_lines(matrix)["center_line"])
     if center_right[0] - center_left[0] < 1e-6:
         raise ValueError("Court centre line must span the frame horizontally")
     slope = (center_right[1] - center_left[1]) / (center_right[0] - center_left[0])
     floor = [(x, center_left[1] + (x - center_left[0]) * slope) for x in (left, right)]
-    if not all(math.isfinite(v) for point in floor for v in point) or top >= min(p[1] for p in floor):
+    if not all(math.isfinite(v) for point in floor for v in point) or any(
+        tape_y >= floor_point[1] for tape_y, floor_point in zip((left_y, right_y), floor)
+    ):
         raise ValueError("Net tape must be above the court centre line")
+    top = (left_y + right_y) / 2
     return {
         "frame_width": width, "frame_height": height,
         "court_corners": corners, "perspective_matrix": matrix,
         "back_line_points": max((corners[:2], corners[2:]), key=lambda p: sum(y for _, y in p)),
         "left_sideline_points": [corners[0], corners[3]],
         "right_sideline_points": [corners[1], corners[2]],
-        "net_line_points": [[left, top], [right, top]],
+        "net_line_points": [[left, left_y], [right, right_y]],
         "net_detection_sam": {
             "net_top_y_720p": top * 720 / height,
             "net_floor_left_720p": [floor[0][0] * 1280 / width, floor[0][1] * 720 / height],
@@ -549,8 +557,9 @@ def analysis_calibration():
         right = source.get("net_x_right")
         top = source.get("net_y")
         if len(net) >= 2:
-            left, right = min(p[0] for p in net), max(p[0] for p in net)
-            top = sum(p[1] for p in net) / len(net)
+            (left, left_y), (right, right_y) = min(net), max(net)
+        else:
+            left_y = right_y = top
         if max(width, height) > 1600:
             factor = 1600 / max(width, height)
             frame = cv2.resize(frame, (round(width * factor), round(height * factor)), interpolation=cv2.INTER_AREA)
@@ -563,9 +572,10 @@ def analysis_calibration():
             last_second=last_second,
             court_corners=scale_corners(corners, (sw, sh), (width, height)) if corners else None,
             net_tape=[
-                width * (left / sw if left is not None else .15),
-                width * (right / sw if right is not None else .85),
-                height * (top / sh if top is not None else .30),
+                [width * (left / sw if left is not None else .15),
+                 height * (left_y / sh if left_y is not None else .30)],
+                [width * (right / sw if right is not None else .85),
+                 height * (right_y / sh if right_y is not None else .30)],
             ],
             setups=[{"id": item.id, "name": item.name} for item in _setup_store().load()],
         )
