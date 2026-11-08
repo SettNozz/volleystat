@@ -142,10 +142,17 @@ def test_viewer_review_persists_without_rewriting_analysis(client_result):
     before = ann.read_bytes(), stats.read_bytes()
     url = "/api/player_contacts/contact-test"
     report = client.get(url).get_json()
+    statistics_url = "/player-statistics/contact-test"
+    page = client.get(statistics_url)
+    assert page.status_code == 200
+    assert b'<th scope="row"><span class="player">' in page.data
+    assert b"P1" in page.data
+    assert b"<td>1</td>" in page.data
     response = client.post(url, json={"source": report["source"], "event_index": 0, "other_side": True})
     assert response.status_code == 200
     assert response.get_json()["totals"] == {"other_side": 1}
     assert client.get(url).get_json()["contacts"][0]["label_source"] == "human"
+    assert b"<td>1</td>" not in client.get(statistics_url).data
     assert (ann.read_bytes(), stats.read_bytes()) == before
     assert len(list(stats.parent.glob("*_reviews.jsonl"))) == 1
     for body in ({"event_index": 0, "player_id": "P99"}, {"event_index": 9}, {"event_index": False}):

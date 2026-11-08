@@ -6,23 +6,8 @@
 <title>CourtSense — {{ job.video_stem }}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
 <style>
-:root {
-  --bg: oklch(98% 0.004 250);
-  --ink: oklch(20% 0.02 260);
-  --muted: oklch(55% 0.015 260);
-  --muted2: oklch(48% 0.02 260);
-  --border: oklch(91% 0.006 255);
-  --border-soft: oklch(94% 0.006 255);
-  --primary: oklch(58% 0.19 265);
-  --primary-soft: oklch(94% 0.03 265);
-  --card: #fff;
-  --head-bg: oklch(96.5% 0.006 250);
-  --green: oklch(62% 0.15 150);
-  --red: oklch(60% 0.18 25);
-  --court: oklch(95% 0.02 265);
-  --court-line: oklch(78% 0.03 265);
-}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--ink); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 ::-webkit-scrollbar { height: 8px; width: 8px; }
@@ -183,6 +168,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
     <div class="nav-item" data-page="table" onclick="showPage('table')">Match Stats</div>
   </div>
   <a class="library-btn" href="/library">Library</a>
+  <a class="library-btn" href="{{ url_for('player_statistics', job_id=job.job_id) }}">Player statistics</a>
   <a class="upload-btn" href="/">Upload</a>
 </div>
 
@@ -200,8 +186,8 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
       <canvas id="overlay"></canvas>
       <div class="video-badge" id="videoBadge">{{ job.video_stem }}</div>
       <div class="scoreboard" aria-label="Points inferred from serves" title="Points inferred from the next serve.">
-        <label><input aria-label="Near team name" value="Near team" maxlength="32"><output id="nearScore">0</output></label>
-        <label><input aria-label="Far team name" value="Far team" maxlength="32"><output id="farScore">0</output></label>
+        <label><input aria-label="Near team name" value="Near team" maxlength="32" data-team-job="{{ job.job_id }}" data-team-side="b"><output id="nearScore">0</output></label>
+        <label><input aria-label="Far team name" value="Far team" maxlength="32" data-team-job="{{ job.job_id }}" data-team-side="a"><output id="farScore">0</output></label>
         <small id="unknownScore" title="Points with an unidentified next server" hidden></small>
       </div>
     </div>
@@ -473,6 +459,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
 <script src="{{ url_for('static', filename='player_contacts.js') }}"></script>
 <script src="{{ url_for('static', filename='pose_completion.js') }}"></script>
 <script src="{{ url_for('static', filename='serve_score.js') }}"></script>
+<script src="{{ url_for('static', filename='team_names.js') }}"></script>
 <script>
 const JOB_ID = "{{ job.job_id }}";
 const FPS = {{ stats.fps | default(30) }};

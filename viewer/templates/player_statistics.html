@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Player statistics · CourtSense</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { font: 15px Inter, system-ui, sans-serif; color: var(--ink); background: var(--bg); margin: 0; }
+  main { max-width: 76rem; margin: auto; padding: clamp(1rem, 4vw, 3rem); }
+  a { color: var(--primary); }
+  a:focus-visible, button:focus-visible, .table-wrap:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-height: 60px;
+    padding: .5rem clamp(1rem, 3vw, 28px); background: var(--card); border-bottom: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
+  .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--primary); }
+  .brand-mark::after { content: ''; width: 11px; height: 11px; border-radius: 50%; background: var(--card); }
+  .back { padding: 9px 16px; border-radius: 8px; background: var(--head-bg); color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 700; }
+  .back:hover { text-decoration: underline; }
+  .hero { padding: clamp(1.5rem, 4vw, 2.75rem); border: 1px solid var(--border); border-radius: 12px; overflow-wrap: anywhere;
+    background: linear-gradient(120deg, var(--card) 42%, var(--primary-soft)); }
+  .eyebrow { margin: 0; color: var(--primary); font-size: .76rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+  h1 { margin: .35rem 0 .65rem; font-size: clamp(1.5rem, 3.5vw, 2.25rem); line-height: 1.15; letter-spacing: -.03em; }
+  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1rem; color: var(--muted2); margin: 0; }
+  .pill { background: var(--primary-soft); color: var(--primary); border-radius: 8px; padding: .3rem .7rem; font-size: .8rem; font-weight: 700; }
+  section { margin-top: 1.5rem; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .section-head { padding: 1.15rem 1.35rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; }
+  .stat-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-left: auto; }
+  .roster-editor { display: grid; grid-template-columns: auto minmax(7rem, 1fr) minmax(4rem, 6rem); gap: .55rem; align-items: center; margin: 1rem 0; }
+  .roster-editor input { min-width: 0; padding: .45rem; font: inherit; border: 1px solid var(--border); border-radius: 8px; }
+  h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.02em; }
+  .stat-modes { display: flex; flex-wrap: wrap; gap: 4px; padding: .7rem 1.35rem; border-bottom: 1px solid var(--border-soft); }
+  .stat-modes a { padding: 8px 16px; border-radius: 8px; color: var(--muted2); text-decoration: none; font-size: .85rem; font-weight: 600; }
+  .stat-modes a:hover { background: var(--head-bg); }
+  .stat-modes a[aria-current="page"] { background: var(--primary-soft); color: var(--primary); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; min-width: 39rem; border-spacing: 0; font-variant-numeric: tabular-nums; }
+  th, td { padding: .7rem .85rem; text-align: right; border-top: 1px solid var(--border-soft); }
+  tr > * + * { border-inline-start: 1px solid var(--border); }
+  thead th { background: var(--head-bg); color: var(--muted2); font-size: .76rem; font-weight: 650; }
+  th:first-child { position: sticky; left: 0; z-index: 1; text-align: left; padding-left: 1.35rem; box-shadow: 1px 0 var(--border); }
+  tbody th { background: var(--card); }
+  tbody tr:nth-child(even) > * { background: var(--bg); }
+  tbody tr:hover > *, tbody tr:focus-within > * { background: var(--primary-soft); }
+  .player { display: inline-flex; align-items: center; gap: .65rem; white-space: nowrap; }
+  .portrait { position: relative; display: inline-grid; place-items: center; width: 46px; height: 52px; overflow: hidden;
+    background: var(--head-bg); color: var(--muted2); border: 1px solid var(--border); border-radius: 8px; font-size: .75rem; }
+  .portrait img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
+  button { cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: .5rem .7rem; background: var(--card); color: var(--muted2); font: inherit; }
+  button:hover:not(:disabled) { border-color: var(--primary); }
+  button:disabled { cursor: default; opacity: .5; }
+  .change-photo { padding: .25rem .4rem; font-size: .75rem; }
+  dialog { background: var(--card); color: inherit; border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; max-width: calc(100% - 2rem); }
+  dialog::backdrop { background: rgb(15 23 42 / 48%); }
+  #save-photo { background: var(--primary); border-color: var(--primary); color: var(--card); }
+  #photo-preview { display: block; width: 160px; height: 200px; object-fit: contain; margin: 1rem auto; }
+  .photo-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .positive { color: var(--primary); font-weight: 750; }
+  .zero { color: var(--muted); }
+  .notes { color: var(--muted); font-size: .88rem; line-height: 1.6; margin: 1.35rem .15rem 0; }
+  .notes summary { cursor: pointer; color: var(--ink); }
+</style>
+<header class="topbar">
+  <span class="brand"><span class="brand-mark" aria-hidden="true"></span>CourtSense</span>
+  <a class="back" href="{{ url_for('results', job_id=job.job_id) }}">← Back to match</a>
+</header>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Match report</p>
+    <h1>Player statistics</h1>
+    <p class="meta">
+      <span class="pill" data-team-job="{{ job.job_id }}" data-team-side="{{ summary.side or '' }}">{{ {'b': 'Near team', 'a': 'Far team'}.get(summary.side, 'Court side unavailable') }}</span>
+      <span>{{ summary.players | length }} tracked players</span>
+    </p>
+  </header>
+  {% if summary.players %}
+  {% set requested = request.args.get('view') %}
+  {% set kind = requested if requested in modes else 'attack' %}
+  {% set title, columns = modes[kind] %}
+  <section aria-labelledby="{{ kind }}">
+  <nav class="stat-modes" aria-label="Statistics category">
+    {% for mode, config in modes.items() %}
+    <a href="{{ url_for('player_statistics', job_id=job.job_id, view=mode) }}"{% if mode == kind %} aria-current="page"{% endif %}>{{ config[0] }}</a>
+    {% endfor %}
+  </nav>
+  <p id="mode-error" role="status" hidden>Could not load statistics. Try again.</p>
+  <div class="section-head">
+    <h2 id="{{ kind }}">{{ title }}</h2>
+    <div class="stat-actions">
+      <button type="button" id="edit-players">Edit players</button>
+      <form id="export-excel" method="post" action="{{ url_for('player_statistics_excel', job_id=request.view_args.job_id) }}">
+        <input type="hidden" name="profiles" value="{}">
+        <button type="submit">Export Excel</button>
+      </form>
+    </div>
+  </div>
+  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="{{ kind }}">
+    <table aria-labelledby="{{ kind }}">
+      <thead><tr>
+        <th scope="col">Player</th>
+        {% for key, label in columns %}<th scope="col">{{ label }}</th>{% endfor %}
+      </tr></thead>
+      <tbody>
+        {% for player, row in summary.players.items() %}
+        <tr>
+          <th scope="row"><span class="player">
+            <span class="portrait" aria-hidden="true">
+              {{ player }}
+              {% if player in portraits %}
+              <img data-player-photo="{{ player }}" src="{{ url_for('player_portrait', job_id=job.job_id, player_id=player) }}" alt="" loading="lazy" onerror="this.hidden = true" onload="this.hidden = false">
+              {% endif %}
+            </span>
+            <span data-player-label="{{ player }}">{{ player }}</span>
+            {% if portraits.get(player, 0) > 1 %}
+            <button type="button" class="change-photo" data-player="{{ player }}" data-count="{{ portraits[player] }}" aria-label="Change photo for {{ player }}">Change photo</button>
+            {% endif %}
+          </span></th>
+          {% for key, label in columns %}
+          {% set value = stat_value(kind, row[kind], key) %}
+          {% if key == 'rate' %}
+          <td>{{ ('%.1f%%' | format(100 * value)) if value is not none else '—' }}</td>
+          {% else %}
+          <td{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ value }}</td>
+          {% endif %}
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  </section>
+  <details class="notes">
+    <summary>How these statistics are counted</summary>
+    <p>Without an assigned player: {{ summary.unassigned.get('attack', 0) }} attacks, {{ summary.unassigned.get('serve', 0) }} serves and {{ summary.unassigned.get('reception', 0) }} receptions. These contacts may include either side when the side is unknown.</p>
+    <p>Author assignments include model proposals and saved human corrections. Point-winning attacks are inferred from the final recorded contact and the team point ledger. Attack errors require a recorded fault reason. Reception quality comes from the matched serve lifecycle. Controlled percentage uses classified receptions.</p>
+    <p>Serve error percentage uses classified serves. Explicit faults can use proximity to estimate the server. Unresolved serves are excluded from the percentage.</p>
+  </details>
+  <dialog id="roster-picker" aria-labelledby="roster-title">
+    <h2 id="roster-title">Edit players</h2>
+    <form method="dialog" id="roster-form">
+      <div class="roster-editor">
+        <strong>ID</strong><strong>Name</strong><strong>Jersey</strong>
+        {% for player in summary.players %}
+        <span>{{ player }}</span>
+        <input data-player-name="{{ player }}" aria-label="{{ player }} name" maxlength="64">
+        <input data-player-number="{{ player }}" aria-label="{{ player }} jersey number" inputmode="numeric" maxlength="8">
+        {% endfor %}
+      </div>
+      <div class="photo-actions">
+        <button type="submit" value="save">Save players</button>
+        <button type="submit" value="cancel">Cancel</button>
+      </div>
+    </form>
+  </dialog>
+  {% else %}
+  <p>This result has no tracked player roster.</p>
+  {% endif %}
+</main>
+<dialog id="photo-picker" aria-labelledby="photo-title">
+  <h2 id="photo-title">Change photo</h2>
+  <img id="photo-preview" alt="Player photo candidate">
+  <p id="photo-status" role="status"></p>
+  <div class="photo-actions">
+    <button type="button" id="next-photo">Next photo</button>
+    <button type="button" id="save-photo">Use this photo</button>
+    <form method="dialog"><button>Cancel</button></form>
+  </div>
+</dialog>
+<script src="{{ url_for('static', filename='team_names.js') }}"></script>
+<script>
+const modeLinks = Array.from(document.querySelectorAll('.stat-modes a'));
+const modeError = document.getElementById('mode-error');
+let modeRequest = 0;
+
+for (const link of modeLinks) {
+  link.addEventListener('click', async event => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const requestId = ++modeRequest;
+    modeError.hidden = true;
+    if (link.hasAttribute('aria-current')) return;
+    try {
+      const response = await fetch(link.href);
+      if (!response.ok) throw new Error('Statistics unavailable');
+      const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+      if (requestId !== modeRequest) return;
+
+      const table = document.querySelector('.table-wrap table');
+      const nextTable = page.querySelector('.table-wrap table');
+      if (!nextTable || nextTable.rows.length !== table.rows.length) throw new Error('Roster changed');
+      const scrollTop = window.scrollY;
+      for (const [index, row] of Array.from(table.rows).entries()) {
+        // Keep the existing player cell and its portrait controls.
+        for (const cell of Array.from(row.cells).slice(1)) cell.remove();
+        row.append(...Array.from(nextTable.rows[index].cells).slice(1));
+      }
+      const heading = document.querySelector('.section-head');
+      const nextHeading = page.querySelector('.section-head');
+      heading.querySelector('h2').textContent = nextHeading.querySelector('h2').textContent;
+      for (const item of modeLinks) item.removeAttribute('aria-current');
+      link.setAttribute('aria-current', 'page');
+      history.replaceState(null, '', link.href);
+      window.scrollTo(window.scrollX, scrollTop);
+    } catch {
+      if (requestId === modeRequest) modeError.hidden = false;
+    }
+  });
+}
+
+const photoScope = {{ [job.job_id | default(''), portrait_version] | tojson }};
+const rosterPicker = document.getElementById('roster-picker');
+if (rosterPicker) {
+  const rosterKey = JSON.stringify(['player-profiles', {{ request.view_args.job_id | tojson }}]);
+  const labels = Array.from(document.querySelectorAll('[data-player-label]'));
+  const names = Array.from(rosterPicker.querySelectorAll('[data-player-name]'));
+  const numbers = Array.from(rosterPicker.querySelectorAll('[data-player-number]'));
+  let profiles = {};
+  try { profiles = JSON.parse(localStorage.getItem(rosterKey)) || {}; } catch {}
+
+  function showProfiles() {
+    for (const label of labels) {
+      const id = label.dataset.playerLabel;
+      const {name, number} = profiles[id] || {};
+      label.textContent = name || (number ? '#' + number : id);
+    }
+    document.querySelector('#export-excel input[name="profiles"]').value = JSON.stringify(profiles);
+  }
+
+  document.getElementById('edit-players').onclick = () => {
+    names.forEach((input, index) => {
+      const {name, number} = profiles[input.dataset.playerName] || {};
+      input.value = name || '';
+      numbers[index].value = number || '';
+    });
+    rosterPicker.showModal();
+  };
+  document.getElementById('roster-form').onsubmit = event => {
+    if (event.submitter?.value !== 'save') return;
+    profiles = Object.fromEntries(names.map((input, index) => [
+      input.dataset.playerName, {name: input.value.trim(), number: numbers[index].value.trim()},
+    ]));
+    try { localStorage.setItem(rosterKey, JSON.stringify(profiles)); } catch {}
+    showProfiles();
+  };
+  showProfiles();
+}
+const photos = Array.from(document.querySelectorAll('[data-player-photo]'));
+const picker = document.getElementById('photo-picker');
+const preview = document.getElementById('photo-preview');
+const photoStatus = document.getElementById('photo-status');
+const save = document.getElementById('save-photo');
+const selected = new Map();
+let player, index, count;
+
+function storageKey(id) {
+  return JSON.stringify(['player-photo', ...photoScope, id]);
+}
+
+function photoUrl(img, candidate) {
+  const url = new URL(img.src);
+  url.searchParams.set('candidate', candidate);
+  return url.href;
+}
+
+function updatePhotos(id, candidate) {
+  selected.set(id, candidate);
+  for (const img of photos.filter(img => img.dataset.playerPhoto === id)) {
+    img.src = photoUrl(img, candidate);
+  }
+}
+
+function nextPhoto() {
+  index = (index + 1) % count;
+  save.disabled = true;
+  photoStatus.textContent = 'Loading photo…';
+  preview.src = photoUrl(photos.find(img => img.dataset.playerPhoto === player), index);
+}
+
+preview.onload = () => {
+  save.disabled = false;
+  photoStatus.textContent = 'Photo ' + (index + 1) + ' of ' + count;
+};
+preview.onerror = () => {
+  save.disabled = true;
+  photoStatus.textContent = 'Photo unavailable. Try the next one.';
+};
+document.getElementById('next-photo').onclick = nextPhoto;
+save.onclick = () => {
+  updatePhotos(player, index);
+  try { localStorage.setItem(storageKey(player), index); } catch {}
+  picker.close();
+};
+
+for (const button of document.querySelectorAll('.change-photo')) {
+  const id = button.dataset.player;
+  const total = Number(button.dataset.count);
+  try {
+    const saved = Number(localStorage.getItem(storageKey(id)));
+    if (Number.isInteger(saved) && saved > 0 && saved < total) updatePhotos(id, saved);
+  } catch {}
+  button.onclick = () => {
+    player = id;
+    count = total;
+    index = selected.get(id) ?? 0;
+    document.getElementById('photo-title').textContent = 'Change photo · ' + id;
+    picker.showModal();
+    nextPhoto();
+  };
+}
+</script>
+</html>

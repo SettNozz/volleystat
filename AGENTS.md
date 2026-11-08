@@ -510,6 +510,9 @@ $py=(Get-Content -Raw '.graphify_python').Trim()
   highlights the selected skeleton and shows counts plus click-to-seek events.
   Reception, dig/pass/set, attack and block remain separately counted;
   original raw contact types are preserved. Unknowns are excluded from totals.
+- **Player statistics** derives per-roster attack and serve-reception outcomes
+  from saved contacts, corrections, FSM attempts and the team point ledger.
+  It leaves unsupported outcomes unresolved and runs without model inference.
 - Attribution corrections append to `<stem>_player_contact_reviews.jsonl`,
   bound to SHA256 of BOTH analysis files. They never rewrite source JSON,
   human gold, event types, identities or team analytics. Changed sources reject

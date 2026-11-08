@@ -51,6 +51,11 @@ in the active event-training manifest and completed author snapshot, creates a
 fresh empty project, retains model time/type provenance and requires photo-roster
 confirmation. Current expansion: seven videos, 759 contact proposals, port 5070.
 See [new-source annotation](docs/contact_author_annotation.md#new-sources-outside-the-existing-datasets).
+Open **Player statistics** from a match to see each tracked player's attack
+attempts, inferred point-winning attacks, and serve-reception quality.
+The page uses saved analyses and contact-author corrections. Attack errors
+need explicit fault evidence. Older results may show unresolved outcomes.
+
 The viewer's **Player contacts** panel selects a roster ID, highlights only
 that skeleton, and lists its reception, dig/pass/set, attack, block and serve
 events with click-to-seek. Unverified contact proposals use saved ball/pose
