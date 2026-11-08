@@ -413,6 +413,12 @@ Viewer reads actual annotations, not redrawn guesses. It supports ball/trail, re
 
 Viewer uploads select the ball batch automatically. Prefer compatible cached detections before sizing from available GPU memory. Reduce the batch on CUDA memory exhaustion. Explicit CLI batches remain supported.
 
+New analysis can preview a source frame and adjust saved court lines/corners and
+net tape before processing. Confirmed geometry is stored as a job-local
+`court_calibration.json`; net detection is disabled for that job and its floor
+divider follows the edited court centre line. Shared calibrations and saved
+camera setups are not modified.
+
 Existing result URL:
 
 ```text

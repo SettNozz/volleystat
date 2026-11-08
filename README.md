@@ -205,6 +205,8 @@ python viewer.py
 
 Open `http://localhost:5050`. Viewer can upload a source video, launch analysis, restore saved jobs, edit court geometry, and show ball trail, reconstructed gaps, players, net, FSM events, attacks and match statistics.
 
+On **New analysis**, enter the video path and choose **Preview and edit court & net**. Start from the default calibration or a saved camera setup, then drag court lines, corners, or the gold net tape handles. Change the preview time to find a clearer frame without losing edits. **Analyze Video** uses the edited geometry for that job, with the court centre line as the floor divider. **Use automatic settings** restores the usual net detection workflow.
+
 Viewer selects the ball detector batch automatically. It prefers compatible cached detections and otherwise uses available GPU memory, reducing the batch if CUDA runs out of memory.
 
 Every analysed result under `results/` is listed at:

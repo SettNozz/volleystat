@@ -64,6 +64,14 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
 .progress-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 7px; color: var(--muted); font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .hint { margin-top: 12px; font-size: 12px; color: var(--muted); }
+.card:has(#calibrationEditor:not([hidden])) { max-width: 1100px; }
+.calibration-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }
+.calibration-toolbar button, .calibration-toolbar select { width: auto; margin: 0; }
+.calibration-stage { position: relative; }
+.calibration-stage img { display: block; width: 100%; }
+.calibration-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.calibration-timeline input[type=range] { flex: 1 1 160px; }
+.calibration-timeline input[type=number] { width: 6rem; padding: 8px; }
 </style>
 </head>
 <body>
@@ -84,14 +92,32 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
   <div class="card">
     <label>Video file path</label>
     <input type="text" id="videoPath" placeholder="C:/path/to/game.mp4" value="data/processed/ball_extraction_results/original_images_video.mp4">
-
-    <label>Processing speed</label>
-    <select id="skipFrames">
-      <option value="0" selected>Every frame (recommended: skeletons + heatmap)</option>
-      <option value="1">Every 2nd frame (faster)</option>
-      <option value="2">Every 3rd frame (fast)</option>
-      <option value="4">Every 5th frame (fastest)</option>
-    </select>
+    <button type="button" id="previewCalibration">Preview and edit court &amp; net</button>
+    <p class="hint" id="calibrationStatus" role="status"></p>
+    <section id="calibrationEditor" hidden aria-label="Court and net calibration">
+      <div class="calibration-toolbar">
+        <select id="calibrationSetup" aria-label="Starting calibration"></select>
+        <select id="calibrationMode" aria-label="Edit mode">
+          <option value="lines">Court lines</option>
+          <option value="corners">Court corners</option>
+          <option value="net">Net tape</option>
+        </select>
+        <button type="button" id="resetCalibration">Reset edits</button>
+        <button type="button" id="cancelCalibration">Use automatic settings</button>
+      </div>
+      <div class="calibration-stage">
+        <img id="calibrationImage" alt="Preview frame from the selected video">
+        <canvas id="calibrationCanvas" aria-label="Drag handles to adjust court and net tape"></canvas>
+      </div>
+      <div class="calibration-toolbar calibration-timeline" aria-label="Choose preview frame">
+        <button type="button" id="previewBack" aria-label="Go back 5 seconds">−5 s</button>
+        <input type="range" id="previewTimeline" aria-label="Preview timeline" min="0" max="0" step="any" value="0" hidden>
+        <button type="button" id="previewForward" aria-label="Go forward 5 seconds">+5 s</button>
+        <input type="number" id="previewTime" aria-label="Preview time in seconds" min="0" step="any" value="0">
+        <button type="button" id="seekCalibration">Show frame (seconds)</button>
+      </div>
+      <p class="hint" id="calibrationHint"></p>
+    </section>
 
     <label>Net profile</label>
     <select id="netProfile">
@@ -127,15 +153,23 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
   </div>
 </div>
 
+<script src="/static/court_geometry.js"></script>
+<script src="/static/upload_calibration.js"></script>
 <script>
 let pollInterval = null;
 
 function startAnalysis() {
   const path = document.getElementById('videoPath').value.trim();
-  const skip = document.getElementById('skipFrames').value;
   const netProfile = document.getElementById('netProfile').value;
   const refreshNetFloor = document.getElementById('refreshNetFloor').checked;
   if (!path) return;
+  let calibrationOptions;
+  try {
+    calibrationOptions = uploadCalibration.analysisOptions(path);
+  } catch (error) {
+    showStatus('error', error.message);
+    return;
+  }
 
   document.getElementById('analyzeBtn').disabled = true;
   showStatus('running', 'Initializing models...');
@@ -145,9 +179,9 @@ function startAnalysis() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
       video_path: path,
-      skip_frames: parseInt(skip),
       net_profile: netProfile,
       refresh_net_floor: refreshNetFloor,
+      ...calibrationOptions,
     })
   })
   .then(async r => {
