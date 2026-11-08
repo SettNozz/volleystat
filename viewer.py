@@ -560,6 +560,9 @@ def analysis_calibration():
             ],
             setups=[{"id": item.id, "name": item.name} for item in _setup_store().load()],
         )
+    except cv2.error:
+        app.logger.exception("Could not decode or encode calibration preview")
+        return jsonify(error="Could not decode or encode the preview frame. Try another preview time."), 422
     except (ValueError, TypeError, OSError) as exc:
         return jsonify(error=str(exc)), 400
 

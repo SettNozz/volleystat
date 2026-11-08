@@ -42,8 +42,14 @@ const uploadCalibration = (() => {
           seconds: Number(el('previewTime').value),
         }),
       });
+      const contentType = response.headers.get('Content-Type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(response.status === 404 || response.status === 405
+          ? 'Preview endpoint is unavailable. Restart the viewer from the updated checkout and reload this page.'
+          : `Viewer returned HTTP ${response.status} instead of a preview. Check the viewer server log.`);
+      }
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error);
+      if (!response.ok) throw new Error(data.error || `Preview failed (HTTP ${response.status}).`);
       if (number !== requestNumber) return;
       const w = data.frame_width, h = data.frame_height;
       if (keepEdits && (w !== canvas.width || h !== canvas.height)) {
