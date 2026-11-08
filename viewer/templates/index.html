@@ -70,6 +70,8 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
 .calibration-stage { position: relative; }
 .calibration-stage img { display: block; width: 100%; }
 .calibration-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.calibration-timeline input[type=range] { flex: 1 1 160px; }
+.calibration-timeline input[type=number] { width: 6rem; padding: 8px; }
 </style>
 </head>
 <body>
@@ -95,8 +97,6 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
     <section id="calibrationEditor" hidden aria-label="Court and net calibration">
       <div class="calibration-toolbar">
         <select id="calibrationSetup" aria-label="Starting calibration"></select>
-        <input type="number" id="previewTime" aria-label="Preview time in seconds" min="0" step="0.1" value="0">
-        <button type="button" id="seekCalibration">Show frame (seconds)</button>
         <select id="calibrationMode" aria-label="Edit mode">
           <option value="lines">Court lines</option>
           <option value="corners">Court corners</option>
@@ -108,6 +108,13 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
       <div class="calibration-stage">
         <img id="calibrationImage" alt="Preview frame from the selected video">
         <canvas id="calibrationCanvas" aria-label="Drag handles to adjust court and net tape"></canvas>
+      </div>
+      <div class="calibration-toolbar calibration-timeline" aria-label="Choose preview frame">
+        <button type="button" id="previewBack" aria-label="Go back 5 seconds">−5 s</button>
+        <input type="range" id="previewTimeline" aria-label="Preview timeline" min="0" max="0" step="any" value="0" hidden>
+        <button type="button" id="previewForward" aria-label="Go forward 5 seconds">+5 s</button>
+        <input type="number" id="previewTime" aria-label="Preview time in seconds" min="0" step="any" value="0">
+        <button type="button" id="seekCalibration">Show frame (seconds)</button>
       </div>
       <p class="hint" id="calibrationHint"></p>
     </section>

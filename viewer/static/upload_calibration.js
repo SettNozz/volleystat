@@ -5,6 +5,8 @@ const uploadCalibration = (() => {
   const setup = el('calibrationSetup'), mode = el('calibrationMode');
   const status = el('calibrationStatus'), hint = el('calibrationHint');
   const refresh = el('refreshNetFloor');
+  const time = el('previewTime'), timeline = el('previewTimeline');
+  let lastSecond = null;
   let original, edit, anchors, drag, path, pending;
   let requestNumber = 0;
 
@@ -12,9 +14,21 @@ const uploadCalibration = (() => {
     ++requestNumber;
     pending = false;
     edit = original = drag = null;
+    setPreviewTime(0);
     panel.hidden = true;
     refresh.disabled = false;
     status.textContent = '';
+  }
+
+  function setPreviewTime(seconds) {
+    const value = Math.max(0, Math.min(lastSecond ?? Infinity, seconds));
+    time.value = value;
+    timeline.value = value;
+  }
+
+  function seek(seconds) {
+    setPreviewTime(seconds);
+    load({ keepEdits: true });
   }
 
   function reset() {
@@ -31,6 +45,7 @@ const uploadCalibration = (() => {
       return;
     }
     const number = ++requestNumber;
+    const seconds = Number(time.value);
     pending = true;
     status.textContent = 'Reading preview frame…';
     try {
@@ -39,7 +54,7 @@ const uploadCalibration = (() => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           video_path: selectedPath, setup_id: setupId,
-          seconds: Number(el('previewTime').value),
+          seconds,
         }),
       });
       const contentType = response.headers.get('Content-Type') || '';
@@ -58,6 +73,10 @@ const uploadCalibration = (() => {
       canvas.width = w;
       canvas.height = h;
       image.src = data.image;
+      lastSecond = data.last_second;
+      timeline.hidden = !(lastSecond > 0);
+      timeline.max = lastSecond ?? 0;
+      setPreviewTime(seconds);
       path = selectedPath;
       if (!keepEdits) {
         setup.replaceChildren(new Option('Default calibration', ''));
@@ -198,7 +217,14 @@ const uploadCalibration = (() => {
   canvas.addEventListener('lostpointercapture', () => { drag = null; });
   input.addEventListener('input', close);
   el('previewCalibration').addEventListener('click', () => load({ keepEdits: Boolean(edit) }));
-  el('seekCalibration').addEventListener('click', () => load({ keepEdits: true }));
+  el('seekCalibration').addEventListener('click', () => seek(Number(time.value)));
+  time.addEventListener('keydown', event => {
+    if (event.key === 'Enter') seek(Number(time.value));
+  });
+  timeline.addEventListener('input', () => { time.value = timeline.value; });
+  timeline.addEventListener('change', () => seek(Number(timeline.value)));
+  el('previewBack').addEventListener('click', () => seek(Number(time.value) - 5));
+  el('previewForward').addEventListener('click', () => seek(Number(time.value) + 5));
   setup.addEventListener('change', () => load({ setupId: setup.value }));
   el('resetCalibration').addEventListener('click', reset);
   el('cancelCalibration').addEventListener('click', close);

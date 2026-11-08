@@ -507,12 +507,20 @@ def _calibration_frame(video_path: Path, seconds: float = 0):
 
     cap = cv2.VideoCapture(str(video_path))
     try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        last_second = None
+        if math.isfinite(fps) and fps > 0 and math.isfinite(count) and count >= 1:
+            last_second = (count - 1) / fps
         if seconds:
-            cap.set(cv2.CAP_PROP_POS_MSEC, seconds * 1000)
+            if last_second is not None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, round(min(seconds, last_second) * fps))
+            else:
+                cap.set(cv2.CAP_PROP_POS_MSEC, seconds * 1000)
         ok, frame = cap.read()
         if not ok:
             raise ValueError("Could not read preview frame. Try an earlier time.")
-        return frame
+        return frame, last_second
     finally:
         cap.release()
 
@@ -527,7 +535,7 @@ def analysis_calibration():
         seconds = float(data.get("seconds", 0))
         if not video_path.is_file() or not math.isfinite(seconds) or seconds < 0:
             raise ValueError("Choose an existing video and a nonnegative preview time")
-        frame = _calibration_frame(video_path, seconds)
+        frame, last_second = _calibration_frame(video_path, seconds)
         height, width = frame.shape[:2]
         shared = PROJECT_ROOT / "court_calibration.json"
         source = json.loads(shared.read_text(encoding="utf-8")) if shared.is_file() else {}
@@ -552,6 +560,7 @@ def analysis_calibration():
         return jsonify(
             image="data:image/jpeg;base64," + base64.b64encode(encoded).decode("ascii"),
             frame_width=width, frame_height=height,
+            last_second=last_second,
             court_corners=scale_corners(corners, (sw, sh), (width, height)) if corners else None,
             net_tape=[
                 width * (left / sw if left is not None else .15),
@@ -590,7 +599,8 @@ def analyze():
     if "calibration" in data:
         try:
             edit = data["calibration"]
-            height, width = _calibration_frame(video_path).shape[:2]
+            frame, _ = _calibration_frame(video_path)
+            height, width = frame.shape[:2]
             if (edit["frame_width"], edit["frame_height"]) != (width, height):
                 raise ValueError("Video size changed; reload the calibration preview")
             calibration = _manual_calibration(edit, width, height, net_height_m)
