@@ -698,7 +698,8 @@ class GameAnalyzer:
                 infer_net_bottom_y_from_floor,
                 level_floor_line,
             )
-            net_floor_left, net_floor_right = level_floor_line(net_floor_left, net_floor_right)
+            if net_floor_method != "manual_court_midline":
+                net_floor_left, net_floor_right = level_floor_line(net_floor_left, net_floor_right)
             if net_tape_top is not None:
                 anchored_top = anchor_net_top_to_calibration(
                     net_tape_top,
@@ -752,7 +753,7 @@ class GameAnalyzer:
         c = calibration
         if c is None or c.homography is None or not (c.net_floor_left and c.net_floor_right):
             return c
-        if c.net_floor_method == "calibrated_court_midline_fallback":
+        if c.net_floor_method in {"calibrated_court_midline_fallback", "manual_court_midline"}:
             return c
         from src.detection.net_detector import NetDetector, infer_net_bottom_y_from_floor
         spacing = c.net_post_spacing_m

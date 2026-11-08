@@ -10,8 +10,9 @@ Usage:
     # Open http://localhost:5050 in browser
 """
 
-import json
+import base64
 import hashlib
+import json
 import math
 import mimetypes
 import os
@@ -332,6 +333,7 @@ def _run_analysis(
     skip_frames: int,
     refresh_net_floor: bool = True,
     net_height_m: float = 2.34,
+    calibration: dict | None = None,
 ):
     """Run analysis in background thread."""
     jobs[job_id] = {"status": "running", "progress": 0, "message": "Starting..."}
@@ -339,6 +341,14 @@ def _run_analysis(
         from src.pipeline.game_analyzer import GameAnalyzer
         output_dir = RESULTS_DIR / job_id
         output_dir.mkdir(exist_ok=True)
+        calibration_options = {}
+        if calibration is not None:
+            path = output_dir / "court_calibration.json"
+            path.write_text(json.dumps(calibration, indent=2), encoding="utf-8")
+            calibration_options = {
+                "calibration_path": str(path.resolve()),
+                "enable_net_detection": False,
+            }
 
         def update_progress(update: dict) -> None:
             """Publish analyzer progress atomically for the polling endpoint."""
@@ -364,6 +374,7 @@ def _run_analysis(
             contact_spotter_path=(
                 str(CONTACT_SPOTTER_PATH) if CONTACT_SPOTTER_PATH.is_file() else None
             ),
+            **calibration_options,
         )
         stats = analyzer.process_video(
             video_path=video_path,
@@ -461,6 +472,98 @@ def load_existing():
     return redirect(f"/results/{job_id}")
 
 
+def _manual_calibration(edit: dict, width: int, height: int, net_height: float) -> dict:
+    corners = validate_corners(edit["court_corners"])
+    matrix = homography_from_corners(corners)
+    left, right, top = map(float, edit["net_tape"])
+    if not (0 <= left < right < width and 0 < top < height):
+        raise ValueError("Net tape must have two ordered endpoints inside the frame")
+    center_left, center_right = sorted(court_guide_lines(matrix)["center_line"])
+    if center_right[0] - center_left[0] < 1e-6:
+        raise ValueError("Court centre line must span the frame horizontally")
+    slope = (center_right[1] - center_left[1]) / (center_right[0] - center_left[0])
+    floor = [(x, center_left[1] + (x - center_left[0]) * slope) for x in (left, right)]
+    if not all(math.isfinite(v) for point in floor for v in point) or top >= min(p[1] for p in floor):
+        raise ValueError("Net tape must be above the court centre line")
+    return {
+        "frame_width": width, "frame_height": height,
+        "court_corners": corners, "perspective_matrix": matrix,
+        "back_line_points": max((corners[:2], corners[2:]), key=lambda p: sum(y for _, y in p)),
+        "left_sideline_points": [corners[0], corners[3]],
+        "right_sideline_points": [corners[1], corners[2]],
+        "net_line_points": [[left, top], [right, top]],
+        "net_detection_sam": {
+            "net_top_y_720p": top * 720 / height,
+            "net_floor_left_720p": [floor[0][0] * 1280 / width, floor[0][1] * 720 / height],
+            "net_floor_right_720p": [floor[1][0] * 1280 / width, floor[1][1] * 720 / height],
+            "net_floor_method": "manual_court_midline",
+            "net_height_m": net_height,
+        },
+    }
+
+
+def _calibration_frame(video_path: Path, seconds: float = 0):
+    import cv2
+
+    cap = cv2.VideoCapture(str(video_path))
+    try:
+        if seconds:
+            cap.set(cv2.CAP_PROP_POS_MSEC, seconds * 1000)
+        ok, frame = cap.read()
+        if not ok:
+            raise ValueError("Could not read preview frame. Try an earlier time.")
+        return frame
+    finally:
+        cap.release()
+
+
+@app.route("/api/analysis_calibration", methods=["POST"])
+def analysis_calibration():
+    import cv2
+
+    data = request.get_json(silent=True) or {}
+    try:
+        video_path = _resolve_video_path(str(data.get("video_path") or "").strip())
+        seconds = float(data.get("seconds", 0))
+        if not video_path.is_file() or not math.isfinite(seconds) or seconds < 0:
+            raise ValueError("Choose an existing video and a nonnegative preview time")
+        frame = _calibration_frame(video_path, seconds)
+        height, width = frame.shape[:2]
+        shared = PROJECT_ROOT / "court_calibration.json"
+        source = json.loads(shared.read_text(encoding="utf-8")) if shared.is_file() else {}
+        setup = _setup_store().get(data.get("setup_id")) if data.get("setup_id") else None
+        if setup:
+            source = setup.to_dict()
+        sw, sh = source.get("frame_width", 3840), source.get("frame_height", 2160)
+        corners = source.get("court_corners")
+        net = source.get("net_line_points") or []
+        left = source.get("net_x_left")
+        right = source.get("net_x_right")
+        top = source.get("net_y")
+        if len(net) >= 2:
+            left, right = min(p[0] for p in net), max(p[0] for p in net)
+            top = sum(p[1] for p in net) / len(net)
+        if max(width, height) > 1600:
+            factor = 1600 / max(width, height)
+            frame = cv2.resize(frame, (round(width * factor), round(height * factor)), interpolation=cv2.INTER_AREA)
+        ok, encoded = cv2.imencode(".jpg", frame)
+        if not ok:
+            raise ValueError("Could not encode preview frame")
+        return jsonify(
+            image="data:image/jpeg;base64," + base64.b64encode(encoded).decode("ascii"),
+            frame_width=width, frame_height=height,
+            court_corners=scale_corners(corners, (sw, sh), (width, height)) if corners else None,
+            net_tape=[
+                width * (left / sw if left is not None else .15),
+                width * (right / sw if right is not None else .85),
+                height * (top / sh if top is not None else .30),
+            ],
+            setups=[{"id": item.id, "name": item.name} for item in _setup_store().load()],
+        )
+    except (ValueError, TypeError, OSError) as exc:
+        return jsonify(error=str(exc)), 400
+
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
     data = request.get_json(silent=True) or {}
@@ -480,13 +583,22 @@ def analyze():
     if video_path is None or not video_path.is_file():
         return jsonify({"error": f"Video not found: {video_path_raw}"}), 400
 
-    job_id = f"job_{int(time.time())}"
+    job_args = (str(video_path), skip_frames, refresh_net_floor, net_height_m)
+    if "calibration" in data:
+        try:
+            edit = data["calibration"]
+            height, width = _calibration_frame(video_path).shape[:2]
+            if (edit["frame_width"], edit["frame_height"]) != (width, height):
+                raise ValueError("Video size changed; reload the calibration preview")
+            calibration = _manual_calibration(edit, width, height, net_height_m)
+            job_args = (str(video_path), skip_frames, False, net_height_m, calibration)
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            return jsonify(error=f"Invalid calibration: {exc}"), 400
+
+    job_id = f"job_{time.time_ns()}"
     t = threading.Thread(
         target=_run_analysis,
-        args=(
-            job_id, str(video_path), skip_frames, refresh_net_floor,
-            net_height_m,
-        ),
+        args=(job_id, *job_args),
         daemon=True,
     )
     t.start()

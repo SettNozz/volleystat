@@ -42,7 +42,9 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         # Corners routinely fall outside a wide-lens frame, so the lines have
         # to be draggable on their own.
         self.assertIn("cornersFromEdgeAnchors", template)
-        self.assertIn("clipSegmentToFrame", template)
+        geometry = (Path(viewer.app.static_folder) / "court_geometry.js").read_text(encoding="utf-8")
+        self.assertIn('/static/court_geometry.js', template)
+        self.assertIn("clipSegmentToFrame", geometry)
         self.assertIn("off-frame", template)
         self.assertNotIn("createRadialGradient", template)
         self.assertNotIn('type="video/mp4"', template)
@@ -231,6 +233,60 @@ class TestViewerUploadWorkflow(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(captured["args"][2:], (0, True, 2.34))
+
+    def test_preview_and_manual_analysis_use_job_local_geometry(self):
+        import cv2
+        import numpy as np
+        from src.pipeline.game_analyzer import GameAnalyzer
+
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            video = root / "clip.avi"
+            writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"MJPG"), 30, (640, 360))
+            writer.write(np.zeros((360, 640, 3), dtype=np.uint8))
+            writer.release()
+            shared = root / "court_calibration.json"
+            shared.write_text(json.dumps({
+                "frame_width": 1280, "frame_height": 720,
+                "court_corners": [[200, 300], [1080, 320], [1200, 690], [80, 670]],
+                "net_line_points": [[160, 210], [1100, 210]],
+            }), encoding="utf-8")
+            original = shared.read_bytes()
+            with patch.object(viewer, "PROJECT_ROOT", root), \
+                    patch.object(viewer, "RESULTS_DIR", root), \
+                    patch.object(viewer.threading, "Thread") as thread, \
+                    viewer.app.test_client() as client:
+                preview = client.post("/api/analysis_calibration", json={"video_path": "clip.avi"})
+                self.assertEqual(preview.status_code, 200)
+                geometry = preview.get_json()
+                self.assertTrue(geometry.pop("image").startswith("data:image/jpeg;base64,"))
+                self.assertEqual(geometry["court_corners"][0], [100, 150])
+                self.assertEqual(geometry["net_tape"], [80, 550, 105])
+                thread.assert_not_called()
+
+                geometry["net_tape"] = [90, 540, 112]
+                geometry["court_corners"][0] = [110, 155]
+                request = {"video_path": "clip.avi", "calibration": geometry}
+                self.assertEqual(client.post("/analyze", json=request).status_code, 200)
+                queued = thread.call_args.kwargs["args"]
+                with patch("src.pipeline.game_analyzer.GameAnalyzer") as analyzer:
+                    viewer._run_analysis(*queued)
+                options = analyzer.call_args.kwargs
+                self.assertFalse(options["enable_net_detection"])
+                self.assertFalse(options["refresh_net_floor"])
+                calibration = GameAnalyzer.__new__(GameAnalyzer)._load_calibration(options["calibration_path"])
+                self.assertEqual(calibration.court_corners[0], (110, 155))
+                self.assertEqual((calibration.net_x_left, calibration.net_x_right, calibration.net_tape_top),
+                                 (90, 540, 112))
+                self.assertNotEqual(calibration.net_floor_left[1], calibration.net_floor_right[1])
+                self.assertEqual(calibration.net_floor_method, "manual_court_midline")
+                self.assertEqual(shared.read_bytes(), original)
+                viewer.jobs.pop(queued[0])
+
+                thread.reset_mock()
+                geometry["court_corners"][1] = geometry["court_corners"][0]
+                self.assertEqual(client.post("/analyze", json=request).status_code, 400)
+                thread.assert_not_called()
 
     def test_upload_can_select_mens_net_height(self):
         captured = {}
