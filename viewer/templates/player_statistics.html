@@ -2,7 +2,7 @@
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Player statistics · {{ job.video_stem }}</title>
+<title>Player statistics · CourtSense</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
@@ -22,7 +22,7 @@
   .hero { padding: clamp(1.5rem, 4vw, 2.75rem); border: 1px solid var(--border); border-radius: 12px; overflow-wrap: anywhere;
     background: linear-gradient(120deg, var(--card) 42%, var(--primary-soft)); }
   .eyebrow { margin: 0; color: var(--primary); font-size: .76rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
-  h1 { margin: .35rem 0 .65rem; font-size: clamp(2.25rem, 6vw, 4rem); line-height: 1.04; letter-spacing: -.05em; }
+  h1 { margin: .35rem 0 .65rem; font-size: clamp(1.5rem, 3.5vw, 2.25rem); line-height: 1.15; letter-spacing: -.03em; }
   .meta { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1rem; color: var(--muted2); margin: 0; }
   .pill { background: var(--primary-soft); color: var(--primary); border-radius: 8px; padding: .3rem .7rem; font-size: .8rem; font-weight: 700; }
   section { margin-top: 1.5rem; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
@@ -70,7 +70,6 @@
     <p class="meta">
       <span class="pill">{{ {'b': 'Near side', 'a': 'Far side'}.get(summary.side, 'Court side unavailable') }}</span>
       <span>{{ summary.players | length }} tracked players</span>
-      <span>{{ job.video_stem }}</span>
     </p>
   </header>
   {% if summary.players %}
@@ -91,6 +90,7 @@
     <a href="{{ url_for('player_statistics', job_id=job.job_id, view=mode) }}"{% if mode == kind %} aria-current="page"{% endif %}>{{ config[0] }}</a>
     {% endfor %}
   </nav>
+  <p id="mode-error" role="status" hidden>Could not load statistics. Try again.</p>
   <div class="section-head">
     <h2 id="{{ kind }}">{{ title }}</h2>
     <p>{{ subtitle }}</p>
@@ -156,6 +156,46 @@
   </div>
 </dialog>
 <script>
+const modeLinks = Array.from(document.querySelectorAll('.stat-modes a'));
+const modeError = document.getElementById('mode-error');
+let modeRequest = 0;
+
+for (const link of modeLinks) {
+  link.addEventListener('click', async event => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    const requestId = ++modeRequest;
+    modeError.hidden = true;
+    if (link.hasAttribute('aria-current')) return;
+    try {
+      const response = await fetch(link.href);
+      if (!response.ok) throw new Error('Statistics unavailable');
+      const page = new DOMParser().parseFromString(await response.text(), 'text/html');
+      if (requestId !== modeRequest) return;
+
+      const table = document.querySelector('.table-wrap table');
+      const nextTable = page.querySelector('.table-wrap table');
+      if (!nextTable || nextTable.rows.length !== table.rows.length) throw new Error('Roster changed');
+      const scrollTop = window.scrollY;
+      for (const [index, row] of Array.from(table.rows).entries()) {
+        // Keep the existing player cell and its portrait controls.
+        for (const cell of Array.from(row.cells).slice(1)) cell.remove();
+        row.append(...Array.from(nextTable.rows[index].cells).slice(1));
+      }
+      const heading = document.querySelector('.section-head');
+      const nextHeading = page.querySelector('.section-head');
+      heading.querySelector('h2').textContent = nextHeading.querySelector('h2').textContent;
+      heading.querySelector('p').textContent = nextHeading.querySelector('p').textContent;
+      for (const item of modeLinks) item.removeAttribute('aria-current');
+      link.setAttribute('aria-current', 'page');
+      history.replaceState(null, '', link.href);
+      window.scrollTo(window.scrollX, scrollTop);
+    } catch {
+      if (requestId === modeRequest) modeError.hidden = false;
+    }
+  });
+}
+
 const photoScope = {{ [job.job_id | default(''), portrait_version] | tojson }};
 const photos = Array.from(document.querySelectorAll('[data-player-photo]'));
 const picker = document.getElementById('photo-picker');
