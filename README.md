@@ -270,6 +270,12 @@ python viewer.py
 
 Open `http://localhost:5050`. Viewer can upload a source video, launch analysis, restore saved jobs, edit court geometry, and show ball trail, reconstructed gaps, players, net, FSM events, attacks and match statistics.
 
+In **Video Analysis**, open **Set-to-attack trajectories** to find saved sets followed immediately by an attack in the same rally. The default filter shows pairs with both contacts attributed to the near side. Enable **Overlay all matching paths** to draw them together over the video, or select a row to jump to the set and highlight that path. The overlay uses active ball coordinates from the saved analysis. Dashed lines mark saved derived points, and gaps and track restarts break the line. The list marks partial and missing paths.
+
+The overlay trims the incoming and outgoing legs when the ball changes motion near the saved contacts. The path color comes from the ball's horizontal position at the end of the pass arc, using three equal screen sections across the net. The dot marks that endpoint. Left is blue, center yellow, and right pink. Gray marks an unknown zone.
+
+During a near-side attack, the top-right badge shows the approximate ball contact height above the floor in metres. The viewer projects the saved net height to the estimated depth of the contact and adds the signed offset of the ball above that reference. The attacker's lower ankle positions near the contact approximate the depth. Missing geometry, ball or usable pose evidence gives “Height unavailable.” The Events toggle controls the badge.
+
 On **New analysis**, enter the video path and choose **Preview and edit court & net**. Start from the default calibration or a saved camera setup, then drag court lines, corners, or the gold net tape handles. Change the preview time to find a clearer frame without losing edits. **Analyze Video** uses the edited geometry for that job, with the court centre line as the floor divider. **Use automatic settings** restores the usual net detection workflow.
 
 Viewer selects the ball detector batch automatically. It prefers compatible cached detections and otherwise uses available GPU memory, reducing the batch if CUDA runs out of memory.

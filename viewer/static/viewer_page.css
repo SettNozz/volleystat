@@ -36,6 +36,7 @@ video { position: absolute; inset: 0; width: 100%; height: 100%; display: block;
 canvas#overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; }
 canvas#overlay.court-editing { pointer-events: auto; cursor: crosshair; }
 .video-badge { position: absolute; bottom: 14px; left: 14px; padding: 5px 10px; border-radius: 6px; background: oklch(0% 0 0 / 0.55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
+.attack-height-badge { position: absolute; top: 12px; right: 12px; padding: 6px 10px; border-radius: 6px; background: #151526e6; color: #fff; font-size: clamp(12px, 1.25vw, 18px); font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; }
 .scoreboard { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); display: flex; overflow: hidden; border-radius: 8px; color: #fff; white-space: nowrap; font-size: clamp(11px, 1.2vw, 16px); }
 .scoreboard label { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: #252553; }
 .scoreboard label + label { background: #4a2564; }
@@ -44,6 +45,13 @@ canvas#overlay.court-editing { pointer-events: auto; cursor: crosshair; }
 .scoreboard small { align-content: center; padding: 0 6px; background: #252553; }
 #playerContactsPanel summary { cursor: pointer; font-weight: 700; }
 #playerContactsPanel[open] summary { margin-bottom: 12px; }
+#setTrajectoryPanel summary { cursor: pointer; font-weight: 700; }
+#setTrajectoryPanel .toggle { margin-top: 8px; }
+#setTrajectoryList { max-height: 220px; }
+#setTrajectoryList:not(:empty) { margin-top: 8px; }
+button.set-trajectory-row { display: flex; align-items: center; gap: 6px; text-align: left; font-variant-numeric: tabular-nums; }
+.set-trajectory-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 11px; color: var(--muted2); }
+.set-trajectory-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 1px solid #0004; flex-shrink: 0; vertical-align: -1px; }
 
 .controls { padding: 14px 16px; }
 .timeline-bar { position: relative; height: 8px; background: var(--border-soft); border-radius: 4px; margin-bottom: 12px; cursor: pointer; }
