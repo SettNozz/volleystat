@@ -40,6 +40,7 @@
       </video>
       <canvas id="overlay"></canvas>
       <div class="video-badge" id="videoBadge">{{ job.video_stem }}</div>
+      <output id="attackHeightBadge" class="attack-height-badge" aria-label="Estimated attack contact height" hidden></output>
       <div class="scoreboard" aria-label="Points inferred from serves" title="Points inferred from the next serve.">
         <label><input aria-label="Near team name" value="Near team" maxlength="32" data-team-job="{{ job.job_id }}" data-team-side="b"><output id="nearScore">0</output></label>
         <label><input aria-label="Far team name" value="Far team" maxlength="32" data-team-job="{{ job.job_id }}" data-team-side="a"><output id="farScore">0</output></label>
@@ -70,6 +71,27 @@
   </div>
 
   <div class="side-col">
+    <details class="card side-card" id="setTrajectoryPanel">
+      <summary>Set-to-attack trajectories</summary>
+      <label class="cal-row">Court side
+        <select id="setTrajectorySide" onchange="renderSetTrajectories()">
+          <option value="team_b" selected>Near side</option>
+          <option value="team_a">Far side</option>
+          <option value="all">All pairs, including unattributed</option>
+        </select>
+      </label>
+      <label class="toggle"><input type="checkbox" id="togSetTrajectories" disabled onchange="redraw()"> Overlay all matching paths</label>
+      <p class="court-edit-hint" id="setTrajectoryStatus" role="status">Loading ball annotations…</p>
+      <div class="set-trajectory-legend" id="setTrajectoryLegend" aria-label="Attack zone colors">
+        <span><i class="set-trajectory-swatch" data-zone="left" aria-hidden="true"></i> Left</span>
+        <span><i class="set-trajectory-swatch" data-zone="center" aria-hidden="true"></i> Center</span>
+        <span><i class="set-trajectory-swatch" data-zone="right" aria-hidden="true"></i> Right</span>
+        <span id="setTrajectoryUnknown" hidden><i class="set-trajectory-swatch" data-zone="unknown" aria-hidden="true"></i> Unknown zone</span>
+      </div>
+      <p class="court-edit-hint">Dots mark the ball at the attack contact. The dot's zone sets the color. Choose a pair to jump to the set. Dashed lines show saved reconstruction or interpolation.</p>
+      <div class="event-list" id="setTrajectoryList" aria-label="Set-to-attack pairs"></div>
+    </details>
+
     <details class="card side-card" id="playerContactsPanel">
       <summary>Player contacts</summary>
       <div id="playerContactMethodBar" style="display:none;margin-bottom:8px">
@@ -120,8 +142,8 @@
       <details>
         <summary style="font-size:12.5px;font-weight:700;color:var(--muted2);cursor:pointer;">Calibration &amp; sync</summary>
         <div class="cal-row">net_y <input type="range" id="netYSlider" min="50" max="900" step="1" oninput="updateNetY(this.value)"> <span class="cal-val" id="netYVal"></span></div>
-        <div class="cal-row">xL <input type="range" id="netXLSlider" min="0" max="1920" step="1" oninput="updateNetX()"> <span class="cal-val" id="netXLVal"></span></div>
-        <div class="cal-row">xR <input type="range" id="netXRSlider" min="0" max="1920" step="1" oninput="updateNetX()"> <span class="cal-val" id="netXRVal"></span></div>
+        <div class="cal-row">xL <input type="range" id="netXLSlider" min="0" max="1920" step="1" oninput="updateNetX()" onchange="refreshSetTrajectories()"> <span class="cal-val" id="netXLVal"></span></div>
+        <div class="cal-row">xR <input type="range" id="netXRSlider" min="0" max="1920" step="1" oninput="updateNetX()" onchange="refreshSetTrajectories()"> <span class="cal-val" id="netXRVal"></span></div>
         <div class="cal-row">setup
           <select id="courtSetupSelect" class="ctrl" style="padding:2px 6px;max-width:150px" onchange="applyCourtSetup(this.value)">
             <option value="">— this game only —</option>
@@ -328,6 +350,8 @@ const VIDEO_STEM = "{{ job.video_stem }}";
 </script>
 <script src="{{ url_for('static', filename='viewer_charts.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_tables.js') }}"></script>
+<script src="{{ url_for('static', filename='viewer_set_trajectories.js') }}"></script>
+<script src="{{ url_for('static', filename='viewer_attack_height.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_overlay.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_page.js') }}"></script>
 </body>

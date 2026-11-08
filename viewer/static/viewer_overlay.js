@@ -49,9 +49,11 @@ function ballStyle(source) {
 
 function redraw() {
   renderServeScore();
+  renderAttackHeight();
   if (!canvas.width) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!annotations) return;
+  drawSetTrajectories();
 
   const ann = annotations[currentFrameIdx] || _lastAnn;
   if (!ann) return;
