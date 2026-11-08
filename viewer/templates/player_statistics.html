@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Player statistics · {{ job.video_stem }}</title>
+<style>
+  body { font: 16px system-ui, sans-serif; color: #172331; background: #f6f8fb; margin: 0; }
+  main { max-width: 72rem; margin: auto; padding: 2rem 1rem; }
+  a { color: #174e93; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: white; }
+  th, td { padding: .7rem; text-align: right; border-bottom: 1px solid #d9e1ea; }
+  th { background: #e8eef6; }
+  th:first-child { text-align: left; }
+</style>
+<main>
+  <a href="{{ url_for('results', job_id=job.job_id) }}">Back to match</a>
+  <h1>Player statistics</h1>
+  <p>{{ job.video_stem }} · {{ {'b': 'Near side', 'a': 'Far side'}.get(summary.side, 'Court side unavailable') }}</p>
+  {% if summary.players %}
+  {% set attacks = [('total', 'Attempts'), ('point', 'Point-winning'), ('continued', 'Play continued'), ('out', 'Out'), ('net', 'Into net'), ('lost', 'Point lost, cause unknown'), ('unknown', 'Unresolved')] %}
+  {% set receptions = [('total', 'Attempts'), ('controlled', 'Controlled'), ('overpass', 'Overpass'), ('error', 'Errors'), ('unknown', 'Unresolved')] %}
+  {% for kind, title, columns in [('attack', 'Attacks', attacks), ('reception', 'Serve reception', receptions)] %}
+  <h2 id="{{ kind }}">{{ title }}</h2>
+  <div class="table-wrap">
+    <table aria-labelledby="{{ kind }}">
+      <thead><tr>
+        <th scope="col">Player</th>
+        {% for key, label in columns %}<th scope="col">{{ label }}</th>{% endfor %}
+        {% if kind == 'attack' %}<th scope="col">Errors</th>{% endif %}
+        {% if kind == 'reception' %}<th scope="col">Controlled %</th>{% endif %}
+      </tr></thead>
+      <tbody>
+        {% for player, row in summary.players.items() %}
+        <tr>
+          <th scope="row">{{ player }}</th>
+          {% for key, label in columns %}<td>{{ row[kind].get(key, 0) }}</td>{% endfor %}
+          {% if kind == 'attack' %}<td>{{ row.attack.get('out', 0) + row.attack.get('net', 0) }}</td>{% endif %}
+          {% if kind == 'reception' %}
+          {% set classified = row.reception.get('total', 0) - row.reception.get('unknown', 0) %}
+          <td>{{ ('%.1f' | format(100 * row.reception.get('controlled', 0) / classified)) if classified else '—' }}</td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+  <p>Without an assigned player: {{ summary.unassigned.get('attack', 0) }} attacks and {{ summary.unassigned.get('reception', 0) }} receptions. These contacts may include either side when the side is unknown.</p>
+  <p>Author assignments include model proposals and saved human corrections. Point-winning attacks are inferred from the final recorded contact and the team point ledger. Attack errors require a recorded fault reason. Reception quality comes from the matched serve lifecycle. Controlled percentage uses classified receptions.</p>
+  {% else %}
+  <p>This result has no tracked player roster.</p>
+  {% endif %}
+</main>
+</html>

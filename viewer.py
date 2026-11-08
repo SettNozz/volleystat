@@ -44,6 +44,7 @@ from src.utils.path_utils import local_path_from_uri
 from src.tracking.player_contacts import (
     apply_reviews, build_player_contacts, source_fingerprint,
 )
+from src.tracking.player_match_statistics import build_player_match_statistics
 from src.tracking.contact_author_experiments import ExperimentSourceChanged, experiment_path, load_experiment
 from src.tracking.volleyball_contact_lab import load_lab
 
@@ -567,6 +568,15 @@ def _player_contact_inputs(stats_path, ann_path, stats_stamp, ann_stamp, experim
 
 @app.route("/api/player_contacts/<job_id>", methods=["GET", "POST"])
 def player_contacts(job_id):
+    return _player_contact_response(job_id)
+
+
+@app.route("/player-statistics/<job_id>")
+def player_statistics(job_id):
+    return _player_contact_response(job_id, statistics_page=True)
+
+
+def _player_contact_response(job_id, *, statistics_page=False):
     job = _get_job(job_id)
     if not job or job["status"] != "done":
         return jsonify({"error": "Results not ready"}), 404
@@ -585,7 +595,10 @@ def player_contacts(job_id):
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object")
             default_method = report["method"] if report.get("attribution", {}).get("status") == "completed" else "body_baseline"
-            method = body.get("method") or request.args.get("method") or (bundle["selected_method"] if bundle else default_method)
+            selected_method = bundle["selected_method"] if bundle else default_method
+            method = selected_method if statistics_page else (
+                body.get("method") or request.args.get("method") or selected_method
+            )
             if bundle:
                 if method not in bundle["reports"]:
                     raise ValueError("Unknown experimental contact method")
@@ -620,6 +633,12 @@ def player_contacts(job_id):
                     stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
                 reviews.append(review)
             result = apply_reviews(report, reviews)
+            if statistics_page:
+                stats_raw = stats_path.read_bytes()
+                if hashlib.sha256(stats_raw).hexdigest() != source["stats_sha256"]:
+                    return jsonify({"error": "Analysis changed; reload statistics"}), 409
+                summary = build_player_match_statistics(json.loads(stats_raw), result)
+                return render_template("player_statistics.html", job=job, summary=summary)
             result["source"] = source
             result["review_count"] = len(reviews)
             result["method_id"] = method

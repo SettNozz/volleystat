@@ -183,6 +183,7 @@ button.ctrl.active { background: var(--primary); border-color: var(--primary); c
     <div class="nav-item" data-page="table" onclick="showPage('table')">Match Stats</div>
   </div>
   <a class="library-btn" href="/library">Library</a>
+  <a class="library-btn" href="{{ url_for('player_statistics', job_id=job.job_id) }}">Player statistics</a>
   <a class="upload-btn" href="/">Upload</a>
 </div>
 
