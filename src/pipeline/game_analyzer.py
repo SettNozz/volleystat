@@ -131,6 +131,7 @@ class GameAnalyzer(
         enable_contact_author: bool = True,
         contact_author_model: Optional[str] = None,
         contact_author_roster: Optional[str] = None,
+        enable_contact_side: bool = True,
     ):
         """
         Args:
@@ -195,6 +196,7 @@ class GameAnalyzer(
         self.enable_contact_author = enable_contact_author
         self.contact_author_model = contact_author_model
         self.contact_author_roster = contact_author_roster
+        self.enable_contact_side = bool(enable_contact_side)
         self._model_cache = None
         self._ball_specs = {}
         self._pose_spec = None
@@ -843,6 +845,8 @@ class GameAnalyzer(
         # Strictly after the recompute: the spotter reads the same final ball
         # coordinates and ``pose_f`` the exported annotations carry.
         self._spot_contacts(stats, fps)
+        # On the final contact list, whoever produced it.
+        self._assign_contact_sides(stats, fps)
         # The spotter, when it ran, logged its own rallies; these are the FSM's.
         fsm_lifecycle = stats.rally_lifecycle_fsm or stats.rally_lifecycle
         if fsm_lifecycle.get("service_attempts"):
@@ -1175,6 +1179,7 @@ class GameAnalyzer(
             "attack_heatmap": stats.attack_heatmap,
             "ball_reconstruction": stats.ball_reconstruction,
             "contact_spotter": stats.contact_spotter,
+            "contact_side": stats.contact_side,
             "player_identity": stats.player_identity,
             "player_contacts": stats.player_contacts,
             "model_cache": stats.model_cache,

@@ -153,6 +153,10 @@ def main():
     parser.add_argument("--contact-author-model", metavar="MODEL", help="Override promoted contact-author model path")
     parser.add_argument("--contact-author-roster", metavar="JSON", help="Source-bound near-side identity photos, including substitutes or five-player training")
     parser.add_argument("--no-contact-author", action="store_true", help="Use legacy geometric player-contact proposals")
+    parser.add_argument("--no-contact-side", action="store_true",
+                        help="Do not propose which side of the net made each contact "
+                             "(ball box size against the net-plane size, plus possession "
+                             "order; adds side fields, never changes team)")
     parser.add_argument("--ball-ensemble", action="store_true",
                         help="Collect ball candidates from a second, tiled detector "
                              "(union recall 0.93 vs 0.72, roughly half the speed)")
@@ -284,6 +288,7 @@ def main():
         player_reid_assets=args.player_reid_assets,
         player_reid_device=args.player_reid_device,
         enable_contact_author=not args.no_contact_author,
+        enable_contact_side=not args.no_contact_side,
         contact_author_model=args.contact_author_model,
         contact_author_roster=args.contact_author_roster,
         output_video=args.render_video,
