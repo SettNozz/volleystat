@@ -7,10 +7,17 @@ const SET_ATTACK_ZONES = {
   right: {label: 'Right', color: '#f472b6'},
   unknown: {label: 'Unknown zone', color: '#a1a1aa'},
 };
-const setTrajectoryOverlay = {pairs: [], selected: null, paths: null};
+const SET_TRAJECTORY_LEAD_SECONDS = 0.5;
+const SET_TRAJECTORY_TAIL_SECONDS = 2;
+const setTrajectoryOverlay = {
+  pairs: [], visible: [], paths: null,
+  selected: null, hovered: null, zone: 'all',
+  // Frame range of the clip started from a pair; playback pauses at `stop`.
+  clip: null,
+};
 
 function setAttackPairs(events, teams, rallies) {
-  const contacts = events.map((event, index) => ({event, team: teams[index]}))
+  const contacts = events.map((event, index) => ({event, index, team: teams[index]}))
     .filter(({event}) => Number.isInteger(event.frame))
     .sort((a, b) => a.event.frame - b.event.frame);
   const ranges = rallies.map(rally => [
@@ -27,9 +34,68 @@ function setAttackPairs(events, teams, rallies) {
     const setTeam = COURT_SIDES.has(set.team) ? set.team : null;
     const attackTeam = COURT_SIDES.has(attack.team) ? attack.team : null;
     if (setTeam && attackTeam && setTeam !== attackTeam) continue;
-    pairs.push({start, end, team: setTeam === attackTeam ? setTeam : null});
+    pairs.push({
+      start, end, setIndex: set.index, attackIndex: attack.index,
+      team: setTeam === attackTeam ? setTeam : null,
+    });
   }
   return pairs;
+}
+
+// Roster IDs come only from contacts the player-contact report assigned.
+// Unresolved contacts stay unidentified; a setter is never inferred here.
+function setAttackSetterIds(report, events) {
+  const setters = new Map();
+  for (const contact of report?.contacts || []) {
+    const event = events[contact.event_index];
+    if (!event || event.frame !== contact.frame || event.type !== contact.type) continue;
+    if (contact.status === 'assigned' && contact.player_id) {
+      setters.set(contact.event_index, contact.player_id);
+    }
+  }
+  return setters;
+}
+
+// The usual setter is the roster ID with the most identified sets. A tie has
+// no usual setter, so no pair is flagged as an exception.
+function setAttackMainSetter(pairs) {
+  const counts = new Map();
+  for (const {setter} of pairs) {
+    if (setter) counts.set(setter, (counts.get(setter) || 0) + 1);
+  }
+  const ranked = [...counts].sort((a, b) =>
+    b[1] - a[1] || a[0].localeCompare(b[0], undefined, {numeric: true}));
+  const main = ranked.length && (ranked.length === 1 || ranked[0][1] > ranked[1][1])
+    ? ranked[0][0] : null;
+  return {ranked, main};
+}
+
+function setTrajectoryMatches(pair, {team = 'all', zone = 'all', setter = 'all'}, main) {
+  if (team !== 'all' && pair.team !== team) return false;
+  if (zone !== 'all' && pair.zone !== zone) return false;
+  if (setter === 'all') return true;
+  if (setter === 'unknown') return !pair.setter;
+  if (setter === 'other') return Boolean(main && pair.setter && pair.setter !== main);
+  return pair.setter === setter;
+}
+
+function nearestSetTrajectory(pairs, point, tolerance) {
+  let nearest = null;
+  let best = tolerance;
+  for (const pair of pairs) {
+    let distance = pair.attackPoint
+      ? Math.hypot(point[0] - pair.attackPoint[0], point[1] - pair.attackPoint[1]) : Infinity;
+    for (const {points} of pair.runs) {
+      for (let i = 1; i < points.length; i++) {
+        distance = Math.min(distance, distanceToSegment(point, points[i - 1], points[i]));
+      }
+    }
+    if (distance <= best) {
+      best = distance;
+      nearest = pair;
+    }
+  }
+  return nearest;
 }
 
 function setAttackBallPoint(ann) {
@@ -144,6 +210,7 @@ function refreshSetTrajectories() {
     data.net_floor_left?.[0] ?? data.net_x_left,
     data.net_floor_right?.[0] ?? data.net_x_right,
   ];
+  const setters = setAttackSetterIds(playerContactReport, EVENTS);
   setTrajectoryOverlay.pairs = setAttackPairs(EVENTS, eventTeams, RALLIES).map(pair => {
     const arc = setAttackArcBounds(annotations, pair.start, pair.end, FPS, data.frame_width);
     const {runs, complete} = setAttackBallPath(annotations, arc.start, arc.end);
@@ -155,15 +222,72 @@ function refreshSetTrajectories() {
       path.moveTo(...points[0]);
       for (let i = 1; i < points.length; i++) path.lineTo(...points[i]);
     }
-    return {...pair, arc, zone, paths, complete, hasPath: runs.length > 0};
+    return {
+      ...pair, arc, zone, paths, runs, attackPoint, complete, hasPath: runs.length > 0,
+      setter: setters.get(pair.setIndex) || null,
+    };
   });
   renderSetTrajectories();
 }
 
+function renderSetTrajectorySetters(select, pairs, ranked, main) {
+  const others = main ? pairs.filter(pair => pair.setter && pair.setter !== main).length : 0;
+  const unknown = pairs.filter(pair => !pair.setter).length;
+  const options = [['all', `All setters (${pairs.length})`]];
+  if (others) options.push(['other', `Not the main setter (${others})`]);
+  for (const [id, count] of ranked) {
+    options.push([id, `${id}${id === main ? ' · main setter' : ''} (${count})`]);
+  }
+  if (unknown) options.push(['unknown', `Unidentified (${unknown})`]);
+  const value = options.some(([id]) => id === select.value) ? select.value : 'all';
+  select.replaceChildren(...options.map(([id, label]) => {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = label;
+    return option;
+  }));
+  select.value = value;
+}
+
+function renderSetTrajectoryZones(box, pairs) {
+  const state = setTrajectoryOverlay;
+  const counts = {all: pairs.length};
+  for (const pair of pairs) counts[pair.zone] = (counts[pair.zone] || 0) + 1;
+  const zones = ['all', 'left', 'center', 'right'];
+  if (counts.unknown || state.zone === 'unknown') zones.push('unknown');
+  box.replaceChildren(...zones.map(zone => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'chip' + (state.zone === zone ? ' on' : '');
+    chip.setAttribute('aria-pressed', String(state.zone === zone));
+    if (zone !== 'all') {
+      const swatch = document.createElement('span');
+      swatch.className = 'set-trajectory-swatch';
+      swatch.style.backgroundColor = SET_ATTACK_ZONES[zone].color;
+      swatch.setAttribute('aria-hidden', 'true');
+      chip.append(swatch);
+    }
+    chip.append(`${zone === 'all' ? 'All' : SET_ATTACK_ZONES[zone].label} ${counts[zone] || 0}`);
+    chip.onclick = () => {
+      state.zone = zone;
+      renderSetTrajectories();
+    };
+    return chip;
+  }));
+}
+
 function renderSetTrajectories() {
   if (!annotations) return;
+  const state = setTrajectoryOverlay;
   const team = document.getElementById('setTrajectorySide').value;
-  const pairs = setTrajectoryOverlay.pairs.filter(pair => team === 'all' || pair.team === team);
+  const setterSelect = document.getElementById('setTrajectorySetter');
+  const sidePairs = state.pairs.filter(pair => setTrajectoryMatches(pair, {team}));
+  const {ranked, main} = setAttackMainSetter(sidePairs);
+  renderSetTrajectorySetters(setterSelect, sidePairs, ranked, main);
+  const setter = setterSelect.value;
+  const setterPairs = sidePairs.filter(pair => setTrajectoryMatches(pair, {setter}, main));
+  renderSetTrajectoryZones(document.getElementById('setTrajectoryZones'), setterPairs);
+  const pairs = setterPairs.filter(pair => setTrajectoryMatches(pair, {zone: state.zone}));
   const paths = new Map();
   const list = document.getElementById('setTrajectoryList');
   const overlayToggle = document.getElementById('togSetTrajectories');
@@ -171,8 +295,10 @@ function renderSetTrajectories() {
     const tenths = Math.floor(frame / FPS * 10);
     return `${formatTime(tenths / 10)}.${tenths % 10}`;
   };
-  const selected = pairs.find(pair => pair.start === setTrajectoryOverlay.selected);
-  setTrajectoryOverlay.selected = selected?.start ?? null;
+  const selected = pairs.find(pair => pair.start === state.selected);
+  state.selected = selected?.start ?? null;
+  state.hovered = null;
+  state.visible = pairs;
   const rows = [];
   let drawn = 0;
   for (const pair of pairs) {
@@ -188,6 +314,7 @@ function renderSetTrajectories() {
     const row = document.createElement('button');
     row.type = 'button';
     row.className = 'ctrl set-trajectory-row';
+    row.dataset.start = String(pair.start);
     row.setAttribute('aria-pressed', String(pair === selected));
     row.classList.toggle('active', pair === selected);
     const side = pair.team === 'team_b' ? 'Near' : pair.team === 'team_a' ? 'Far' : 'Unattributed';
@@ -197,44 +324,110 @@ function renderSetTrajectories() {
     swatch.style.backgroundColor = color;
     swatch.setAttribute('aria-hidden', 'true');
     row.append(swatch, `${timeLabel(pair.arc.start)} → ${timeLabel(pair.arc.end)} · ${side} · ${label}${quality}`);
-    row.onclick = () => {
-      setTrajectoryOverlay.selected = pair.start;
-      for (const button of list.children) {
-        button.classList.toggle('active', button === row);
-        button.setAttribute('aria-pressed', String(button === row));
-      }
-      if (pair.hasPath) overlayToggle.checked = true;
-      seekAndPlay(pair.arc.start, false);
-      redraw();
-    };
+    const setterTag = document.createElement('span');
+    const otherSetter = Boolean(main && pair.setter && pair.setter !== main);
+    setterTag.className = 'set-trajectory-setter' + (otherSetter ? ' other' : '');
+    setterTag.textContent = pair.setter || 'P?';
+    setterTag.title = !pair.setter ? 'Setter not identified'
+      : otherSetter ? `Set by ${pair.setter}, not the main setter ${main}`
+      : `Set by ${pair.setter}`;
+    row.append(setterTag);
+    row.onclick = () => selectSetTrajectory(pair);
     rows.push(row);
   }
   list.replaceChildren(...rows);
-  for (const swatch of document.querySelectorAll('#setTrajectoryLegend [data-zone]')) {
-    swatch.style.backgroundColor = SET_ATTACK_ZONES[swatch.dataset.zone].color;
-  }
-  document.getElementById('setTrajectoryUnknown').hidden = !pairs.some(pair => pair.zone === 'unknown');
-  setTrajectoryOverlay.paths = paths;
+  state.paths = paths;
   overlayToggle.disabled = drawn === 0;
+  // The share shows how firmly the side's sets point at one roster ID.
+  const identified = ranked.reduce((total, [, count]) => total + count, 0);
+  const mainNote = main ? ` · main setter ${main} (${ranked[0][1]} of ${identified} identified sets)` : '';
   document.getElementById('setTrajectoryStatus').textContent = pairs.length
-    ? `${pairs.length} pairs · ${drawn} with a drawable path`
-    : 'No matching pairs for this side.';
+    ? `${pairs.length} pairs · ${drawn} with a drawable path${mainNote}`
+    : 'No matching pairs for these filters.';
+  redraw();
+}
+
+// Selecting a pair plays the set, the attack and the seconds after it, then
+// pauses. Passing null clears the selection and leaves playback alone.
+function selectSetTrajectory(pair) {
+  const state = setTrajectoryOverlay;
+  const list = document.getElementById('setTrajectoryList');
+  state.selected = pair ? pair.start : null;
+  state.clip = null;
+  for (const row of list.children) {
+    const active = Boolean(pair) && Number(row.dataset.start) === pair.start;
+    row.classList.toggle('active', active);
+    row.setAttribute('aria-pressed', String(active));
+    if (!active) continue;
+    // Scroll inside the list only; scrollIntoView would move the whole page.
+    const top = row.offsetTop - list.offsetTop;
+    if (top < list.scrollTop || top + row.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = top - list.clientHeight / 2 + row.offsetHeight / 2;
+    }
+  }
+  if (pair) {
+    if (pair.hasPath) document.getElementById('togSetTrajectories').checked = true;
+    const start = Math.max(0, pair.start - Math.round(SET_TRAJECTORY_LEAD_SECONDS * FPS));
+    state.clip = {start, stop: pair.end + Math.round(SET_TRAJECTORY_TAIL_SECONDS * FPS)};
+    seekAndPlay(start);
+  }
+  redraw();
+}
+
+// Pause at the end of the clip started by selectSetTrajectory. A seek outside
+// the clip means the user moved on, so the pending pause is dropped.
+function enforceSetTrajectoryClip() {
+  const clip = setTrajectoryOverlay.clip;
+  if (!clip) return;
+  const frame = Math.round(vid.currentTime * FPS);
+  if (frame < clip.start - 1 || frame > clip.stop + FPS) {
+    setTrajectoryOverlay.clip = null;
+  } else if (frame >= clip.stop) {
+    setTrajectoryOverlay.clip = null;
+    vid.pause();
+  }
+}
+
+function setTrajectoriesShown() {
+  const overlayToggle = document.getElementById('togSetTrajectories');
+  return overlayToggle.checked && !overlayToggle.disabled && Boolean(setTrajectoryOverlay.paths);
+}
+
+function setTrajectoryAtEvent(event) {
+  if (!setTrajectoriesShown()) return null;
+  const rect = canvas.getBoundingClientRect();
+  const frameWidth = Number(window._annData.frame_width || vid.videoWidth || 1280);
+  // Ten CSS pixels around the pointer, expressed in annotation pixels.
+  const tolerance = 10 * frameWidth / Math.max(rect.width, 1);
+  const drawable = setTrajectoryOverlay.visible.filter(pair => pair.hasPath);
+  return nearestSetTrajectory(drawable, eventImagePoint(event), tolerance);
+}
+
+function hoverSetTrajectory(pair) {
+  const start = pair ? pair.start : null;
+  canvas.style.cursor = pair ? 'pointer' : '';
+  if (setTrajectoryOverlay.hovered === start) return;
+  setTrajectoryOverlay.hovered = start;
   redraw();
 }
 
 function drawSetTrajectories() {
-  const overlayToggle = document.getElementById('togSetTrajectories');
-  if (!overlayToggle.checked || overlayToggle.disabled || !setTrajectoryOverlay.paths) return;
+  const shown = setTrajectoriesShown();
+  // The canvas takes pointer input only while there are lines to click.
+  canvas.classList.toggle('trajectory-picking', shown);
+  if (!shown) return;
   const data = window._annData;
   const sx = canvas.width / (data.frame_width || vid.videoWidth || 1280);
   const sy = canvas.height / (data.frame_height || vid.videoHeight || 720);
-  const selected = setTrajectoryOverlay.pairs.find(pair => pair.start === setTrajectoryOverlay.selected);
+  const state = setTrajectoryOverlay;
+  const selected = state.visible.find(pair => pair.start === state.selected);
+  const hovered = state.visible.find(pair => pair.start === state.hovered);
   ctx.save();
   ctx.scale(sx, sy);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  const stroke = (zone, paths, width, opacity) => {
-    ctx.fillStyle = ctx.strokeStyle = SET_ATTACK_ZONES[zone].color;
+  const stroke = (color, paths, width, opacity) => {
+    ctx.fillStyle = ctx.strokeStyle = color;
     ctx.lineWidth = width / sx;
     ctx.globalAlpha = opacity;
     ctx.setLineDash([]);
@@ -249,9 +442,17 @@ function drawSetTrajectories() {
     }
     ctx.fill();
   };
-  for (const [zone, paths] of setTrajectoryOverlay.paths) {
-    stroke(zone, paths, 2, 0.8);
+  // A selected pair pushes every other path into the background.
+  const baseOpacity = selected?.hasPath ? 0.2 : 0.8;
+  for (const [zone, paths] of state.paths) {
+    stroke(SET_ATTACK_ZONES[zone].color, paths, 2, baseOpacity);
   }
-  if (selected?.hasPath) stroke(selected.zone, selected.paths, 4, 1);
+  if (hovered?.hasPath && hovered !== selected) {
+    stroke(SET_ATTACK_ZONES[hovered.zone].color, hovered.paths, 3, 1);
+  }
+  if (selected?.hasPath) {
+    stroke('#000', selected.paths, 7, 0.45);
+    stroke(SET_ATTACK_ZONES[selected.zone].color, selected.paths, 4, 1);
+  }
   ctx.restore();
 }
