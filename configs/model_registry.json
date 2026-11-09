@@ -11,13 +11,13 @@
   ],
   "models": {
     "ball_detector": {
-      "registry_name": "volleystat_ball_detector",
+      "registry_name": "volleystat_ball_detector_1920",
       "alias": "production",
       "artifact": "best.pt",
-      "fallback": "models/best_fullframe/weights/best.pt",
-      "imgsz": 1280,
-      "note": "recall 0.72 at imgsz 1280 on the video-3 GT window (232 labelled frames)",
-      "sha256": "65006d22d09ddb0868be3cedec2b5b6b68e17c4c4e8a196a73c017e32470764a"
+      "fallback": "models/ball_fullframe_ft1920_20261108_v1/weights/best.pt",
+      "imgsz": 1920,
+      "note": "best_fullframe fine-tuned 30 epochs at imgsz 1920 (scripts/evaluation/finetune_ball_detector.py); 0.967 vs 0.944 after DP on the 6_tiPcRYGcBtc window, 0.881 vs 0.843 raw on 369 contacts. Runs only at imgsz 1920; the 1280 model stays registered as volleystat_ball_detector",
+      "sha256": "8081c66377234fc4c16108ec8a23775fcbd8131add58c60b6fdd6a6b5fd7f618"
     },
     "ball_detector_tiled": {
       "registry_name": "volleystat_ball_detector_tiled",

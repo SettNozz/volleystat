@@ -63,6 +63,7 @@ Current high-value analysis options:
 
 ```text
 --ball-ensemble
+--ball-imgsz N
 --no-ball-dp
 --ball-reconstruction off|conservative|contact-aware|compare
 --reconstruction-contacts <JSON>
@@ -170,6 +171,7 @@ Main code:
 ## Ball trajectory invariants
 
 - Primary detector comes from logical model `ball_detector`; tiled second opinion from `ball_detector_tiled`.
+- Since 2026-11-08 `ball_detector` is `best_fullframe` fine-tuned at imgsz 1920 (MLflow `volleystat_ball_detector_1920`); it only runs at 1920. The 1280 model stays as `volleystat_ball_detector` / `models/best_fullframe`; use it with `--ball-imgsz 1280`. Measured 0.967 vs 0.944 after DP on the `6_tiPcRYGcBtc` window and 0.881 vs 0.843 raw on 369 contacts, 1.7x ball cost. Weights and imgsz are both in the ball cache key, so old ball caches are not reused. Registry downloads are cached per MLflow name, and a registry file other than the pin is flagged `sha256_mismatch`.
 - Static-source suppression runs before global solver and again on selected trajectory where needed.
 - Global DP chooses candidate identity. Smoother refines coordinate noise; it must not smooth across contacts, gaps, restarts, or impossible jumps.
 - Default smoothing is `moderate` (7 frames).

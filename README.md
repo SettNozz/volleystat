@@ -318,7 +318,7 @@ After trajectory cleanup and clean FSM replay, the pipeline recomputes `pose_f` 
 
 Default analysis applies:
 
-1. Primary YOLO detection; optional tiled second detector with `--ball-ensemble`.
+1. Primary YOLO detection at imgsz 1920 (`best_fullframe` fine-tuned at 1920, registry entry `ball_detector`); optional tiled second detector with `--ball-ensemble`. `--ball-imgsz` overrides the size, e.g. `--ball-model models/best_fullframe/weights/best.pt --ball-imgsz 1280` for the previous model.
 2. Motion-aware live gate.
 3. Static-source suppression for parked false positives.
 4. Global trajectory DP unless `--no-ball-dp` is set.
@@ -475,7 +475,7 @@ python scripts\inference\predict_rally_spotting_results.py `
 `configs/model_registry.json` lists every model file the pipeline loads, by logical name, with its MLflow alias, local fallback file, a pinned `sha256`, and (in `files`) pinned companion files that must sit next to it:
 
 ```text
-ball_detector          models/best_fullframe/weights/best.pt
+ball_detector          models/ball_fullframe_ft1920_20261108_v1/weights/best.pt (imgsz 1920; MLflow name volleystat_ball_detector_1920)
 ball_detector_tiled    models/yolov8_curated_training/yolov8n_volleyball_curated8/weights/best.pt
 pose_estimator         models/pretrained/yolo11m-pose.pt
 player_reid            models/player_reid/osnet_msmt17_v1/ (weights + osnet.py, manifest, LICENSE)

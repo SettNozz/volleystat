@@ -103,6 +103,7 @@ class GameAnalyzer(
         ball_ensemble: bool = False,
         ball_trajectory_dp: bool = True,
         ball_batch_size: Optional[int] = 1,
+        ball_imgsz: Optional[int] = None,
         net_height_m: float = 2.34,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         enable_pose: bool = True,
@@ -143,6 +144,9 @@ class GameAnalyzer(
                        still runs, because the annotated video needs a position
                        while the frame is in hand.
             ball_batch_size: Ball YOLO batch size. None chooses automatically.
+            ball_imgsz: Ball YOLO input size. None takes the registry entry's
+                       imgsz; set it with an explicit ball model trained at
+                       another size.
                        Pose tracking remains sequential so ByteTrack IDs stay valid.
             net_height_m: Physical net-top height. Mixed games default to
                        2.34 m; men's games use 2.43 m.
@@ -226,6 +230,7 @@ class GameAnalyzer(
         self.net_y_override = net_y_override
         self.ball_ensemble = ball_ensemble
         self.ball_trajectory_dp = ball_trajectory_dp
+        self.ball_imgsz = ball_imgsz
         self._auto_ball_batch = ball_batch_size is None
         self.ball_batch_size = 1 if self._auto_ball_batch else max(1, int(ball_batch_size))
         self.net_height_m = float(net_height_m)

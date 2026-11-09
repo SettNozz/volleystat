@@ -36,7 +36,8 @@ class ModelLoadingMixin:
 
     def _init_ball_detector(self, model_path: Optional[str]):
         primary = self._resolve("ball_detector", model_path)
-        imgsz = int(primary.extra.get("imgsz") or _BALL_IMGSZ)
+        imgsz = int(getattr(self, "ball_imgsz", None) or primary.extra.get("imgsz") or _BALL_IMGSZ)
+        self.model_provenance["ball_detector"]["imgsz"] = imgsz
         def detector(path, size, grid=None):
             from detection.detect_ball_on_video import BallDetectorVideo
             return BallDetectorVideo(str(path), imgsz=size, tile_grid=grid)
