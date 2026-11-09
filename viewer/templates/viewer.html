@@ -80,15 +80,15 @@
           <option value="all">All pairs, including unattributed</option>
         </select>
       </label>
+      <label class="cal-row">Setter
+        <select id="setTrajectorySetter" onchange="renderSetTrajectories()">
+          <option value="all" selected>All setters</option>
+        </select>
+      </label>
+      <div class="chip-row set-trajectory-zones" id="setTrajectoryZones" role="group" aria-label="Attack zone"></div>
       <label class="toggle"><input type="checkbox" id="togSetTrajectories" disabled onchange="redraw()"> Overlay all matching paths</label>
       <p class="court-edit-hint" id="setTrajectoryStatus" role="status">Loading ball annotations…</p>
-      <div class="set-trajectory-legend" id="setTrajectoryLegend" aria-label="Attack zone colors">
-        <span><i class="set-trajectory-swatch" data-zone="left" aria-hidden="true"></i> Left</span>
-        <span><i class="set-trajectory-swatch" data-zone="center" aria-hidden="true"></i> Center</span>
-        <span><i class="set-trajectory-swatch" data-zone="right" aria-hidden="true"></i> Right</span>
-        <span id="setTrajectoryUnknown" hidden><i class="set-trajectory-swatch" data-zone="unknown" aria-hidden="true"></i> Unknown zone</span>
-      </div>
-      <p class="court-edit-hint">Dots mark the ball at the attack contact. The dot's zone sets the color. Choose a pair to jump to the set. Dashed lines show saved reconstruction or interpolation.</p>
+      <p class="court-edit-hint">Dots mark the ball at the attack contact. The dot's zone sets the color. Click a line on the video or a row to play the set, the attack and 2 s after it; the other lines fade. Click empty video to clear. Dashed lines show saved reconstruction or interpolation. Setter IDs come from Player contacts (automatic, unverified); <b>P?</b> is an unidentified setter.</p>
       <div class="event-list" id="setTrajectoryList" aria-label="Set-to-attack pairs"></div>
     </details>
 
