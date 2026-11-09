@@ -310,3 +310,59 @@ def test_entry_without_registry_copy_is_not_a_backup_problem(tmp_path):
     from scripts.models import verify_models as vm
     entry, *_ = _bundle(tmp_path)
     assert vm.verify({"big": dict(entry, backup=False)}, client_info=(None, None, False)) == 0
+
+
+def test_registry_flags_weights_other_than_the_pin(registry, weights):
+    # The alias can point at other bytes than the config pins; imgsz still comes
+    # from the config, so the result must say the two may not belong together.
+    config = config_for(weights, sha256="0" * 64)
+    register("ball_detector", config["ball_detector"], weights)
+
+    resolved = mr.resolve_model("ball_detector", config=config)
+    assert resolved.source == "registry"
+    assert resolved.extra.get("sha256_mismatch") is True
+    assert "differs from the pinned" in (resolved.warning or "")
+
+
+def test_cache_is_per_registered_model_not_per_logical_name(registry, weights, tmp_path):
+    # Moving a logical name to another registered model restarts its version
+    # numbers at 1; the old model's cached v1 must not be served for it.
+    old = config_for(weights)
+    register("ball_detector", old["ball_detector"], weights)
+    assert mr.resolve_model("ball_detector", config=old).path.read_bytes() == weights.read_bytes()
+
+    newer = tmp_path / "new" / "best.pt"
+    newer.parent.mkdir()
+    newer.write_bytes(b"weights-1920" * 512)
+    new = config_for(newer, registry_name="test_ball_detector_1920")
+    register("ball_detector", new["ball_detector"], newer)
+
+    resolved = mr.resolve_model("ball_detector", config=new)
+    assert resolved.version == "1"
+    assert resolved.path.read_bytes() == newer.read_bytes()
+    assert "sha256_mismatch" not in resolved.extra
+
+
+def test_shipped_ball_detector_runs_at_the_size_it_was_trained_for():
+    entry = mr.load_config()["ball_detector"]
+    assert entry["imgsz"] == 1920
+    assert entry["registry_name"] == "volleystat_ball_detector_1920"
+
+
+@pytest.mark.parametrize("override, expected", [(None, 1920), (1280, 1280)])
+def test_ball_imgsz_comes_from_the_registry_unless_given(tmp_path, override, expected):
+    from src.pipeline.game_analyzer import GameAnalyzer
+
+    weights = tmp_path / "best.pt"
+    weights.write_bytes(b"old-1280-weights")
+    analyzer = GameAnalyzer.__new__(GameAnalyzer)
+    analyzer.use_model_registry = False
+    analyzer.model_provenance = {}
+    analyzer._ball_specs = {}
+    analyzer.ball_batch_size = 8
+    analyzer.ball_ensemble = False
+    analyzer.ball_imgsz = override
+    analyzer._init_ball_detector(str(weights))
+
+    assert analyzer._ball_specs["primary"]["settings"]["imgsz"] == expected
+    assert analyzer.model_provenance["ball_detector"]["imgsz"] == expected

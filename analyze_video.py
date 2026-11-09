@@ -120,7 +120,12 @@ def main():
 
     # Model overrides
     parser.add_argument("--ball-model", default=None, metavar="PATH",
-                        help="Override ball detection model path")
+                        help="Override ball detection model path (keeps the registry "
+                             "imgsz unless --ball-imgsz is given)")
+    parser.add_argument("--ball-imgsz", type=int, default=None, metavar="N",
+                        help="Ball YOLO input size (default: the ball_detector registry "
+                             "entry, 1920 for the current model; use 1280 with "
+                             "models/best_fullframe). Part of the ball cache key")
     parser.add_argument("--pose-model", default=None, metavar="PATH",
                         help="Override pose estimation model path")
     parser.add_argument("--pose-imgsz", type=int, default=2560,
@@ -269,6 +274,7 @@ def main():
     analyzer = GameAnalyzer(
         calibration_path=args.calibration,
         ball_model_path=args.ball_model,
+        ball_imgsz=args.ball_imgsz,
         pose_model_path=args.pose_model,
         pose_imgsz=args.pose_imgsz,
         person_masks_path=args.person_masks,

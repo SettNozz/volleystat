@@ -312,6 +312,10 @@ def resolve_model(
     registry_name = entry.get("registry_name", name)
     alias = entry.get("alias", "production")
     artifact = entry.get("artifact")
+    # Downloads are cached per MLflow model name: version numbers restart for
+    # each name, so a logical name moved to another registered model must not
+    # find the old model's "v1" on disk.
+    cache_name = registry_name
 
     try:
         import mlflow  # noqa: F401
@@ -328,19 +332,20 @@ def resolve_model(
         client = MlflowClient(tracking_uri=uri, registry_uri=uri)
         version = _lookup_version(client, registry_name, alias)
     except Exception as exc:
-        cached = _cached_versions(name)
+        cached = _cached_versions(cache_name)
         if cached:
             # A known version already on disk is a better answer than an
             # unrelated file: the server being down does not change which
             # weights this project decided on.
             newest = cached[-1]
-            path = _cached_file(name, newest, artifact)
+            path = _cached_file(cache_name, newest, artifact)
             if path:
                 warning = f"registry unreachable ({_short(exc)}); using cached version {newest}"
+                sha, warning = _check_pin(entry, path, extra, warning)
                 log.warning(f"{name}: {warning}")
                 return ResolvedModel(
                     name=name, path=path, source="cache", version=newest,
-                    alias=alias, sha256=cached_sha256(path), warning=warning, extra=extra,
+                    alias=alias, sha256=sha, warning=warning, extra=extra,
                 )
         return _fallback(name, entry, _short(exc), allow_fallback)
 
@@ -350,24 +355,39 @@ def resolve_model(
             allow_fallback,
         )
 
-    cached_path = _cached_file(name, version.version, artifact)
-    if cached_path is not None:
-        log.info(f"{name}: registry v{version.version} (cached) {cached_path.name}")
-        return ResolvedModel(
-            name=name, path=cached_path, source="registry", version=str(version.version),
-            alias=alias, run_id=version.run_id, sha256=cached_sha256(cached_path), extra=extra,
-        )
-
-    try:
-        path = _download(client, version, name, artifact)
-    except Exception as exc:
-        return _fallback(name, entry, f"download failed: {_short(exc)}", allow_fallback)
-
-    log.info(f"{name}: registry v{version.version} -> {path}")
+    path = _cached_file(cache_name, version.version, artifact)
+    if path is not None:
+        log.info(f"{name}: registry v{version.version} (cached) {path.name}")
+    else:
+        try:
+            path = _download(client, version, cache_name, artifact)
+        except Exception as exc:
+            return _fallback(name, entry, f"download failed: {_short(exc)}", allow_fallback)
+        log.info(f"{name}: registry v{version.version} -> {path}")
+    sha, warning = _check_pin(entry, path, extra, None)
+    if warning:
+        log.warning(f"{name}: {warning}")
     return ResolvedModel(
         name=name, path=path, source="registry", version=str(version.version),
-        alias=alias, run_id=version.run_id, sha256=cached_sha256(path), extra=extra,
+        alias=alias, run_id=version.run_id, sha256=sha, warning=warning, extra=extra,
     )
+
+
+def _check_pin(entry: Dict[str, Any], path: Path, extra: Dict[str, Any],
+               warning: Optional[str]) -> tuple:
+    """sha256 of ``path``; flag it when the config pins other bytes.
+
+    Settings such as ``imgsz`` come from the config entry, so weights that are
+    not the pinned file may be running with settings meant for another model.
+    """
+    sha = cached_sha256(path)
+    pinned = entry.get("sha256")
+    if pinned and sha != pinned:
+        note = (f"sha256 {sha[:12]} differs from the pinned {pinned[:12]} in "
+                f"{CONFIG_PATH.name}; config settings may not match these weights")
+        warning = f"{warning}; {note}" if warning else note
+        extra["sha256_mismatch"] = True
+    return sha, warning
 
 
 def _short(exc: Exception) -> str:
@@ -407,6 +427,8 @@ def _download(client, version, name: str, artifact: Optional[str]) -> Path:
 
 def clear_cache(name: Optional[str] = None) -> int:
     """Drop cached artifacts. Returns how many version directories went."""
+    if name:
+        name = (load_config().get(name) or {}).get("registry_name", name)
     root = CACHE_DIR / name if name else CACHE_DIR
     if not root.exists():
         return 0

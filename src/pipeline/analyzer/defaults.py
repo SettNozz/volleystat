@@ -5,13 +5,12 @@ from pathlib import Path
 # Project root (same expression as the original game_analyzer.py, one level deeper)
 _ROOT = Path(__file__).parent.parent.parent.parent
 
-# Measured on 232 human-labeled frames of video 3 (results/ball_eval): this
-# model finds the ball on 0.72 of them at imgsz 1280, against 0.59 for the
-# curated8 weights that used to be the default. The old "curated8 55% vs
-# fullframe 38%" comparison counted frames where the detector fired, not frames
-# where it was right.
-_BALL_MODEL = "models/best_fullframe/weights/best.pt"
-_BALL_IMGSZ = 1280
+# The registry entry ball_detector decides the weights and imgsz; these are
+# only used when an entry carries no imgsz. best_fullframe fine-tuned at 1920
+# finds the ball on 0.967 of the 6_tiPcRYGcBtc window after the trajectory
+# solver, against 0.944 for best_fullframe at 1280 (results/ball_eval_20261108_v1).
+_BALL_MODEL = "models/ball_fullframe_ft1920_20261108_v1/weights/best.pt"
+_BALL_IMGSZ = 1920
 # Second opinion for the candidate cloud. curated8 sliced into tiles finds balls
 # the primary model misses (union recall 0.93 vs 0.72); the trajectory solver
 # sorts out which of the extra candidates are real. Costs a second forward pass
