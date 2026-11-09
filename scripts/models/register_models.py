@@ -32,7 +32,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.models.model_registry import (  # noqa: E402
-    CONFIG_PATH, load_config, sha256_of, tracking_uri,
+    CONFIG_PATH, check_files, fallback_path, load_config, sha256_of, tracking_uri,
 )
 
 EXPERIMENT = "model_registry"
@@ -59,6 +59,17 @@ def _existing_version_with_sha(client, registry_name: str, sha: str):
     return None
 
 
+def companion_artifact(relative: str) -> str:
+    """Artifact path of a companion file, unique per relative name.
+
+    Artifact paths cannot contain ``..`` and ``log_artifact`` keeps the file
+    name, so each companion gets its own folder named after its relative path.
+    """
+    relative = relative.replace("\\", "/")
+    folder = relative.replace("../", "up__").replace("/", "__")
+    return f"companions/{folder}/{relative.rsplit('/', 1)[-1]}"
+
+
 def register_one(
     name: str,
     entry: Dict[str, Any],
@@ -66,7 +77,9 @@ def register_one(
     alias: str,
     note: Optional[str],
     force: bool,
+    companions: Optional[list] = None,
 ) -> Dict[str, Any]:
+    """Register ``path`` (plus ``(relative, path, sha256)`` companions) as one version."""
     import mlflow
     from mlflow.tracking import MlflowClient
 
@@ -101,9 +114,16 @@ def register_one(
     if note or entry.get("note"):
         tags["note"] = note or entry["note"]
 
+    companions = list(companions or [])
+    if companions:
+        # relative name -> [artifact name, sha256]: enough to restore the bundle.
+        tags["companions"] = json.dumps({rel: [companion_artifact(rel), sha] for rel, _, sha in companions})
     with mlflow.start_run(run_name=f"register:{name}", tags=tags) as run:
         # artifact_path=name keeps the file addressable as <version.source>/<file>
         mlflow.log_artifact(str(path), artifact_path=name)
+        for relative, companion, _ in companions:
+            folder = companion_artifact(relative).rsplit("/", 1)[0]
+            mlflow.log_artifact(str(companion), artifact_path=f"{name}/{folder}")
         run_id = run.info.run_id
         artifact_uri = mlflow.get_artifact_uri(name)
 
@@ -163,23 +183,38 @@ def main() -> int:
         if entry is None:
             print(f"  ! unknown model '{name}' — not in the config")
             continue
-        raw = args.path or entry.get("fallback")
-        if not raw:
-            print(f"  ! {name}: no path configured and none given")
+        if entry.get("backup") is False and not args.path:
+            print(f"  = {name}: backup disabled in the config ({entry.get('source_url') or 'no source'}), skipped")
             continue
-        path = Path(raw)
-        if not path.is_absolute():
-            path = ROOT / path
+        if args.path:
+            path = Path(args.path)
+            path = path if path.is_absolute() else ROOT / path
+            companions = []
+        else:
+            path = fallback_path(entry)
+            if path is None:
+                print(f"  ! {name}: no path configured and none given")
+                continue
+            files = check_files(entry)
+            bad = [f for f in files if f["status"] == "mismatch"
+                   or (f["status"] == "missing" and f["role"] == "companion")]
+            if bad:
+                # A pin is a decision about which bytes this name means; registering
+                # other bytes under it would make the backup restore the wrong model.
+                for f in bad:
+                    print(f"  ! {name}: {f['name']} is {f['status']} against its pin, not registered")
+                continue
+            companions = [(f["name"], f["path"], f["sha256"]) for f in files if f["role"] == "companion"]
         if not path.exists():
             missing.append((name, path))
             print(f"  - {name}: file not found, skipped ({path})")
             continue
         if args.dry_run:
             print(f"  = {name}: would register {path} "
-                  f"({round(path.stat().st_size / 1e6, 1)} MB)")
+                  f"({round(path.stat().st_size / 1e6, 1)} MB, {len(companions)} companion file(s))")
             continue
         try:
-            rows.append(register_one(name, entry, path, args.alias, args.note, args.force))
+            rows.append(register_one(name, entry, path, args.alias, args.note, args.force, companions))
             row = rows[-1]
             print(f"  + {row['name']:20s} v{row['version']:<3} {row['size_mb']:>7.1f} MB  "
                   f"{row['sha256']}  {row['status']}")

@@ -472,26 +472,36 @@ python scripts\inference\predict_rally_spotting_results.py `
 
 ## Model registry
 
-`configs/model_registry.json` maps logical model names to MLflow aliases and local fallbacks:
+`configs/model_registry.json` lists every model file the pipeline loads, by logical name, with its MLflow alias, local fallback file, a pinned `sha256`, and (in `files`) pinned companion files that must sit next to it:
 
 ```text
-ball_detector
-ball_detector_tiled
-pose_estimator
-net_sam
-event_sequence
-spotting
+ball_detector          models/best_fullframe/weights/best.pt
+ball_detector_tiled    models/yolov8_curated_training/yolov8n_volleyball_curated8/weights/best.pt
+pose_estimator         models/pretrained/yolo11m-pose.pt
+player_reid            models/player_reid/osnet_msmt17_v1/ (weights + osnet.py, manifest, LICENSE)
+event_sequence         action_recognition/models/experiments_three_full_gold_multiscale_v2/ (final + 3 fold checkpoints)
+contact_spotter        models/contact_spotter/spotter_20261028_v1.pt (+ .json sidecar)
+contact_author         models/contact_author/expanded_20261106_v1/ (model.joblib + deployment.json)
+net_sam                ~/Downloads/sam_vit_h_4b8939.pth
+spotting               legacy SpottingTCN, optional, file absent
 ```
 
-Start local registry and register configured weights:
+Start the local registry (database `mlflow.db`, artifact copies in `mlartifacts/`, both in the repository root) and back up every pinned file:
 
 ```powershell
 python scripts/models/run_mlflow_server.py
 # second terminal
 python scripts/models/register_models.py --all
+python scripts/models/verify_models.py
 ```
 
-Pipeline records resolved path, registry version and checksum in result provenance. Explicit `--ball-model`, `--pose-model` and `--event-checkpoint` paths override registry. `--no-model-registry` uses configured fallback files directly.
+`register_models.py` refuses a file whose bytes differ from its pin, and registers the companions with the main file, so one registry version restores a whole bundle. `verify_models.py` reports every file as ok / missing / mismatch and whether a registry version holds the pinned bytes; it exits non-zero on a problem. `verify_models.py --restore` copies missing files back from that version, checking the sha256 first. It never overwrites an existing file, and works with the server stopped by reading `mlflow.db` and `mlartifacts/` directly.
+
+Every result records the resolved source, path, registry version and sha256. A fallback file whose bytes differ from its pin is still loaded, but its provenance carries `sha256_mismatch: true` and a warning. Explicit `--ball-model`, `--pose-model`, `--event-checkpoint` and `--contact-spotter` paths override the registry. `--no-model-registry` uses the configured fallback files directly. The viewer takes its contact spotter from the `contact_spotter` entry.
+
+Changing a production model means training it, registering it with `register_models.py --name <name> --path <file>`, and updating the entry's `fallback` and `sha256` in one commit.
+
+Before removing a git worktree, delete its junctions to `models/` and checkpoint folders first (`cmd /c rmdir <junction>` removes only the link). On 2026-11-08, `git worktree remove --force` followed such junctions on Windows and deleted the real `models/` contents.
 
 ## Repository map
 

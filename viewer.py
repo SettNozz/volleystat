@@ -39,6 +39,7 @@ from src.tracking.court_setups import (
     validate_corners,
 )
 from src.utils.path_utils import local_path_from_uri
+from src.models.model_registry import fallback_path, load_config as load_registry_config
 from src.tracking.player_contacts import apply_reviews, source_fingerprint
 from src.tracking.player_match_statistics import build_player_match_statistics
 from src.tracking.player_statistics_excel import STATISTICS_VIEWS, export_player_statistics, player_statistic_value
@@ -66,8 +67,12 @@ RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 COURT_SETUPS_PATH = PROJECT_ROOT / "configs" / "court_setups.json"
 # Viewer uploads run the dense contact spotter, so their events and rallies
 # match `analyze_video.py --contact-spotter`. Without the checkpoint the
-# analysis falls back to the FSM's events and rallies.
-CONTACT_SPOTTER_PATH = PROJECT_ROOT / "models" / "contact_spotter" / "spotter_20261028_v1.pt"
+# analysis falls back to the FSM's events and rallies. The file is the
+# `contact_spotter` entry of configs/model_registry.json (pinned, backed up).
+CONTACT_SPOTTER_PATH = (
+    fallback_path(load_registry_config().get("contact_spotter", {}))
+    or PROJECT_ROOT / "models" / "contact_spotter" / "spotter_20261028_v1.pt"
+)
 
 
 def _setup_store() -> CourtSetupStore:
