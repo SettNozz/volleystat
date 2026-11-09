@@ -276,7 +276,9 @@ The overlay trims the incoming and outgoing legs when the ball changes motion ne
 
 During a near-side attack, the top-right badge shows the approximate ball contact height above the floor in metres. The viewer projects the saved net height to the estimated depth of the contact and adds the signed offset of the ball above that reference. The attacker's lower ankle positions near the contact approximate the depth. Missing geometry, ball or usable pose evidence gives “Height unavailable.” The Events toggle controls the badge.
 
-On **New analysis**, enter the video path and choose **Preview and edit court & net**. Start from the default calibration or a saved camera setup, then drag court lines, corners, or the gold net tape handles. Change the preview time to find a clearer frame without losing edits. **Analyze Video** uses the edited geometry for that job, with the court centre line as the floor divider. **Use automatic settings** restores the usual net detection workflow.
+On **New analysis**, enter the video path or drop a video file onto the path box (or use **choose a file**). Browsers do not reveal a dropped file's path, so the viewer copies it to `data/uploads/` and fills in that path; dropping the same file again (same name and size) reuses the copy. Then choose **Preview and edit court & net**. Start from the default calibration or a saved camera setup, then drag court lines, corners, or the gold net tape handles. Hovering over or dragging a handle shows a magnifier with a native-resolution crop of that spot; the mouse wheel changes its zoom. Change the preview time to find a clearer frame without losing edits. **Analyze Video** uses the edited geometry for that job, with the court centre line as the floor divider. **Use automatic settings** restores the usual net detection workflow.
+
+On-video skeletons use the scoreboard team colours: blue for the near side, purple for the far side. A selected roster player or contact candidate is drawn in yellow. The **Event type** chips carry the same colours as the event markers on the timeline.
 
 Viewer selects the ball detector batch automatically. It prefers compatible cached detections and otherwise uses available GPU memory, reducing the batch if CUDA runs out of memory.
 
@@ -342,7 +344,6 @@ Input is not overwritten unless output points to same file and `--force` is expl
 ## Court and net calibration
 
 `GameAnalyzer` scales calibration to native video resolution. Team split uses calibrated court homography and net-floor line, not raw pixel `net_y` alone.
-
 Net workflow:
 
 - SAM detects net tape and caches it in calibration.

@@ -69,16 +69,41 @@ async function changePlayerContactMethod(method) {
   await loadPlayerContacts(method);
 }
 
+// Skeletons use the same team colours as the scoreboard backgrounds
+// (--team-near for court side b, --team-far for side a in viewer_page.css).
+let teamPoseColors = null;
+function teamPoseColor(team, alpha) {
+  if (!teamPoseColors) {
+    const css = getComputedStyle(document.documentElement);
+    const read = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
+    teamPoseColors = { b: read('--team-near', '#2f55d4'), a: read('--team-far', '#9a32c4') };
+  }
+  const side = poseSide(team);
+  const hex = side ? teamPoseColors[side] : '#96aabe';
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n >> 16 & 255}, ${n >> 8 & 255}, ${n & 255}, ${alpha})`;
+}
+
+function poseSide(team) {
+  if (team === 'a' || team === 'team_a') return 'a';
+  if (team === 'b' || team === 'team_b') return 'b';
+  return null;
+}
+
 function playerPoseStyle(pose, poseIndex, frameIndex) {
   const targetSide = playerContactReport ? playerContactReport.side : 'b';
-  const onSide = pose.team === targetSide || pose.team === 'team_' + targetSide;
+  const onSide = poseSide(pose.team) === targetSide;
   const candidate = playerContactCandidate(frameIndex);
   const focused = candidate && candidate.pose_index === poseIndex && candidate.raw_track_id === pose.id;
-  const highlighted = candidate ? focused : (selectedPlayerId ? (onSide && pose.player_id === selectedPlayerId) : onSide);
+  // A contact candidate or a chosen roster player stays yellow; everyone else
+  // keeps their team colour, dimmed while something else has the focus.
+  const spotlight = candidate ? focused : Boolean(selectedPlayerId && onSide && pose.player_id === selectedPlayerId);
+  const dimmed = !spotlight && Boolean(candidate || selectedPlayerId);
+  const known = poseSide(pose.team) !== null;
   return {
-    color: highlighted ? 'rgba(255, 220, 0, 0.98)' : 'rgba(150, 170, 190, 0.58)',
-    width: highlighted ? 3 : 1.5,
-    radius: highlighted ? 3.5 : 2,
+    color: spotlight ? 'rgba(255, 220, 0, 0.98)' : teamPoseColor(pose.team, dimmed ? 0.45 : (known ? 0.95 : 0.58)),
+    width: spotlight ? 3.5 : (dimmed || !known ? 1.5 : (onSide ? 3 : 2.5)),
+    radius: spotlight ? 4 : (dimmed || !known ? 2 : 3),
   };
 }
 

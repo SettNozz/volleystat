@@ -161,8 +161,28 @@ def apply_identity_result(annotations,seed,result,side='b'):
             'scope':'one court side; roster grows only from confirmed new-person anchors; existing IDs are retained on return'}
 
 
+def apply_jersey_identities(annotations,frames,seed,features,fps,reads,side='b',jersey_parameters=None,
+                            parameters=PRODUCTION_PARAMETERS):
+    """Two passes: the first gives roster jersey numbers, the second uses them as constraints."""
+    from src.tracking.jersey_numbers import JerseyParameters, jersey_constraints
+    jersey_parameters=jersey_parameters or JerseyParameters()
+    first=associate(frames,seed,features,fps,recover=True,parameters=parameters)
+    constraints=jersey_constraints(frames,reads['reads'],fps,seed,first['predictions'],jersey_parameters)
+    result=associate(frames,seed,features,fps,recover=True,parameters=parameters,jersey=constraints)
+    report=apply_identity_result(annotations,seed,result,side)
+    first_assigned=sum(p['player_id'] is not None for p in first['predictions'].values())
+    report['jersey_numbers']={
+        'enabled':True,'roster':constraints['roster'],'roster_source':constraints['roster_source'],
+        'observations_with_number':len(constraints['observations']),
+        'tracklets_with_number':constraints['tracklets_with_number'],
+        'assigned_without_numbers':first_assigned,'parameters':constraints['parameters'],
+        'reader':reads.get('reader'),'reads_annotations_sha256':reads.get('annotations_sha256'),
+        'label_source':'model','verified':False}
+    return report
+
+
 def run_identity_pass(annotations,images,fps,encoder,side='b',roster_size=6,seed_path=None,video_path=None,progress=None,
-                      feature_cache=None):
+                      feature_cache=None,jersey_reads=None):
     frames=observations_from_annotations(annotations,side)
     if not any(f['players'] for f in frames):
         return {'enabled':True,'status':'no_players','method':METHOD,'side':side,'assigned':0,'coverage':0.}
@@ -179,6 +199,9 @@ def run_identity_pass(annotations,images,fps,encoder,side='b',roster_size=6,seed
         return {'enabled':True,'status':'no_complete_roster','method':METHOD,'side':side,'assigned':0,'coverage':0.}
     from src.models.inference_cache import collect_embeddings
     features=collect_embeddings(frames,images,encoder,feature_cache,progress=progress)
-    report=apply_player_identities(annotations,frames,seed,features,fps,side)
+    if jersey_reads is not None:
+        report=apply_jersey_identities(annotations,frames,seed,features,fps,jersey_reads,side)
+    else:
+        report=apply_player_identities(annotations,frames,seed,features,fps,side)
     report['encoder']=encoder.provenance
     return report

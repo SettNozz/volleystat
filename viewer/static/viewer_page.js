@@ -37,9 +37,18 @@ let scorePoints = buildServeScore(EVENTS, scoreAttempts, eventTeams);
 const EV_COLORS = {
   serve: '#eab308', attack: '#ef4444', block: '#f97316',
   reception: '#10b981', reception_pass: '#10b981', dig: '#14b8a6',
-  setting_pass: '#3b82f6', pass: '#8b5cf6', ace: '#facc15',
+  setting_pass: '#3b82f6', set: '#3b82f6', pass: '#8b5cf6', ace: '#facc15',
   serve_out: '#9ca3af', out: '#9ca3af', ball_out: '#9ca3af', goal_or_out: '#9ca3af',
 };
+// Event types without a fixed colour still get a stable, distinct one, so the
+// timeline markers, the Event type chips and the event list always agree.
+const EV_FALLBACK = ['#ec4899', '#06b6d4', '#84cc16', '#a855f7', '#f43f5e', '#0ea5e9', '#d946ef', '#22c55e'];
+function evColor(type) {
+  if (EV_COLORS[type]) return EV_COLORS[type];
+  let h = 0;
+  for (const ch of String(type)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return EV_FALLBACK[h % EV_FALLBACK.length];
+}
 const GREEN = 'oklch(62% 0.15 150)', RED = 'oklch(60% 0.18 25)', INK = 'oklch(30% 0.03 260)';
 
 const vid = document.getElementById('vid');
@@ -71,14 +80,21 @@ function showPage(name) {
 const allTypes = [...new Set(EVENTS.map(e => e.type))];
 const filterState = { types: new Set(allTypes), teams: new Set(['team_a', 'team_b']) };
 
-function buildChips(containerId, items, activeSet, labelFn, onToggle) {
+function buildChips(containerId, items, activeSet, labelFn, onToggle, colorFn = null) {
   const box = document.getElementById(containerId);
   box.innerHTML = '';
   for (const it of items) {
     const el = document.createElement('button');
     el.type = 'button';
     el.className = 'chip' + (activeSet.has(it) ? ' on' : '');
-    el.textContent = labelFn ? labelFn(it) : it;
+    if (colorFn) {
+      const dot = document.createElement('i');
+      dot.className = 'chip-dot';
+      dot.style.background = colorFn(it);
+      dot.setAttribute('aria-hidden', 'true');
+      el.append(dot);
+    }
+    el.append(labelFn ? labelFn(it) : it);
     el.setAttribute('aria-pressed', String(activeSet.has(it)));
     el.onclick = () => {
       onToggle(it);
@@ -92,7 +108,8 @@ function buildChips(containerId, items, activeSet, labelFn, onToggle) {
 function initVideoFilters() {
   buildChips('typeChips', allTypes, filterState.types,
     t => t.replace(/_/g, ' '),
-    t => { toggleSet(filterState.types, t); applyEventFilters(); });
+    t => { toggleSet(filterState.types, t); applyEventFilters(); },
+    evColor);
   buildChips('teamChips', ['team_a', 'team_b'], filterState.teams,
     t => t === 'team_a' ? 'Team A' : 'Team B',
     t => { toggleSet(filterState.teams, t); applyEventFilters(); });
@@ -165,7 +182,7 @@ function renderEventList() {
     el.className = 'event-item';
     el.id = 'ev' + i;
     el.onclick = () => seekAndPlay(ev.frame);
-    el.innerHTML = `<div class="event-dot" style="background:${EV_COLORS[ev.type] || '#888'}"></div>` +
+    el.innerHTML = `<div class="event-dot" style="background:${evColor(ev.type)}"></div>` +
       `<span class="event-time">${ev.time.toFixed(2)}s</span>` +
       `<span class="event-type">${ev.type.replace(/_/g, ' ')}${ev.inferred ? ' <span class="c-muted" title="Missed by the decode, recovered from the spotter serve probability">· inferred</span>' : ''}</span>` +
       `<span class="event-team ${teamClass(team)}">${teamLabel(team)}</span>`;
@@ -808,7 +825,7 @@ function setupEventMarkers() {
     const m = document.createElement('div');
     m.className = 'event-marker';
     m.style.left = pct + '%';
-    m.style.background = EV_COLORS[ev.type] || '#888';
+    m.style.background = evColor(ev.type);
     m.title = ev.type + ' ' + teamLabel(team) + ' @' + ev.time + 's';
     m.onclick = (e) => { e.stopPropagation(); seekAndPlay(ev.frame); };
     bar.appendChild(m);

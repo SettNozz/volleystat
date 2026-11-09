@@ -1,3 +1,5 @@
+/* Team colours: scoreboard backgrounds and on-video skeletons share them. */
+:root { --team-near: #2f55d4; --team-far: #9a32c4; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--ink); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
 ::-webkit-scrollbar { height: 8px; width: 8px; }
@@ -23,6 +25,8 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 .card-title { font-size: 13px; font-weight: 700; margin-bottom: 12px; }
 .chip { padding: 7px 13px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--card); color: var(--muted2); transition: all .15s; white-space: nowrap; user-select: none; }
 .chip.on { border-color: var(--primary); background: var(--primary); color: #fff; }
+.chip-dot { display: inline-block; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; vertical-align: 0; box-shadow: 0 0 0 1.5px #fff; }
+.chip:not(.on) .chip-dot { opacity: .45; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .divider { height: 1px; background: var(--border-soft); margin: 16px 0; }
 .filter-label { font-size: 12px; font-weight: 700; color: var(--muted); margin-right: 4px; }
@@ -38,11 +42,11 @@ canvas#overlay.court-editing { pointer-events: auto; cursor: crosshair; }
 .video-badge { position: absolute; bottom: 14px; left: 14px; padding: 5px 10px; border-radius: 6px; background: oklch(0% 0 0 / 0.55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
 .attack-height-badge { position: absolute; top: 12px; right: 12px; padding: 6px 10px; border-radius: 6px; background: #151526e6; color: #fff; font-size: clamp(12px, 1.25vw, 18px); font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; }
 .scoreboard { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); display: flex; overflow: hidden; border-radius: 8px; color: #fff; white-space: nowrap; font-size: clamp(11px, 1.2vw, 16px); }
-.scoreboard label { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: #252553; }
-.scoreboard label + label { background: #4a2564; }
+.scoreboard label { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: var(--team-near); }
+.scoreboard label + label { background: var(--team-far); }
 .scoreboard input { width: 7ch; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; }
 .scoreboard output { font-size: 1.4em; font-weight: 800; font-variant-numeric: tabular-nums; }
-.scoreboard small { align-content: center; padding: 0 6px; background: #252553; }
+.scoreboard small { align-content: center; padding: 0 6px; background: #3a3a48; }
 #playerContactsPanel summary { cursor: pointer; font-weight: 700; }
 #playerContactsPanel[open] summary { margin-bottom: 12px; }
 #setTrajectoryPanel summary { cursor: pointer; font-weight: 700; }

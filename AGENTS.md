@@ -325,8 +325,11 @@ Viewer reads actual annotations, not redrawn guesses. It supports ball/trail, re
 
 Viewer uploads select the ball batch automatically. Prefer compatible cached detections before sizing from available GPU memory. Reduce the batch on CUDA memory exhaustion. Explicit CLI batches remain supported.
 
-New analysis can preview a source frame and adjust saved court lines/corners and
-net tape before processing. Confirmed geometry is stored as a job-local
+New analysis accepts a dropped video file: `/api/upload_video` copies it to
+`data/uploads/` (same name + size reuses the copy) because browsers never expose
+a dropped file's path. It can preview a source frame and adjust saved court
+lines/corners and net tape before processing; a magnifier shows a native-res
+crop (`/api/analysis_calibration/frame`) around the active handle. Confirmed geometry is stored as a job-local
 `court_calibration.json`; net detection is disabled for that job and its floor
 divider follows the edited court centre line. Shared calibrations and saved
 camera setups are not modified.
@@ -469,7 +472,9 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
 - **Pose input and net floor**: default `--pose-imgsz 2560`.
   `GameAnalyzer._validated_net_floor` falls back to the homography world-y=0
   line (`calibrated_court_midline_fallback`) when the detected divider fails the
-  post-spacing gate; source calibration stays unchanged.
+  post-spacing gate; source calibration stays unchanged. The user draws the
+  divider by hand when needed (viewer `manual_court_midline`); do not make the
+  court-midline divider the default without asking.
 - **Optional SAM pose recovery**: `--person-masks <masks.jsonl>` enables
   `src/detection/sam_pose_recovery.py`. Keypoints come only from YOLO crops;
   output `source=sam_guided_yolo_pose` with negative mask-track IDs (separate

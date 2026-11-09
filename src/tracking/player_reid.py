@@ -94,13 +94,23 @@ def gallery_keys(frames: list[dict], seed: dict, parameters: ReIDParameters) -> 
 
 def associate(frames: list[dict], seed: dict, features: dict, fps: float,
               recover: bool, parameters: ReIDParameters = ReIDParameters(), *,
-              frozen_gallery: dict[str, list[str]] | None = None) -> dict:
+              frozen_gallery: dict[str, list[str]] | None = None,
+              jersey: dict | None = None) -> dict:
     """One-to-one association with immutable appearance and reversible lost state.
 
     Lost recovery needs distinct appearance and three spatially consistent
     observations. Offline confirmation backfills those observations. A rejected
     detection never changes a gallery, and missing detections are not invented.
+
+    ``jersey`` (from :func:`src.tracking.jersey_numbers.jersey_constraints`)
+    adds number evidence: a detection whose tracklet shows another roster
+    player's number never takes this ID, and a matching number replaces the
+    appearance margin a lost return or near-net candidate otherwise needs.
+    Gates on appearance distance, motion and recovery confirmations remain.
     """
+    jersey_obs = (jersey or {}).get('observations') or {}
+    jersey_roster = (jersey or {}).get('roster') or {}
+    number_owner = {number: pid for pid, number in jersey_roster.items()}
     if fps <= 0 or parameters.recovery_confirmations < 1:
         raise ValueError('Invalid FPS/recovery confirmation count')
     if parameters.motion_model not in ('ema', 'kalman'):
@@ -126,6 +136,8 @@ def associate(frames: list[dict], seed: dict, features: dict, fps: float,
                                    'label_source': 'model', 'verified': False}
         if appearance_distance is not None and parameters.motion_model=='kalman':
             predictions[obs['key']]['appearance_distance']=float(appearance_distance)
+        if obs['key'] in jersey_obs:
+            predictions[obs['key']]['jersey_number']=jersey_obs[obs['key']]
 
     for anchor in anchors:
         key, pid = anchor['key'], anchor['player_id']
@@ -169,26 +181,34 @@ def associate(frames: list[dict], seed: dict, features: dict, fps: float,
                     dt = frame['f']-state['f']
                     gap = abs(dt)/fps
                     lost = gap > parameters.local_gap_seconds
+                    number = jersey_obs.get(obs['key'])
+                    if number is not None and (number_owner.get(number, pid) != pid
+                                               or jersey_roster.get(pid, number) != number):
+                        continue  # Another roster player's number, or not this player's.
+                    number_match = number is not None and jersey_roster.get(pid) == number
                     if obs.get('tentative_side'):
                         # A near-net candidate must corroborate an existing ID.
                         # It cannot seed, revive or move the motion state.
                         rivals = app[i, [k for k in active if k != j]]
                         if (lost or app[i,j] > parameters.recovery_appearance_max
-                                or np.min(rivals, initial=1.)-app[i,j] < parameters.recovery_appearance_margin):
+                                or (not number_match and np.min(rivals, initial=1.)-app[i,j]
+                                    < parameters.recovery_appearance_margin)):
                             continue
                     if lost and not recover:
                         continue
-                    if app[i, j] > (parameters.recovery_appearance_max if lost else parameters.appearance_max):
+                    strict = lost and not number_match
+                    if app[i, j] > (parameters.recovery_appearance_max if strict else parameters.appearance_max):
                         continue
                     # Motion cannot overrule clearly stronger immutable person
                     # evidence. A blocked best match must not lend its ID to a
                     # physically convenient but visually different candidate.
-                    if (not lost and parameters.local_appearance_regret_max is not None
+                    if (not lost and not number_match and parameters.local_appearance_regret_max is not None
                             and app[i,j]-np.min(app[i,active]) > parameters.local_appearance_regret_max):
                         continue
                     if lost:
                         rivals = app[i, [k for k in active if k != j]]
-                        if obs['occlusion'] >= .6 or np.min(rivals, initial=1.)-app[i,j] < parameters.recovery_appearance_margin:
+                        if obs['occlusion'] >= .6 or (not number_match and np.min(rivals, initial=1.)-app[i,j]
+                                                      < parameters.recovery_appearance_margin):
                             continue
                         costs[i,j] = parameters.appearance_weight*app[i,j]/parameters.appearance_max
                         recovery[i,j] = True

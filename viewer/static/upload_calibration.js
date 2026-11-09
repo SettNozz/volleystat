@@ -16,6 +16,8 @@ const uploadCalibration = (() => {
     edit = original = drag = null;
     setPreviewTime(0);
     panel.hidden = true;
+    hideLoupe();
+    fullFrame = null;
     refresh.disabled = false;
     status.textContent = '';
   }
@@ -73,6 +75,7 @@ const uploadCalibration = (() => {
       canvas.width = w;
       canvas.height = h;
       image.src = data.image;
+      loadFullFrame(selectedPath, seconds);
       lastSecond = data.last_second;
       timeline.hidden = !(lastSecond > 0);
       timeline.max = lastSecond ?? 0;
@@ -113,14 +116,13 @@ const uploadCalibration = (() => {
     return anchors.flat();
   }
 
-  function draw() {
-    if (!edit) return;
-    const ctx = canvas.getContext('2d');
-    const unit = Math.max(1, canvas.width / 900);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Draws the outline, guides, net tape and handles. `map` turns native frame
+  // coordinates into the target canvas; the magnifier passes a zoomed map and
+  // thin strokes so the lines never hide the edge being aligned.
+  function drawScene(ctx, map, unit, hollowHandles = false) {
     function line(points, color, dashed = false) {
       ctx.beginPath();
-      points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+      points.map(map).forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
       ctx.setLineDash(dashed ? [6 * unit, 4 * unit] : []);
       ctx.strokeStyle = '#14202c';
       ctx.lineWidth = 4 * unit;
@@ -136,20 +138,105 @@ const uploadCalibration = (() => {
       for (const segment of Object.values(guides)) line(segment, '#fff', true);
     }
     line(netPoints(), '#ffcb55');
-    for (const [x, y] of handles()) {
+    const handleColor = mode.value === 'net' ? '#ffcb55' : '#45ffc3';
+    for (const [x, y] of handles().map(map)) {
       ctx.beginPath();
       ctx.arc(x, y, 6 * unit, 0, 2 * Math.PI);
-      ctx.fillStyle = mode.value === 'net' ? '#ffcb55' : '#45ffc3';
-      ctx.fill();
       ctx.setLineDash([]);
+      if (hollowHandles) {
+        ctx.lineWidth = 2 * unit;
+        ctx.strokeStyle = handleColor;
+        ctx.stroke();
+        continue;
+      }
+      ctx.fillStyle = handleColor;
+      ctx.fill();
       ctx.strokeStyle = '#14202c';
       ctx.stroke();
     }
+    return valid;
+  }
+
+  function draw() {
+    if (!edit) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const valid = drawScene(ctx, p => p, Math.max(1, canvas.width / 900));
+    if (loupeAt) drawLoupe(loupeAt);
     hint.textContent = !valid ? 'Court edges cross. Adjust the handles before analyzing.' : {
       lines: 'Drag either handle to rotate an edge. Drag between handles to move the whole edge.',
       corners: 'Drag visible corners. Switch to Court lines for corners outside the frame.',
       net: 'Drag each gold handle independently to match its end of the net tape. The floor divider follows the court centre line.',
     }[mode.value];
+  }
+
+  // Magnifier: a native-resolution crop around the dragged handle (or a handle
+  // under the pointer), so lines meet the real court paint, not a blurry
+  // downscaled preview. It sits in the corner away from the pointer.
+  const loupe = el('calibrationLoupe');
+  const LOUPE_CSS_PX = 220;
+  let fullFrame = null, loupeAt = null;
+  // Native pixels shown across the magnifier; the mouse wheel changes it.
+  let loupeSpan = null;
+
+  function loadFullFrame(selectedPath, seconds) {
+    const frame = new Image();
+    frame.onload = () => { if (fullFrame === frame && loupeAt) drawLoupe(loupeAt); };
+    frame.src = '/api/analysis_calibration/frame?' +
+      new URLSearchParams({ video_path: selectedPath, seconds: String(seconds) });
+    fullFrame = frame;
+  }
+
+  function hideLoupe() {
+    loupeAt = null;
+    loupe.hidden = true;
+  }
+
+  function drawLoupe(p) {
+    loupeAt = p;
+    const dpr = window.devicePixelRatio || 1;
+    const size = Math.round(LOUPE_CSS_PX * dpr);
+    if (loupe.width !== size) loupe.width = loupe.height = size;
+    loupeSpan ??= Math.max(60, Math.round(canvas.width / 16));
+    const span = loupeSpan, x0 = p[0] - span / 2, y0 = p[1] - span / 2, k = size / span;
+    const ctx = loupe.getContext('2d');
+    ctx.fillStyle = '#0b1118';
+    ctx.fillRect(0, 0, size, size);
+    const sharp = fullFrame && fullFrame.complete && fullFrame.naturalWidth === canvas.width;
+    const source = sharp ? fullFrame : image;
+    const scale = source.naturalWidth / canvas.width;
+    if (source.naturalWidth) {
+      ctx.imageSmoothingEnabled = !sharp;
+      ctx.drawImage(source, x0 * scale, y0 * scale, span * scale, span * scale, 0, 0, size, size);
+    }
+    drawScene(ctx, ([x, y]) => [(x - x0) * k, (y - y0) * k], 0.6 * dpr, true);
+    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(255,255,255,.85)';
+    ctx.lineWidth = dpr;
+    const c = size / 2, gap = 6 * dpr, arm = 16 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(c - gap - arm, c); ctx.lineTo(c - gap, c);
+    ctx.moveTo(c + gap, c); ctx.lineTo(c + gap + arm, c);
+    ctx.moveTo(c, c - gap - arm); ctx.lineTo(c, c - gap);
+    ctx.moveTo(c, c + gap); ctx.lineTo(c, c + gap + arm);
+    ctx.stroke();
+    ctx.font = `600 ${11 * dpr}px system-ui`;
+    ctx.fillStyle = 'rgba(255,255,255,.9)';
+    ctx.fillText(`${Math.round(p[0])}, ${Math.round(p[1])}${sharp ? '' : ' · loading full frame…'}`, 6 * dpr, size - 7 * dpr);
+    const left = p[0] < canvas.width / 2;
+    loupe.style.left = left ? '' : '8px';
+    loupe.style.right = left ? '8px' : '';
+    loupe.hidden = false;
+  }
+
+  function nearestHandle(p) {
+    const limit = 14 * canvas.width / canvas.getBoundingClientRect().width;
+    let best = null, bestDistance = limit;
+    for (const q of handles()) {
+      const d = Math.hypot(p[0] - q[0], p[1] - q[1]);
+      if (d < bestDistance) { best = q; bestDistance = d; }
+    }
+    return best;
   }
 
   function point(event) {
@@ -186,11 +273,19 @@ const uploadCalibration = (() => {
       drag.last = p;
       drag.pointerId = event.pointerId;
       canvas.setPointerCapture(event.pointerId);
+      drawLoupe(drag.index !== undefined ? handles()[drag.index] : p);
     }
   });
 
   canvas.addEventListener('pointermove', event => {
-    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!edit) return;
+    if (!drag) {
+      if (event.pointerType !== 'mouse') return;
+      const handle = nearestHandle(point(event));
+      if (handle) drawLoupe(handle); else hideLoupe();
+      return;
+    }
+    if (drag.pointerId !== event.pointerId) return;
     const p = point(event);
     if (mode.value === 'net') {
       const net = edit.net_tape;
@@ -210,10 +305,19 @@ const uploadCalibration = (() => {
       edit.court_corners = cornersFromEdgeAnchors(anchors, edit.court_corners);
     }
     drag.last = p;
+    loupeAt = drag.index !== undefined ? handles()[drag.index] : p;
     draw();
   });
 
-  canvas.addEventListener('lostpointercapture', () => { drag = null; });
+  canvas.addEventListener('lostpointercapture', () => { drag = null; hideLoupe(); });
+  canvas.addEventListener('pointerleave', () => { if (!drag) hideLoupe(); });
+  canvas.addEventListener('wheel', event => {
+    if (!loupeAt) return;
+    event.preventDefault();
+    const factor = event.deltaY > 0 ? 1.2 : 1 / 1.2;
+    loupeSpan = Math.max(24, Math.min(canvas.width / 4, loupeSpan * factor));
+    drawLoupe(loupeAt);
+  }, { passive: false });
   input.addEventListener('input', close);
   el('previewCalibration').addEventListener('click', () => load({ keepEdits: Boolean(edit) }));
   el('seekCalibration').addEventListener('click', () => seek(Number(time.value)));
@@ -229,6 +333,7 @@ const uploadCalibration = (() => {
   el('cancelCalibration').addEventListener('click', close);
   mode.addEventListener('change', () => {
     drag = null;
+    hideLoupe();
     if (mode.value === 'lines') anchors = courtEdgeAnchors(edit.court_corners, canvas.width, canvas.height);
     draw();
   });
