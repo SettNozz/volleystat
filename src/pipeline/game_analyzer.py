@@ -26,6 +26,7 @@ from src.tracking.ball_trajectory_smoother import (
     DEFAULT_WINDOW as BALL_SMOOTH_DEFAULT_WINDOW, resolve_window as resolve_ball_smooth_window,
 )
 from src.tracking.ball_gap_reconstructor import ContactHint
+from src.tracking.court_pose_consistency import reject_unsupported_sideline_poses
 from src.tracking.pose_feature_extractor import POSE_FEATURE_NAMES, PoseFeatureExtractor
 from src.tracking.serve_reception import annotate_rallies
 from src.tracking.match_analytics import (
@@ -716,15 +717,24 @@ class GameAnalyzer(
     def _run_offline_passes(self, stats: GameStats, fps: float) -> GameStats:
         """Whole-video passes after the frame loop.
 
-        Order matters: trajectory solve/clean-up, smoothing, clean FSM replay,
-        match analytics, final features/predictions, contact spotter, then the
-        attack heatmap. Each pass reads the output of the previous one.
+        Order matters: sideline pose validation, trajectory solve/clean-up,
+        smoothing, clean FSM replay, match analytics, final features/predictions,
+        contact spotter, then the attack heatmap.
         """
+        self._current_fps = float(fps or 30.0)
+        projector = self._get_projector()
+        if projector is not None:
+            rejected_poses = reject_unsupported_sideline_poses(
+                stats.frame_annotations, projector, self._current_fps,
+                sample_step=getattr(self, 'skip_frames', 0) + 1,
+            )
+            if rejected_poses:
+                log.info(f"Sideline pose check: rejected {rejected_poses} unsupported observations")
+
         # Post-process: re-pick the whole trajectory from the candidate cloud.
         # The gate above had to choose with only the past in hand; now the
         # frames after each decision are available too, and they are what
         # identifies the ball on frames where a distractor scored higher.
-        self._current_fps = float(fps or 30.0)
         solved = self._apply_trajectory_dp(stats) if self.ball_trajectory_dp else False
 
         # These two clean up after the greedy gate and must not run after the
@@ -841,7 +851,7 @@ class GameAnalyzer(
         calib = self.calibration
         stats.attack_heatmap = AttackHeatmap(fps).analyze(
             stats.frame_annotations,
-            projector=self._get_projector(),
+            projector=projector,
             events=stats.all_events,
             # Needed only when a rally ends on the attack and no defender
             # ever touches the ball; then the net crossing is the target.
