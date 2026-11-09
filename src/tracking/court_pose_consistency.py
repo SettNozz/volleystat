@@ -12,17 +12,9 @@ from src.detection.player_pose import (
 )
 
 
-def reject_unsupported_sideline_poses(annotations, projector, fps, *, sample_step=1):
-    """Remove sideline poses without court evidence on a continuous tracklet.
-
-    A raw ID can jump to another person. Split on long gaps or large box jumps
-    before consulting either past or future observations. Keep legal serve
-    positions and leave ankle occlusion to the original court gate.
-    """
+def pose_tracklets(annotations, fps, *, sample_step=1):
+    """Group observed boxes by raw ID, splitting at long gaps and large jumps."""
     max_gap = max(fps, sample_step)
-    support_frames = 5 * fps
-    sideline_limit = projector.half_width + COURT_ENTRY_MARGIN_X
-    serve_limit = projector.half_length + COURT_ENTRY_MARGIN_SERVE
     active = {}
     tracklets = []
     for frame_index, ann in enumerate(annotations):
@@ -45,26 +37,40 @@ def reject_unsupported_sideline_poses(annotations, projector, fps, *, sample_ste
                 if gap > max_gap or displacement > motion_limit:
                     previous = None
             if previous is None:
-                tracklet = ([], [])
+                tracklet = []
                 tracklets.append(tracklet)
             active[track_id] = (frame, center, height, tracklet)
+            tracklet.append((frame, frame_index, pose_index))
+    return tracklets
 
-            keypoints = pose.get('kp') or []
-            if len(keypoints) <= R_ANKLE:
-                continue
-            ankles = [keypoints[i] for i in (L_ANKLE, R_ANKLE) if keypoints[i][2] >= KP_CONF_MIN]
+
+def pose_ankles(pose, min_confidence=KP_CONF_MIN):
+    keypoints = pose.get('kp') or []
+    if len(keypoints) <= R_ANKLE:
+        return []
+    return [keypoints[i] for i in (L_ANKLE, R_ANKLE) if keypoints[i][2] >= min_confidence]
+
+
+def reject_unsupported_sideline_poses(annotations, projector, fps, *, sample_step=1):
+    """Remove sideline poses without court evidence on a continuous tracklet."""
+    support_frames = 5 * fps
+    sideline_limit = projector.half_width + COURT_ENTRY_MARGIN_X
+    serve_limit = projector.half_length + COURT_ENTRY_MARGIN_SERVE
+    rejected = {}
+    for tracklet in pose_tracklets(annotations, fps, sample_step=sample_step):
+        anchors, sideline = [], []
+        for frame, frame_index, pose_index in tracklet:
+            pose = annotations[frame_index]['poses'][pose_index]
+            ankles = pose_ankles(pose)
             if not ankles:
                 continue
             foot = (sum(p[0] for p in ankles) / len(ankles), max(p[1] for p in ankles))
             world_x, world_y = projector.image_to_world(foot)
-            anchors, sideline = tracklet
             if abs(world_x) > sideline_limit:
                 sideline.append((frame, frame_index, pose_index))
             elif abs(world_x) <= projector.half_width and abs(world_y) <= serve_limit:
                 anchors.append(frame)
 
-    rejected = {}
-    for anchors, sideline in tracklets:
         for frame, frame_index, pose_index in sideline:
             index = bisect_left(anchors, frame)
             past = index > 0 and frame - anchors[index - 1] <= support_frames
