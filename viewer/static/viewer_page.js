@@ -595,6 +595,21 @@ canvas.addEventListener('pointerup', event => {
   if (courtEditor.mode === 'lines' && courtEditor.active) syncEdgeAnchors();
 });
 
+/* ── Set-to-attack line picking ─────────────────────────────────────
+   The canvas takes pointer input for these only while the overlay is shown
+   (see drawSetTrajectories); court editing keeps priority. */
+canvas.addEventListener('click', event => {
+  if (courtEditor.active || !setTrajectoriesShown()) return;
+  selectSetTrajectory(setTrajectoryAtEvent(event));
+});
+
+canvas.addEventListener('pointermove', event => {
+  if (courtEditor.active) return;
+  hoverSetTrajectory(setTrajectoryAtEvent(event));
+});
+
+canvas.addEventListener('pointerleave', () => hoverSetTrajectory(null));
+
 function attackZoneCounts(heatmap) {
   const counts = {left: 0, center: 0, right: 0};
   for (const zone of ((heatmap && heatmap.zones) || [])) {
@@ -680,6 +695,7 @@ vid.addEventListener('loadedmetadata', () => { resizeCanvas(); startRenderLoop()
 window.addEventListener('resize', resizeCanvas);
 
 vid.addEventListener('timeupdate', () => {
+  enforceSetTrajectoryClip();
   updateTimeline();
   updateActiveEvent();
 });
@@ -722,7 +738,8 @@ function startRenderLoop() {
   }
   if (_rafId) return;
   function rafLoop() {
-    const fi = Math.max(0, Math.round(vid.currentTime * FPS) - SYNC_OFFSET_FRAMES + _syncOffset);
+    enforceSetTrajectoryClip();
+    const fi =Math.max(0, Math.round(vid.currentTime * FPS) - SYNC_OFFSET_FRAMES + _syncOffset);
     if (fi !== _lastDrawnFrame) {
       currentFrameIdx = fi;
       _lastDrawnFrame = fi;

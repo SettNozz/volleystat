@@ -164,7 +164,8 @@ Main code:
 - `viewer/templates/viewer.html`: results-page markup and Jinja boot constants;
   its scripts are `viewer/static/viewer_page.js` (state, listeners, init, loaded
   last), `viewer_charts.js`, `viewer_tables.js`, `viewer_overlay.js` (redraw),
-  `viewer_set_trajectories.js` (set-to-attack pairs and overlay),
+  `viewer_set_trajectories.js` (set-to-attack pairs, zone/setter filters,
+  clickable overlay lines),
   `viewer_attack_height.js` (approximate near-side contact height), and
   `viewer_page.css`. The feature scripts only declare functions and state.
 
@@ -197,6 +198,7 @@ python scripts/reconstruct_ball_gaps.py `
 
 - Pose model: YOLO11m-pose + ByteTrack, 17 COCO keypoints.
 - `CourtPlayerGate` filters spectators/benches and keeps court-member tracks with hysteresis.
+- Before clean FSM replay, poses beyond the sideline tolerance need a nearby court observation on the same continuous tracklet, from past or future frames.
 - Team split uses foot projection and calibrated net-floor line. Do not revert to raw `y < net_y` logic.
 - `team_a`/`team_b` are court sides. Stable real-team identities come from `team_identity_map` and can change across set-side switches.
 - Calibration is mandatory per camera placement and scaled to native video resolution.

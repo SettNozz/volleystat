@@ -50,7 +50,12 @@ canvas#overlay.court-editing { pointer-events: auto; cursor: crosshair; }
 #setTrajectoryList { max-height: 220px; }
 #setTrajectoryList:not(:empty) { margin-top: 8px; }
 button.set-trajectory-row { display: flex; align-items: center; gap: 6px; text-align: left; font-variant-numeric: tabular-nums; }
-.set-trajectory-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 11px; color: var(--muted2); }
+.set-trajectory-setter { margin-left: auto; padding: 1px 6px; border-radius: 6px; background: var(--head-bg); font-size: 11px; white-space: nowrap; }
+.set-trajectory-setter.other { background: var(--primary); color: #fff; }
+button.ctrl.active .set-trajectory-setter { background: #fff3; color: #fff; }
+.set-trajectory-zones { gap: 6px; margin-top: 8px; }
+.set-trajectory-zones .chip { display: flex; align-items: center; gap: 5px; padding: 5px 9px; font-size: 11.5px; font-family: inherit; font-variant-numeric: tabular-nums; }
+canvas#overlay.trajectory-picking { pointer-events: auto; }
 .set-trajectory-swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; border: 1px solid #0004; flex-shrink: 0; vertical-align: -1px; }
 
 .controls { padding: 14px 16px; }

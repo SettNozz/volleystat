@@ -17,13 +17,13 @@ PRODUCTION_PARAMETERS=ReIDParameters(motion_model='kalman',tracklet_consistency=
                                     local_appearance_regret_max=.04)
 
 
-def observations_from_annotations(annotations:list[dict],side:str='b') -> list[dict]:
+def observations_from_annotations(annotations:list[dict],side:str | None='b') -> list[dict]:
     frames=[]
     for ann in annotations:
         players=[]
         poses=ann.get('poses') or []
         for index,pose in enumerate(poses):
-            if pose.get('team') not in (side,f'team_{side}'):
+            if side is not None and pose.get('team') not in (side,f'team_{side}'):
                 continue
             box=pose['bb']
             if len(box)!=4 or not np.isfinite(box).all() or box[2]<=box[0] or box[3]<=box[1]:

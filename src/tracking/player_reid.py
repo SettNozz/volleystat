@@ -83,7 +83,7 @@ def gallery_keys(frames: list[dict], seed: dict, parameters: ReIDParameters) -> 
                 if obs['key'] == key or reference['raw_id'] is None or obs['raw_id'] != reference['raw_id']:
                     continue
                 height = max(1., reference['bb'][3]-reference['bb'][1])
-                if obs['occlusion'] >= parameters.gallery_overlap_max:
+                if obs.get('tentative_side') or obs['occlusion'] >= parameters.gallery_overlap_max:
                     continue
                 if np.linalg.norm(centre(obs)-centre(reference)) > .75*height:
                     continue
@@ -93,7 +93,8 @@ def gallery_keys(frames: list[dict], seed: dict, parameters: ReIDParameters) -> 
 
 
 def associate(frames: list[dict], seed: dict, features: dict, fps: float,
-              recover: bool, parameters: ReIDParameters = ReIDParameters()) -> dict:
+              recover: bool, parameters: ReIDParameters = ReIDParameters(), *,
+              frozen_gallery: dict[str, list[str]] | None = None) -> dict:
     """One-to-one association with immutable appearance and reversible lost state.
 
     Lost recovery needs distinct appearance and three spatially consistent
@@ -109,7 +110,9 @@ def associate(frames: list[dict], seed: dict, features: dict, fps: float,
     available = {a['player_id']:a.get('available_from_frame') for a in anchors}
     introduced = {a['frame']:{b['key']:b['player_id'] for b in anchors
                              if b['frame']==a['frame']} for a in anchors}
-    keys = gallery_keys(frames, seed, parameters)
+    keys = gallery_keys(frames, seed, parameters) if frozen_gallery is None else frozen_gallery
+    if set(keys) != set(available):
+        raise ValueError('Gallery IDs differ from roster anchors')
     roster = list(keys)
     vectors = {key: unit(value) for key, value in features.items() if value is not None}
     galleries = {pid: np.stack([vectors[key] for key in chosen if key in vectors])
@@ -166,6 +169,13 @@ def associate(frames: list[dict], seed: dict, features: dict, fps: float,
                     dt = frame['f']-state['f']
                     gap = abs(dt)/fps
                     lost = gap > parameters.local_gap_seconds
+                    if obs.get('tentative_side'):
+                        # A near-net candidate must corroborate an existing ID.
+                        # It cannot seed, revive or move the motion state.
+                        rivals = app[i, [k for k in active if k != j]]
+                        if (lost or app[i,j] > parameters.recovery_appearance_max
+                                or np.min(rivals, initial=1.)-app[i,j] < parameters.recovery_appearance_margin):
+                            continue
                     if lost and not recover:
                         continue
                     if app[i, j] > (parameters.recovery_appearance_max if lost else parameters.appearance_max):
@@ -249,6 +259,9 @@ def associate(frames: list[dict], seed: dict, features: dict, fps: float,
                         obs['bb'][3]-obs['bb'][1], frame['f']/fps)
                     pending.pop(pid)
                 else:
+                    if obs.get('tentative_side'):
+                        record(obs, pid, 'tentative_side_corroborated', cost, app[i,j])
+                        continue
                     record(obs, pid, 'associated', cost,app[i,j])
                     state = states[pid]
                     if parameters.motion_model == 'kalman':
