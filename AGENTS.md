@@ -453,7 +453,11 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   (`scripts/apply_player_identity.py add-player`); returning players keep their
   IDs. Install assets once with `scripts/models/install_player_reid.py`; no
   runtime downloads. `scripts/apply_player_identity.py export-seed|apply`
-  writes fresh paired results. See `docs/player_identity_workflow.md`.
+  writes fresh paired results. Opt-in jersey OCR (pinned TrOCR,
+  `scripts/models/install_jersey_ocr.py`; reads from
+  `scripts/evaluation/read_jersey_numbers.py`; `apply --jersey-reads`) adds
+  number constraints to `associate()`; it is not in default analysis. See
+  `docs/player_identity_workflow.md`.
 - **Contact author** (default on): `src/tracking/contact_author_runtime.py` runs
   after identity and final events with logical model `contact_author` (all10
   `expanded_soft_hgb`, SHA256 `4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091`,

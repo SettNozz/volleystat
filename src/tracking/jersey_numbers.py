@@ -29,7 +29,7 @@ class JerseyParameters:
     tracklet_gap_seconds: float = 1.
     tracklet_jump_heights: float = 1.
     roster_min_tracklets: int = 2
-    roster_dominance: float = .75
+    roster_dominance: float = .6
 
     def to_dict(self):
         return asdict(self)

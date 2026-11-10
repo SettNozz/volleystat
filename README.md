@@ -144,7 +144,24 @@ pip install flask flask-cors pyarrow
 
 # Pinned offline player-identity encoder (new directory, no model replacement)
 python scripts/models/install_player_reid.py
+
+# Optional: pinned jersey-number reader (TrOCR, ~1.3 GB) for opt-in OCR identity constraints
+python scripts/models/install_jersey_ocr.py
 ```
+
+Jersey-number OCR is opt-in and runs on saved results only. First read the
+numbers on saved near-side poses, then replay identity with them:
+
+```powershell
+python scripts/evaluation/read_jersey_numbers.py --annotations results\game\game_annotations.json --output results\game_jersey_v1\reads.json --stride 3
+python scripts/apply_player_identity.py apply --annotations results\game\game_annotations.json --output results\game_jersey_v1\result --require-model-cache --jersey-reads results\game_jersey_v1\reads.json
+```
+
+A tracklet carries a number only when several reads with probability ≥ 0.8
+agree. Roster numbers come from a first identity pass. A detection showing
+another roster player's number cannot take that ID. A matching number replaces
+the appearance margin for a lost player's return. See
+[player identity workflow](docs/player_identity_workflow.md#jersey-number-constraints-opt-in).
 
 `data/`, `models/`, `results/`, local MLflow storage and `court_calibration*.json` are gitignored. They must be provisioned separately.
 
