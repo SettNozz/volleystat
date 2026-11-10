@@ -339,6 +339,11 @@ crop (`/api/analysis_calibration/frame`) around the active handle. Confirmed geo
 `court_calibration.json`; net detection is disabled for that job and its floor
 divider follows the edited court centre line. Shared calibrations and saved
 camera setups are not modified.
+Preview must show the same upper tape, lower mesh edge and player divider as
+the final result. Explicit tape endpoints retain their native X coordinates;
+manual net geometry bypasses automatic detection, including floor refresh.
+Saving a manual viewer correction must persist tape endpoints, mesh bottom and
+the court-centre divider together; reloading must preserve all three lines.
 
 Existing result URL:
 

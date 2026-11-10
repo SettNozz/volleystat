@@ -9,6 +9,32 @@ from pathlib import Path
 
 
 from src.tracking.court_setups import homography_from_corners
+from src.viewer_app.calibration_preview import _manual_calibration
+
+
+def _sync_manual_net_geometry(payload: dict, previous_net_y: float) -> None:
+    """Save a manual correction as one coherent tape/mesh/divider geometry."""
+    if payload.get("net_floor_method") != "manual_court_midline":
+        return
+    width, height = payload["frame_width"], payload["frame_height"]
+    net_height = float(payload.get("net_height_m") or 2.34)
+    shift = payload["net_y"] - previous_net_y
+    endpoint_y = payload.get("net_tape_endpoint_y") or [previous_net_y, previous_net_y]
+    tape = [[payload["net_x_left"], endpoint_y[0] + shift],
+            [payload["net_x_right"], endpoint_y[1] + shift]]
+    manual = _manual_calibration(
+        {"court_corners": payload["court_corners"], "net_tape": tape},
+        width, height, net_height,
+    )["net_detection_sam"]
+    floor = [[point[0] * width / 1280, point[1] * height / 720] for point in (
+        manual["net_floor_left_720p"], manual["net_floor_right_720p"],
+    )]
+    top = (tape[0][1] + tape[1][1]) / 2
+    payload.update(
+        net_tape_endpoint_y=[tape[0][1], tape[1][1]], net_tape_top=top,
+        net_tape_bottom=top + ((floor[0][1] + floor[1][1]) / 2 - top) / net_height,
+        net_floor_left=floor[0], net_floor_right=floor[1],
+    )
 
 
 def _read_annotations(path: str) -> dict:

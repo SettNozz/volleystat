@@ -18,7 +18,9 @@ from src.pipeline.game_analyzer import GameAnalyzer
 def viewer_metadata_changes(before, after):
     changes={key for key in before.keys()|after.keys() if before.get(key)!=after.get(key)}
     allowed={'court_corners','attack_heatmap','manual_court_correction',
-             'net_y','net_x_left','net_x_right','court_setup_id','court_setup_name'}
+             'net_y','net_x_left','net_x_right','net_tape_top','net_tape_bottom',
+             'net_tape_endpoint_y','net_floor_left','net_floor_right',
+             'court_setup_id','court_setup_name'}
     if (not changes<=allowed or (changes and after.get('manual_court_correction',{}).get('source')!='viewer')):
         raise ValueError('Render inputs changed during export; immutable input snapshot was retained')
     return sorted(changes)

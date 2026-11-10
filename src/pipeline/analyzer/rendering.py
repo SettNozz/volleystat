@@ -60,10 +60,10 @@ class RenderingMixin:
         if self.calibration:
             c = self.calibration
             x0, x1 = int(c.net_x_left), int(c.net_x_right)
-            # The physical post bases are the authoritative ends of the net.
-            # Legacy calibration ``net_x_*`` is only a tape/court estimate and
-            # may stop short of a post on a new camera angle.
-            if c.net_floor_left and c.net_floor_right:
+            # Automatic tape detections have only a height, so their extent
+            # comes from the posts. Explicitly drawn tape endpoints retain
+            # their own X coordinates, even if a stored floor line differs.
+            if c.net_tape_endpoint_y is None and c.net_floor_left and c.net_floor_right:
                 x0, x1 = sorted((int(c.net_floor_left[0]), int(c.net_floor_right[0])))
             if c.net_tape_top is not None and c.net_tape_bottom is not None:
                 left_y, right_y = c.net_tape_endpoint_y or (c.net_tape_top, c.net_tape_top)
