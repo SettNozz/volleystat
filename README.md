@@ -689,6 +689,10 @@ and datasets are unchanged.
 
 ## Expanded human contact experiments
 
+The [contact-author annotator](docs/contact_author_annotation.md) uses one photo
+roster for contact authors and movement review. Review cached track pieces,
+verify contact frames, and add missed contacts from the original video.
+
 **Default contact authors (2026-11-07):** expanded all-side temporal OSNet +
 soft HGB. Install the frozen artifact with
 `python scripts/models/promote_contact_author.py install`. New analyses apply it

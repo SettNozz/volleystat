@@ -10,7 +10,7 @@ assert.deepEqual(rectangle([120,100],[30,40],200,150),[30,40,120,100]);
 assert.deepEqual(rectangle([10,20],[-20,200],200,150),[0,20,10,150]);
 console.log('Contact-author UI frame and crop checks passed');
 
-async function fixture({people=[1,2],confirmed=true} = {}) {
+async function fixture({people=[1,2],confirmed=true,movement=false} = {}) {
   class Element {
     children = []; value = ''; disabled = false; checked = true; readyState = 1; currentTime = 0; paused = true;
     classList = {add() {}, remove() {}, toggle() {}};
@@ -19,10 +19,11 @@ async function fixture({people=[1,2],confirmed=true} = {}) {
     getContext() { return {clearRect() {},fillRect() {},strokeRect() {},fillText() {}}; }
     pause() { this.paused = true; }
     play() { this.paused = false; return Promise.resolve(); }
+    click() { if (!this.disabled) return this.onclick?.(); }
   }
   const html = readFileSync('action_recognition/annotator/contact_author.html', 'utf8');
   const nodes = Object.fromEntries([...html.matchAll(/id="([^"]+)"/g)].map(m => [m[1],new Element()]));
-  const project = {videos:{game:{fps:30,width:200,height:100,num_frames:200}},
+  const project = {videos:{game:{fps:30,width:200,height:100,num_frames:200,movement_available:movement}},
     contacts:[{id:'c0',video_id:'game',frame:30,type:'pass',timing_verified:true},
       {id:'c1',video_id:'game',frame:60,type:'attack',timing_verified:true}],
     state:{revision:0,labels:{},rosters:{game:{confirmed,players:people.map(n=>({player_id:`P${n}`,references:[{frame:10,bbox:[10,10,30,80]}]}))}}},
@@ -38,6 +39,9 @@ async function fixture({people=[1,2],confirmed=true} = {}) {
     setTimeout(callback) { const timer={callback,active:true};deadlines.push(timer);return timer; },
     clearTimeout(timer) { timer.active=false; },
     fetch:async (url,options) => {
+    if (url === '/api/movement/game') return {ok:true,json:async()=>({segments:[
+      {id:'3:0',start:3,end:5,priority:[0,0]}, {id:'10:0',start:10,end:12,priority:[1,0]}]})};
+    if (url.startsWith('/api/movement/game/')) return {ok:true,json:async()=>({boxes:[[5,5,20,80],[5,5,20,80],[5,5,20,80]]})};
     if (!options?.method) return {ok:true,json:async()=>project};
     requests.push(JSON.parse(options.body));
     return new Promise((resolve,reject) => { options.signal?.addEventListener('abort',()=>reject(Object.assign(new Error('Aborted'),{name:'AbortError'})));
@@ -45,7 +49,11 @@ async function fixture({people=[1,2],confirmed=true} = {}) {
       const payload = requests.at(-1);
         project.state = structuredClone(project.state); project.state.revision++;
         const roster=project.state.rosters.game;
-        if (url==='/api/event') {
+        if (url==='/api/movement') {
+          const all = (project.state.movement_reviews ||= {game:{}}).game;
+          const spans = (all[payload.segment_id] ||= []);
+          spans.push({start:(spans.at(-1)?.end ?? 2)+1,end:payload.end,decision:payload.decision,player_id:payload.player_id,verified:true});
+        } else if (url==='/api/event') {
           project.state.event_reviews||={};
           if(payload.action==='reset')delete project.state.event_reviews[payload.contact_id];
           else project.state.event_reviews[payload.contact_id]={type:payload.type,label_source:'human',verified:true};
@@ -62,16 +70,75 @@ async function fixture({people=[1,2],confirmed=true} = {}) {
         const count=Object.keys(project.state.labels).length;
         project.progress.game = {total:2,reviewed:count,unlabelled:2-count,decisions:{player:count}};
       };
-      finish = (ok=true) => {
+      finish = (ok=true, overlap=null) => {
       if(ok)commit();
-      resolve({ok,status:ok?200:409,json:async()=>ok ? {state:project.state,progress:project.progress} : {error:'Stale revision'}});
+        resolve({ok,status:ok?200:overlap?400:409,json:async()=>ok ? {state:project.state,progress:project.progress} : {error:overlap?'P1 вже позначено':'Stale revision',overlap}});
     }; });
   }});
   vm.runInContext(readFileSync('action_recognition/annotator/contact_author.js','utf8'),context);
   context.document = document; await vm.runInContext('boot()',context);
-  return {nodes,document,requests,finish:ok=>finish(ok),commit:()=>commit(),project,
+  return {nodes,document,requests,finish:(...args)=>finish(...args),commit:()=>commit(),project,
           timeout:()=>deadlines.filter(t=>t.active).at(-1).callback()};
 }
+
+test('movement partial save binds the displayed frame and advances only past the completed segment', async () => {
+  const f = await fixture({movement:true});
+  f.nodes.priority.checked = false;
+  await f.nodes.movementMode.onclick();
+  f.nodes.video.readyState = 2;
+  f.nodes.video.currentTime = frameTime(4,30);
+  f.nodes.partialMovement.checked = true;
+  const pick = f.document.querySelectorAll('.pick')[0];
+  const saving = pick.onclick();
+  assert.deepEqual(f.requests[0], {video_id:'game',segment_id:'3:0',decision:'player',player_id:'P1',end:4,revision:0});
+  f.finish(); await saving;
+  assert.equal(Math.floor(f.nodes.video.currentTime*30),5);
+  assert.equal(f.nodes.contactSelect.value,0);
+  const completing = f.document.querySelectorAll('.pick')[1].onclick();
+  f.finish(); await completing;
+  assert.equal(f.nodes.contactSelect.value,1);
+  assert.equal(Math.floor(f.nodes.video.currentTime*30),10);
+});
+
+test('physical A plays movement and D marks outside the roster on a Ukrainian keyboard layout', async () => {
+  const f = await fixture({movement:true});
+  const event = {key:'ф', code:'KeyA', target:{tagName:'BODY'}, preventDefault() {}};
+  f.document.onkeydown(event);
+  assert.equal(f.nodes.video.paused,true);
+  await f.nodes.movementMode.onclick();
+  f.document.onkeydown({...event, ctrlKey:true});
+  assert.equal(f.nodes.video.paused,true);
+  f.document.onkeydown(event);
+  assert.equal(f.nodes.video.paused,false);
+  f.document.onkeydown(event);
+  assert.equal(f.nodes.video.paused,true);
+  const frame = f.nodes.video.currentTime;
+  f.document.onkeydown({...event, key:'в', code:'KeyD'});
+  assert.equal(f.requests[0].decision,'other');
+  assert.equal(f.nodes.video.currentTime,frame);
+  f.finish();
+});
+
+test('Enter confirms a pending duplicate with the original partial range', async () => {
+  const f = await fixture({movement:true});
+  f.nodes.priority.checked = false;
+  await f.nodes.movementMode.onclick();
+  f.nodes.video.readyState = 2;
+  f.nodes.video.currentTime = frameTime(4,30);
+  f.nodes.partialMovement.checked = true;
+  const enter = {key:'Enter', target:{tagName:'VIDEO'}, preventDefault() {}};
+  f.document.onkeydown(enter);
+  assert.equal(f.requests.length,0);
+  const pick = f.document.querySelectorAll('.pick')[0];
+  const saving = pick.onclick();
+  f.finish(false,{frame:3,bbox:[5,5,20,80]}); await saving;
+  assert.equal(Math.floor(f.nodes.video.currentTime*30),3);
+  assert.match(f.nodes.duplicateMessage.textContent,/f3–4/);
+  const confirmed = f.document.onkeydown(enter);
+  assert.deepEqual(f.requests[1], {...f.requests[0],confirm_overlap:true});
+  f.finish(); await confirmed;
+  assert.equal(Math.floor(f.nodes.video.currentTime*30),5);
+});
 
 test('save binds original contact and blocks navigation until acknowledgement', async () => {
   const f = await fixture();

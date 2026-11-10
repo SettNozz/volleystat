@@ -17,6 +17,8 @@ import numpy as np
 from src.tracking.player_identity import overlap
 from src.tracking.player_contacts import side
 
+from .contact_author_movement import movement_export, segments_for
+
 SCHEMA = "contact_author_annotation_v1"
 DECISIONS = {"player", "other_team", "unsure", "not_contact"}
 EVENT_TYPES = {"serve", "reception", "pass", "set", "dig", "attack", "block", "free_ball", "other"}
@@ -40,6 +42,9 @@ def reviewed_contact(contact,state):
             ("type","raw_types","core_type","event_label_source","event_verified") if k in contact}
         row.update(type=review["type"],raw_types=[review["type"]],event_label_source="human",event_verified=True,event_review=deepcopy(review))
         row.pop("core_type",None)
+    timing = state.get("timing_reviews", {}).get(contact["id"])
+    if timing:
+        row.update(frame=timing["frame"], timing_verified=True, timing_source="human", timing_review=deepcopy(timing))
     return row
 
 
@@ -171,6 +176,12 @@ def prepare_project(manifest_path, analyses_dir, review_path, output):
 class Conflict(ValueError): pass
 
 
+class MovementOverlap(ValueError):
+    def __init__(self, player_id, segment, start, end):
+        super().__init__(f"{player_id} вже позначено в кадрах f{start}–{end}.")
+        self.details = {"frame": start, "bbox": segment["boxes"][start - segment["start"]]}
+
+
 class AnnotationStore:
     def __init__(self,directory):
         self.directory = Path(directory).resolve(); self.project_path = self.directory/"project.json"
@@ -230,10 +241,10 @@ class AnnotationStore:
 
     def label(self,payload):
         key = payload.get("contact_id"); decision = payload.get("decision")
-        if not isinstance(key,str) or key not in self.contacts: raise ValueError("Unknown contact")
+        if not isinstance(key,str): raise ValueError("Unknown contact")
         if decision not in DECISIONS|{"reset"}: raise ValueError("Unknown annotation decision")
         def apply(state):
-            video = self.contacts[key]["video_id"]; roster = state["rosters"][video]
+            video = self.contact(key, state)["video_id"]; roster = state["rosters"][video]
             if decision=="reset": state["labels"].pop(key,None); return
             if not roster["confirmed"]: raise ValueError("Confirm this video's player cards first")
             pid = payload.get("player_id")
@@ -246,15 +257,108 @@ class AnnotationStore:
 
     def event_action(self,payload):
         key=payload.get("contact_id");action=payload.get("action","set")
-        if not isinstance(key,str) or key not in self.contacts: raise ValueError("Unknown contact")
+        if not isinstance(key,str): raise ValueError("Unknown contact")
         if action not in ("set","reset"): raise ValueError("Unknown event review action")
         if action=="set" and (not isinstance(payload.get("type"),str) or payload["type"] not in EVENT_TYPES): raise ValueError("Unknown contact type")
         def apply(state):
+            self.contact(key, state)
             reviews=state.setdefault("event_reviews",{})
             if action=="reset": reviews.pop(key,None);return
             reviews[key]={"type":payload["type"],"label_source":"human","verified":True,
                           "verification_scope":"contact_type_only","updated_at":now(),"revision":state["revision"]+1}
         return self.mutate(payload.get("revision"),payload,apply)
+
+    def contact(self, key, state):
+        row = self.contacts.get(key) or state.get("added_contacts", {}).get(key)
+        if row is None:
+            raise ValueError("Unknown contact")
+        return row
+
+    def queue(self, state):
+        return [*self.contacts.values(), *state.get("added_contacts", {}).values()]
+
+    def contact_frame_action(self, payload):
+        action = payload.get("action")
+        frame = payload.get("frame")
+        video = payload.get("video_id")
+        key = payload.get("contact_id")
+        metadata = self.project["videos"].get(video)
+        if metadata is None or type(frame) is not int or not 0 <= frame < metadata["num_frames"]:
+            raise ValueError("Кадр поза межами відео")
+        if action not in ("add", "timing"):
+            raise ValueError("Unknown frame action")
+        kind = payload.get("type")
+        if action == "add" and (not isinstance(kind, str) or kind not in EVENT_TYPES):
+            raise ValueError("Оберіть тип нового контакту")
+
+        def apply(state):
+            if action == "timing" and (not isinstance(key, str) or self.contact(key, state)["video_id"] != video):
+                raise ValueError("Unknown contact")
+            timing = state.setdefault("timing_reviews", {})
+            for row in self.queue(state):
+                effective = timing.get(row["id"], row)["frame"]
+                if row["video_id"] == video and row["id"] != key and effective == frame:
+                    raise ValueError("На цьому кадрі вже є контакт. Відкрийте його у списку.")
+            if action == "add":
+                new_key = f"{video}:human:r{state['revision'] + 1}"
+                state.setdefault("added_contacts", {})[new_key] = {
+                    "id": new_key, "video_id": video, "frame": frame, "type": kind, "raw_types": [kind],
+                    "original_frames": [frame], "event_label_source": "human", "event_verified": True,
+                    "timing_source": "human", "timing_verified": True, "author_label_source": None,
+                }
+            else:
+                timing[key] = {"frame": frame, "label_source": "human", "verified": True,
+                               "updated_at": now(), "revision": state["revision"] + 1}
+
+        return self.mutate(payload.get("revision"), payload, apply)
+
+    def movement_action(self, payload):
+        video = payload.get("video_id")
+        key = payload.get("segment_id")
+        decision = payload.get("decision")
+        pid = payload.get("player_id")
+        if video not in self.project["videos"] or not isinstance(key, str):
+            raise ValueError("Unknown movement segment")
+        self.check_sources()
+        segments = segments_for(self.project["videos"][video])
+        segment = segments.get(key)
+        if segment is None or decision not in ("player", "other", "unsure", "false_positive", "undo"):
+            raise ValueError("Unknown movement segment or decision")
+
+        def apply(state):
+            roster = state["rosters"][video]
+            if not roster["confirmed"]:
+                raise ValueError("Спочатку підтвердьте картки гравців")
+            reviewed = state.setdefault("movement_reviews", {}).setdefault(video, {})
+            spans = reviewed.setdefault(key, [])
+            if decision == "undo":
+                if spans:
+                    spans.pop()
+                if not spans:
+                    reviewed.pop(key)
+                return
+            if decision == "player":
+                if pid not in {p["player_id"] for p in roster["players"]}:
+                    raise ValueError("Unknown player")
+            elif pid is not None:
+                raise ValueError("Only a player decision may contain a player ID")
+            start = spans[-1]["end"] + 1 if spans else segment["start"]
+            end = payload.get("end", segment["end"])
+            if type(end) is not int or not start <= end <= segment["end"]:
+                raise ValueError("Оберіть кадр у нерозміченій частині відрізка")
+            confirm_overlap = payload.get("confirm_overlap") is True
+            if pid is not None and not confirm_overlap:
+                for other_key, other_spans in reviewed.items():
+                    if other_key == key:
+                        continue
+                    for span in other_spans:
+                        if span["player_id"] == pid and span["start"] <= end and span["end"] >= start:
+                            raise MovementOverlap(pid, segments[other_key], max(start, span["start"]), min(end, span["end"]))
+            spans.append({"start": start, "end": end, "decision": decision, "player_id": pid,
+                          "label_source": "human", "verified": decision != "unsure",
+                          "updated_at": now(), "revision": state["revision"] + 1})
+
+        return self.mutate(payload.get("revision"), payload, apply)
 
     def roster_action(self,payload):
         video = payload.get("video_id"); action = payload.get("action")
@@ -265,8 +369,11 @@ class AnnotationStore:
                 player = next((p for p in roster["players"] if p["player_id"]==payload.get("player_id")),None)
                 if player is None: raise ValueError("Unknown player")
                 if payload.get("removal_confirmed") is not True: raise ValueError("Confirm player removal")
+                for spans in state.get("movement_reviews", {}).get(video, {}).values():
+                    if any(span["player_id"] == player["player_id"] for span in spans):
+                        raise ValueError("Картка вже має мітки руху. Спочатку скасуйте ці мітки.")
                 affected = {key:deepcopy(label) for key,label in state["labels"].items()
-                            if self.contacts[key]["video_id"]==video and label.get("player_id")==player["player_id"]}
+                            if self.contact(key, state)["video_id"]==video and label.get("player_id")==player["player_id"]}
                 if affected and payload.get("unassign_contacts_confirmed") is not True:
                     raise Conflict(f"Player has {len(affected)} contact labels; explicitly confirm returning them to unlabelled")
                 roster.setdefault("removed_players",[]).append({"player":deepcopy(player),"removed_at":now(),
@@ -321,20 +428,23 @@ class AnnotationStore:
 
     def export(self):
         self.check_sources(); state = self.load()
+        queue = [reviewed_contact(c, state) for c in self.queue(state)]
+        queue.sort(key=lambda row: (row["video_id"], row["frame"]))
         rows = []
-        for c in self.project["contacts"]:
+        for c in queue:
             label = state["labels"].get(c["id"])
             if not label or label["decision"] not in ("player","other_team") or not label["verified"]: continue
-            rows.append({**reviewed_contact(c,state),"author":deepcopy(label),"author_label_source":"human",
+            rows.append({**c,"author":deepcopy(label),"author_label_source":"human",
                          "author_key":f'{c["video_id"]}:{label["player_id"]}' if label["player_id"] else None,
                          "team":self.project["videos"][c["video_id"]]["target_side"] if label["decision"]=="player" else "a"})
         return {"schema":"human_contact_author_dataset_v1","created_at":now(),"project_sha256":self.fingerprint,
                 "revision":state["revision"],"rosters":state["rosters"],"contacts":rows,
-                "decisions":deepcopy(state["labels"]),"queue":[reviewed_contact(c,state) for c in self.project["contacts"]],
+                "decisions":deepcopy(state["labels"]),"queue":queue,
                 "event_reviews":deepcopy(state.get("event_reviews",{})),
+                "movement":movement_export(self.project, state),
                 "excluded":deepcopy(self.project["excluded"]),"sources":deepcopy(self.project["sources"]),
                 "videos":deepcopy(self.project["videos"]),"source_scope":self.project["source_scope"],
                 "evaluation_scope":self.project["evaluation_scope"],"split_unit":"source_video",
                 "counts":{"eligible_author_labels":len(rows),"decisions":dict(Counter(x["decision"] for x in state["labels"].values())),
-                          "unlabelled":len(self.contacts)-len(state["labels"])},
+                          "unlabelled":len(queue)-len(state["labels"])},
                 "training_promotion":False}
