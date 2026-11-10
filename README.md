@@ -329,7 +329,7 @@ For input `game.webm` and `--output results/game`:
 | `results/game/game_annotations.json` | Compact frame-level ball, pose, net, FSM and event data |
 | `results/game/game_analyzed.mp4` | Optional annotated video; only with `--render-video` |
 
-Annotations distinguish observed and reconstructed ball positions. Reconstruction never becomes detector ground truth. By default it also does not alter FSM events; `--reconstruction-affects-fsm` admits only high-confidence reconstructed points into the clean FSM replay.
+Annotations distinguish observed and reconstructed ball positions. Each observed ball also carries `ball_size`, the longer side of its detector box in pixels; interpolated and reconstructed points have none. Reconstruction never becomes detector ground truth. By default it also does not alter FSM events; `--reconstruction-affects-fsm` admits only high-confidence reconstructed points into the clean FSM replay.
 
 Before clean FSM replay, the pipeline checks poses beyond the sideline tolerance against past and future court observations from the same continuous tracklet. After replay, it recomputes `pose_f` and event-model predictions from the final exported ball coordinates and saved player poses. Predictor and pose history start fresh for each replay. Features can use accepted reconstruction without changing the separate FSM reconstruction policy. Normalized clip features preserve missing/off-camera observations and reset velocity at gaps and new tracks, matching streaming inference; legacy pixel features retain their compatibility behavior. Existing annotations, feature files and checkpoints are not rewritten automatically. Inline video overlays remain provisional unless the final rendering pass is enabled.
 
@@ -641,7 +641,22 @@ checkpoint (`models/contact_spotter/spotter_20261028_v1.pt`) automatically and
 fall back to the FSM when it is absent; each rally clip shows the rally's first
 frame, decoded from the original video. The spotter cannot tell warm-up from play and does
 not attribute a contact to a team, so exclude non-game time with
-`--match-config`. Train a checkpoint with
+`--match-config`.
+
+Each final contact also gets a proposed side of the net (`side`: `a` far, `b`
+near) from the ball's box size: a ball on the far half is smaller than one on
+the near half, and the size it has at the net follows from the calibration.
+Attacks take the side of their possession. These are separate `side*` fields;
+`team` stays empty and nothing else in the result changes. On the three
+development videos the proposal matched the human side on 0.925 of the
+spotter's contacts (0.956 where `side_confident` is true), below the contact
+author's own side decision on the same contacts, so it is recorded as a second
+opinion and its disagreements with the author are listed for review
+(`contact_side.author_check`). It abstains without net geometry or when the
+camera is not behind a baseline; `--no-contact-side` turns it off. See
+[which side touched the ball](docs/team_attribution.md).
+
+Train a checkpoint with
 `scripts/models/train_contact_spotter.py`. See
 [production contact spotter](docs/production_contact_spotter.md).
 

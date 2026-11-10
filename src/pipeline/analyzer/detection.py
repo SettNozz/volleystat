@@ -51,6 +51,9 @@ class DetectionMixin:
             self._ball_candidates[frame_idx] = candidates
 
         chosen = self.ball_gate.update(frame_idx, candidates)
+        # The detector box's longer side, read by the frame annotation: the
+        # only depth cue a single camera has for an airborne ball.
+        self._last_ball_size = float(chosen.size) if chosen is not None else None
         if chosen is None:
             return None, 0.0
         return (chosen.x, chosen.y), chosen.confidence

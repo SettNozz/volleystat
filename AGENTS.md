@@ -1,6 +1,6 @@
 # Volleystat - Agent Context
 
-Updated: 2026-11-08. Code, CLI `--help`, tests, and config files override prose when they disagree.
+Updated: 2026-11-10. Code, CLI `--help`, tests, and config files override prose when they disagree.
 
 ## Mission and priorities
 
@@ -74,6 +74,7 @@ Current high-value analysis options:
 --match-config <JSON>
 --no-model-registry
 --contact-spotter <CHECKPOINT>
+--no-contact-side
 --no-player-identity
 --player-identity-side a|b
 --player-identity-seed <JSON>
@@ -130,6 +131,7 @@ Video / frame directory
      -> calibrated net/court team divider
      -> clean IntegratedVolleyballFSM replay
      -> event model + match analytics
+     -> contact side proposals (ball box size + possession order)
      -> offline OSNet + Kalman roster identity (default near side, raw IDs preserved)
      -> final annotation-based video/frame rendering
   -> *_stats.json
@@ -180,6 +182,7 @@ Main code:
 - `compare` stores conservative/contact-aware variants and uses conservative output.
 - Reconstruction must not affect FSM unless `--reconstruction-affects-fsm`; then only accepted high-confidence points enter clean replay.
 - Original observed values and derived values must remain recoverable in annotations.
+- `ball_size` (longer side of the selected detector box, px) exists only on observed detections. Interpolated, bridged and reconstructed points never carry one; it is a measurement, not a label.
 - FSM/events, viewer, Parquet features, and analytics must consume same final accepted trajectory for a run.
 - After clean FSM replay, recompute `pose_f` and event-model predictions from final exported ball coordinates and saved poses with fresh temporal history. Feature reconstruction use does not change `--reconstruction-affects-fsm`. Normalized clip features must preserve missing/off-camera observations and reset velocity at gaps/new tracks; legacy pixel compatibility remains unchanged. Existing feature files/checkpoints require explicit versioned refresh, never implicit rewriting.
 
@@ -468,6 +471,16 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   `<stem>_player_contact_reviews.jsonl`, bound to SHA256 of both analysis
   files. No measured attribution score exists for automatic rosters. See
   `docs/contact_author_production.md`, `docs/player_contacts.md`.
+- **Contact side** (default on, `--no-contact-side`): `src/tracking/contact_side.py`
+  runs after the spotter on the final `all_events`, with no inference. Ball box
+  size against the net-plane ball size (tape height over the floor line), summed
+  over a possession; weak possessions alternate inside a rally. Adds `side`
+  (`a` far / `b` near), `side_score`, `side_source`, `side_confident`,
+  `side_ball_px` to events and a `contact_side_v1` report to both exports.
+  `team` is never written. Abstains without net geometry, for a camera that is
+  not end-on, and when box sizes disagree with the calibration. With contact
+  authors it records `author_check` disagreements as review hints only. See
+  `docs/team_attribution.md`.
 - **Viewer player views**: **Player contacts** and **Player statistics** derive
   per-roster counts/outcomes from saved contacts, reviews, FSM attempts and the
   point ledger without inference; unknowns are excluded from totals. With both
@@ -500,6 +513,11 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
 - Team side from 2D court geometry tops out at ~0.715 against 406 human labels
   (airborne ball, net congestion). Do not derive side from court geometry again.
   See `docs/team_attribution.md`.
+- Ball box size is the one depth cue that works for side (see
+  `docs/team_attribution.md`), but on the three development videos the contact
+  author's own side decision was right more often. Do not overrule the author
+  with the ball-size side, and do not write it into `team`, without a held-out
+  comparison on sources the author was not trained on.
 - Spotter typing (0.92 accuracy) already beats detection (0.86 F1). Do not
   propose a two-stage detector + clip classifier; the cost is false positives.
   See `docs/contact_detection_vs_typing.md`.

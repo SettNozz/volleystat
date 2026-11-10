@@ -21,6 +21,7 @@ sys.path.insert(0, str(_ROOT / "scripts"))
 from src.detection.player_pose import CourtPlayerGate, CourtProjector
 from src.tracking.attack_heatmap import AttackHeatmap
 from src.tracking.ball_track_gate import BallCandidate
+from src.tracking.ball_size import drop_unobserved_ball_sizes, observed_ball_size
 from src.tracking.ball_static_sources import clean_ball_annotations
 from src.tracking.ball_trajectory_smoother import (
     DEFAULT_WINDOW as BALL_SMOOTH_DEFAULT_WINDOW, resolve_window as resolve_ball_smooth_window,
@@ -130,6 +131,7 @@ class GameAnalyzer(
         enable_contact_author: bool = True,
         contact_author_model: Optional[str] = None,
         contact_author_roster: Optional[str] = None,
+        enable_contact_side: bool = True,
     ):
         """
         Args:
@@ -194,6 +196,7 @@ class GameAnalyzer(
         self.enable_contact_author = enable_contact_author
         self.contact_author_model = contact_author_model
         self.contact_author_roster = contact_author_roster
+        self.enable_contact_side = bool(enable_contact_side)
         self._model_cache = None
         self._ball_specs = {}
         self._pose_spec = None
@@ -639,6 +642,11 @@ class GameAnalyzer(
                 "t": round(timestamp, 3),
                 "ball": [round(ball_pos[0], 1), round(ball_pos[1], 1)] if ball_pos else None,
                 "ball_confidence": round(float(ball_conf), 4) if ball_pos else 0.0,
+                # Longer side of the observed detector box, px. Never set on
+                # interpolated or reconstructed points: those have no box.
+                "ball_size": observed_ball_size(
+                    getattr(self, "_last_ball_size", None) if ball_pos else None
+                ),
                 # The gate started a new track here: the step from the previous
                 # position is a change of hypothesis, not the ball moving.
                 "ball_new": True if (ball_pos and self.ball_gate.acquired_this_frame) else None,
@@ -789,6 +797,9 @@ class GameAnalyzer(
         # trajectory the viewer shows — and so contact detection sees a clean
         # incoming leg instead of noise it has to be tolerant of.
         self._smooth_ball_trajectory(stats)
+        # Every pass that removes, bridges or reconstructs a ball point has
+        # run. A box size stays only on the observations it was measured on.
+        drop_unobserved_ball_sizes(stats.frame_annotations)
 
         # The inline FSM above has to run on raw per-frame detections, because
         # the annotated video needs a state to draw while the frame is in hand.
@@ -834,6 +845,8 @@ class GameAnalyzer(
         # Strictly after the recompute: the spotter reads the same final ball
         # coordinates and ``pose_f`` the exported annotations carry.
         self._spot_contacts(stats, fps)
+        # On the final contact list, whoever produced it.
+        self._assign_contact_sides(stats, fps)
         # The spotter, when it ran, logged its own rallies; these are the FSM's.
         fsm_lifecycle = stats.rally_lifecycle_fsm or stats.rally_lifecycle
         if fsm_lifecycle.get("service_attempts"):
@@ -1166,6 +1179,7 @@ class GameAnalyzer(
             "attack_heatmap": stats.attack_heatmap,
             "ball_reconstruction": stats.ball_reconstruction,
             "contact_spotter": stats.contact_spotter,
+            "contact_side": stats.contact_side,
             "player_identity": stats.player_identity,
             "player_contacts": stats.player_contacts,
             "model_cache": stats.model_cache,

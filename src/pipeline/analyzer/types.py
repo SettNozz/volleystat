@@ -102,6 +102,8 @@ class GameStats:
     rally_lifecycle_fsm: Dict[str, int] = field(default_factory=dict)
     # Spotter diagnostics, provenance and decoded rally phases.
     contact_spotter: Dict[str, Any] = field(default_factory=dict)
+    # Side-of-net proposals for the final contacts (ball size + possession).
+    contact_side: Dict[str, Any] = field(default_factory=dict)
     player_identity: Dict[str, Any] = field(default_factory=dict)
     player_contacts: Dict[str, Any] = field(default_factory=dict)
     model_cache: Dict[str, Any] = field(default_factory=dict)
@@ -140,6 +142,7 @@ class GameStats:
             "service_attempts_fsm": self.service_attempts_fsm,
             "rally_lifecycle_fsm": self.rally_lifecycle_fsm,
             "contact_spotter": self.contact_spotter,
+            "contact_side": self.contact_side,
             "player_identity": self.player_identity,
             "player_contacts": self.player_contacts,
             "model_cache": self.model_cache,

@@ -252,6 +252,42 @@ class EventsMixin:
             ))
         return poses
 
+    def _assign_contact_sides(self, stats: "GameStats", fps: float) -> None:
+        """Propose which side of the net made each final contact.
+
+        Runs on whatever ``all_events`` holds once the spotter has had its
+        turn, reading only saved box sizes and the calibration: no inference.
+        ``team`` is left as the event's producer wrote it; the proposal goes
+        into separate ``side*`` fields and abstains when the geometry cannot
+        carry it (see ``src/tracking/contact_side.py``).
+        """
+        if not getattr(self, "enable_contact_side", True):
+            stats.contact_side = {"status": "disabled"}
+            return
+        from src.tracking.contact_side import assign_contact_sides
+        try:
+            report = assign_contact_sides(
+                stats.all_events, stats.frame_annotations, fps,
+                getattr(self, "calibration", None),
+            )
+        except Exception as error:
+            # Additive output: a failure here must not cost the analysis.
+            log.warning(f"Contact side failed, events keep no side: {error}")
+            for event in stats.all_events:
+                for key in ("side", "side_score", "side_source", "side_confident", "side_ball_px"):
+                    event.pop(key, None)
+            stats.contact_side = {"status": "error", "error": str(error)}
+            return
+        stats.contact_side = report
+        if report["status"] == "completed":
+            log.info(
+                f"Contact side: {report['assigned']}/{report['contacts']} contacts "
+                f"(far {report['sides']['a']}, near {report['sides']['b']}), "
+                f"net-plane ball {report['net_ball_px']:.1f} px"
+            )
+        else:
+            log.info(f"Contact side: not assigned ({report['status']})")
+
     def _recompute_events_on_clean_trajectory(
         self, annotations: List[Dict], fps: float,
     ) -> Tuple[List[Dict], List[Dict], List[Dict]]:

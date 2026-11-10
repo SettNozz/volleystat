@@ -13,6 +13,7 @@ from src.tracking.ball_static_sources import (
 )
 from src.tracking.ball_trajectory_smoother import jitter_metric, smooth_ball_annotations
 from src.tracking.ball_gap_reconstructor import BallGapReconstructor
+from src.tracking.ball_size import observed_ball_size
 from src.utils.logger import get_logger
 
 log = get_logger("Analyzer")
@@ -76,6 +77,11 @@ class BallTrajectoryMixin:
             cand = chosen.get(ann["f"])
             ann["ball"] = [round(cand.x, 1), round(cand.y, 1)] if cand else None
             ann["ball_confidence"] = round(float(cand.confidence), 4) if cand else 0.0
+            # A bridged point has confidence 0 and an interpolated size: it is
+            # not a measurement, so it carries no box size.
+            ann["ball_size"] = observed_ball_size(
+                cand.size if cand is not None and cand.confidence > 0.0 else None
+            )
             ann["ball_new"] = (
                 True if cand is not None and ann["f"] in solver.track_start_frames
                 else None
