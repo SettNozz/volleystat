@@ -1,716 +1,133 @@
 # Volleystat
 
-Model outputs are cached automatically for every video/frame analysis. New
-hypotheses reuse them; `--require-model-cache` forbids accidental inference.
-Default outputs are JSON and the original-video viewer. Use `--render-video`
-only for an accepted video export. See [cache/replay workflow](docs/model_output_cache.md).
+**Offline volleyball analytics for fixed-camera video, with the CourtSense viewer.**
 
-Stable player IDs run by default in CLI and viewer analyses. The roster is
-found from the whole video: short detector tracklets are grouped by frozen
-OSNet appearance, people visible together are kept apart, and the six people
-present longest become P1-P6. Every box is then matched to these
-multi-segment galleries; weak or ambiguous boxes and known other people stay
-unknown. Raw tracker IDs remain separate. Install the pinned encoder once and see
-[player identity workflow](docs/player_identity_workflow.md). Default scope is
-six players on the near side. Confirmed substitutes can receive additional
-IDs through a per-video roster file; returning players retain their original
-IDs. `--player-identity-method seed-frame` selects the older tracker started
-from one complete frame (Kalman motion, lost-ID recovery); it also runs when a
-clip is too short for a roster.
-Full-match production identity accuracy remains unverified. The experimental
-[human contact-author benchmark](docs/contact_author_benchmark.md) now measures
-person attribution on reviewed contacts from three complete videos: 382 strict
-examples, with whole-video held-out training. The OSNet/temporal follow-up's
-best fixed `class_fusion` gets 79.35% exact near-person recall and 78.92%
-assignment precision; nested algorithm selection gets 75.54% near-person recall.
-The 80% person target is not reached. These are known-contact development scores, not
-end-to-end contact detection or a production promotion. A read-only error
-viewer compares all methods with the human photo roster.
-The [paired comparison with Claude's person ranker](docs/contact_author_comparison.md)
-uses identical 382 strict contacts: fixed HGB gets 85.87% exact near-person
-recall versus `class_fusion` 79.35%; corrected nested selection gets 82.07%
-versus 75.54%. These remain three-video development estimates.
-The [unlabelled-video author workflow](docs/contact_author_inference.md) applies
-three frozen `class_fusion` fold members to an existing saved analysis, with no
-training or detector replay. Its read-only viewer shows contact predictions,
-original skeleton evidence and the saved automatic roster; accuracy stays
-unmeasured until this source receives human author labels.
-The [human contact-author annotator](docs/contact_author_annotation.md) collects
-person-level reference labels: video on the left, confirmed player photo cards
-on the right, plus other-team/unsure/not-contact decisions. It reuses the active
-414-clip human event dataset and audited contact times (403 review items after
-duplicate grouping and known-error exclusion). Substitutes get new IDs;
-progress, revisions and JSON export remain separate from model predictions.
-Player cards can be removed with an explicit confirmation and restored. Assigned
-contacts return to unlabelled only after confirmation; deleted IDs are reserved.
-Save requests have a timeout and reconcile saved state before another decision.
-The **Тип контакту** selector separately corrects an event type with autosave
-and a reset to the original value. Human type reviews enter the JSON export
-with their original predictions; author labels and timing remain independent.
-New-source author annotation can reuse existing spotter results with
-`scripts/evaluation/prepare_contact_author_expansion.py`. It excludes sources
-in the active event-training manifest and completed author snapshot, creates a
-fresh empty project, retains model time/type provenance and requires photo-roster
-confirmation. Current expansion: seven videos, 759 contact proposals, port 5070.
-See [new-source annotation](docs/contact_author_annotation.md#new-sources-outside-the-existing-datasets).
-Open **Player statistics** from a match to see each tracked player's attack
-attempts, inferred point-winning attacks, and serve-reception quality.
-The page uses saved analyses and contact-author corrections. Attack errors
-need explicit fault evidence. Older results may show unresolved outcomes.
+Volleystat turns match recordings into ball trajectories, tracked player poses, contact events, rallies and reviewable statistics. Its goal is to make games easier to explore: find a rally, follow a set into an attack, or inspect one player's contacts without scrubbing through an entire recording.
 
-The viewer's **Player contacts** panel selects a roster ID, highlights only
-that skeleton, and lists its reception, dig/pass/set, attack, block and serve
-events with click-to-seek. Unverified contact proposals use saved ball/pose
-evidence from both sides; ambiguous contacts stay unresolved. Correct an
-attribution in the dropdown; corrections are separate, source-bound records.
-No video/model rerun is needed. See [per-player contacts](docs/player_contacts.md).
-An isolated [contact-author learning experiment](docs/contact_author_learning.md)
-compares geometric rules, nine team-side classifiers and weak actor ranking on
-frozen data. Review results expose an approach selector, paused contact frames
-and uncertain player suggestions. Team-side validation is not individual-author
-accuracy; nothing is promoted into production or source annotations.
-The [volleyball contact lab](docs/volleyball_contact_lab.md) additionally compares
-independent flight/limb detectors, bounded retiming and learned team sequences.
-Its read-only viewer exposes new untyped peaks and author changes on the same
-frozen JIZ3 video, with whole-video held-out timing/team comparisons.
-The [P4 case corrections](docs/P4_contact_case_corrections.md) use observed arm
-actions, ground/landing context and the user-confirmed P4 reference to reject
-inactive defenders and separate a confused identity. Five source-bound review
-buttons compare the exact examples; these development checks are not accuracy.
-For short skeleton dropouts, the experimental
-[offline pose completion](docs/pose_completion.md) uses the same person's past
-and future observed joints. Hidden joints appear as cyan dashed estimates,
-with an independent viewer toggle. Detector poses and contact counts remain
-unchanged until the estimates have been independently validated.
-Viewer shows contacts with unknown team as `—` when both teams are selected;
-selecting one team includes only contacts attributed to that team.
+Analysis runs locally and prioritizes accuracy over real-time speed. The pipeline targets 4K footage from a stationary camera; CourtSense is its browser-based review interface.
 
-The [frozen OSNet follow-up](docs/player_reid_experiment.md) compares learned
-appearance and explicit lost-ID recovery on those same detections, with the
-existing human checks and a separate simulated detection blackout.
+![CourtSense viewer showing ball trajectory, player poses, court calibration and event filters](docs/images/courtsense-viewer.png)
 
-Event predictions suppress serve during an active rally and outside an FSM
-serving episode. A restart within 3 seconds produces a warning by default:
-FSM end times are estimates, and this heuristic has not been validated against
-human boundaries. Optional `enforce_restart_pause=True` restores strict pause
-enforcement, including blocking an early episode until a later restart.
-Missing balls do not end rallies. Raw predictions, suppression and warning
-reasons are retained in `event_model_decision`; configure the pause through
-`StreamingEventPredictor(..., serve_restart_seconds=3.0)`.
+*CourtSense during match review. Faces blurred for privacy.*
 
-Offline volleyball-video analytics for 4K fixed-camera footage. Pipeline detects and reconstructs ball trajectory, tracks player poses, calibrates court and net geometry, segments rallies, derives match analytics, predicts contact events, and exports viewer-ready annotations.
+[Getting started](#getting-started) · [Components](#components) · [Documentation](#documentation)
 
-Current production path is `analyze_video.py` -> `GameAnalyzer` -> JSON/video artifacts -> `viewer.py`.
+## What you can do
 
-## Current capabilities
+- **Follow the ball.** Detect candidates, select the active match ball, remove static false positives and smooth its trajectory. Optional gap reconstruction preserves the distinction between observed and estimated positions.
+- **Review players and contacts.** Track 17-keypoint poses, assign court sides, discover a player roster and inspect proposed contact authors. Select a player to highlight their skeleton and seek to their contacts.
+- **Navigate rallies.** Browse playable rallies, service attempts and typed contact events. Inspect set-to-attack trajectories with zone and setter filters.
+- **Explore match statistics.** View serve, reception and attack maps, contact logs, team summaries and per-player attack/reception outcomes where evidence is available.
+- **Calibrate and correct.** Preview a source frame, edit court and net geometry, and save contact-author corrections separately from model predictions.
+- **Reuse analysis.** Open saved results from the library, replay processing from cached model outputs and export JSON or an annotated video.
 
-| Stage | Current implementation | Main output |
-|---|---|---|
-| Ball detection | YOLO primary detector, optional tiled ensemble, temporal gate and global trajectory DP | Ball candidates and selected point per frame |
-| Ball cleanup | Static-source suppression and contact-preserving quadratic smoothing | Stable trajectory without parked false positives |
-| Gap reconstruction | Conservative or contact-aware offline reconstruction | Inferred 2D coordinates with provenance/confidence |
-| Player tracking | YOLO11m-pose + ByteTrack + calibrated court gate | Player boxes, 17 keypoints, track/team IDs |
-| Player identity | Offline frozen OSNet; roster found from tracklets of the whole video, appearance assignment per frame | Roster IDs, confirmed substitutes and provenance; unknowns preserved |
-| Model output cache | Persistent source/model/input fingerprints; raw detections, poses, embeddings and logits | Replay hypotheses without repeating compatible neural inference |
-| Court and net | Perspective calibration, SAM net tape, optional SAM3 posts, Hough fallback | Court homography, tape band, net-floor divider |
-| Game logic | Integrated volleyball FSM + clean trajectory replay | Rallies, serves, contacts, attack map |
-| Event model | Four-class causal sequence model | `serve`, `reception`, `pass`, `attack` |
-| Rally spotting | Dilated TCN over continuous full-video features | Serve/reception/follow-up contacts and rally ends |
-| Match analytics | Manual set/team mapping plus event-sourced aggregation | Sets, side changes, points and team statistics |
-| Viewer | Flask app with upload, analysis, court editor and overlays | Interactive video and match dashboards |
+## Components
 
-Pipeline is offline-first; correctness takes priority over real-time speed.
-Reference workstation: RTX 5070 Ti 16 GB (Blackwell, sm_120), i9-10900F,
-32 GB RAM. Older cards (RTX 3080) still work.
+| Component | Role |
+|---|---|
+| **Analysis pipeline** — `analyze_video.py`, `src/pipeline/` | Orchestrates detection, tracking, offline passes and result export. |
+| **Ball and player vision** — `src/detection/`, `src/tracking/` | YOLO ball detection; YOLO11m-pose + ByteTrack; trajectory selection, smoothing and optional reconstruction. |
+| **Court and net geometry** | Perspective calibration and net references for court filtering, side assignment and overlays; manual editing and automatic detection paths. |
+| **Events and game logic** — `action_recognition/rally_spotting/`, `src/tracking/` | Rally/contact FSM, optional dense contact spotter, contact-side proposals and player-contact attribution. A separate sequence model supplies a four-class event overlay. |
+| **Player identity** | Frozen OSNet appearance features group tracklets into a roster. Default scope is six players on the near side; ambiguous identities stay unknown. |
+| **CourtSense viewer** — `viewer.py`, `viewer/`, `src/viewer_app/` | Local Flask app for uploads, calibration, video overlays, charts, match tables, player statistics and saved-result browsing. |
+| **Annotation and research tools** — `action_recognition/annotator/`, `scripts/` | Human review, dataset export, model training and evaluation, kept separate from ordinary analysis. |
+| **Cache and model registry** — `src/models/`, `configs/model_registry.json` | Reuse compatible inference outputs and record model versions/checksums in each result. |
 
-## Requirements
+```text
+Video + court calibration
+  → ball detection and player poses
+  → trajectory cleanup, court filtering and game logic
+  → events, roster identity and contact attribution
+  → JSON results → CourtSense viewer / optional video export
+```
 
-- Windows or Linux
-- Python 3.11
-- NVIDIA GPU recommended for 4K processing. RTX 50xx (Blackwell, sm_120)
-  needs PyTorch >= 2.7 built for CUDA 12.8; the default PyPI wheel on Windows
-  is CPU-only. Tested: torch 2.7.1+cu128, torchvision 0.22.1+cu128.
-- Local model weights or running MLflow model registry
-- FFmpeg-compatible video input readable by OpenCV
+## Getting started
+
+### 1. Prepare the environment
+
+Use Python 3.11. An NVIDIA GPU is recommended for 4K analysis; the reference workstation uses an RTX 5070 Ti 16 GB and 32 GB RAM. The commands below use PowerShell from the repository root and the tested PyTorch 2.7.1 / CUDA 12.8 build.
 
 ```powershell
 py -3.11 -m venv volley_env_311
-.\volley_env_311\Scripts\Activate.ps1
+./volley_env_311/Scripts/Activate.ps1
 python -m pip install --upgrade pip
-# CUDA build first, so requirements.txt does not pull a CPU-only torch.
-pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
+python -m pip install torch==2.7.1 torchvision==0.22.1 --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements.txt
+python -m pip install flask flask-cors pyarrow
+```
 
-# Viewer, annotators and Parquet feature files
-pip install flask flask-cors pyarrow
+**Model assets are separate from the source checkout.** Local weights, videos, caches and results are gitignored. Provision the weights listed in [the model configuration](configs/model_registry.json); a running local MLflow registry can supply registered models, otherwise configured local fallbacks are used. The pinned player-identity bundle has an installer:
 
-# Pinned offline player-identity encoder (new directory, no model replacement)
+```powershell
 python scripts/models/install_player_reid.py
-
-# Optional: pinned jersey-number reader (TrOCR, ~1.3 GB) for opt-in OCR identity constraints
-python scripts/models/install_jersey_ocr.py
 ```
 
-Jersey-number OCR is opt-in and runs on saved results only. First read the
-numbers on saved near-side poses, then replay identity with them:
+See [model setup](docs/usage.md#model-assets) for checks and optional stages. Once assets are installed, routine analysis runs locally without runtime model downloads.
 
-```powershell
-python scripts/evaluation/read_jersey_numbers.py --annotations results\game\game_annotations.json --output results\game_jersey_v1\reads.json --stride 3
-python scripts/apply_player_identity.py apply --annotations results\game\game_annotations.json --output results\game_jersey_v1\result --require-model-cache --jersey-reads results\game_jersey_v1\reads.json
-```
-
-A tracklet carries a number only when several reads with probability ≥ 0.8
-agree. Roster numbers come from a first identity pass. A detection showing
-another roster player's number cannot take that ID. A matching number replaces
-the appearance margin for a lost player's return. See
-[player identity workflow](docs/player_identity_workflow.md#jersey-number-constraints-opt-in).
-
-`data/`, `models/`, `results/`, local MLflow storage and `court_calibration*.json` are gitignored. They must be provisioned separately.
-
-## Quick start
-
-### 1. Calibrate camera
-
-Calibration is required once per fixed camera setup:
-
-```powershell
-python scripts/interactive_court_calibration.py -i "C:\path\game.webm"
-```
-
-This writes a local `court_calibration.json`. Named court setups edited in viewer are stored in `configs/court_setups.json`.
-
-### 2. Analyze video
-
-```powershell
-python analyze_video.py `
-  --video "C:\path\game.webm" `
-  --calibration court_calibration.json `
-  --output "results\game"
-```
-
-Useful production options:
-
-```powershell
-# Higher ball recall, slower
-python analyze_video.py --video game.webm --output results\game --ball-ensemble
-
-# Compare conservative and contact-aware ball-gap reconstruction
-python analyze_video.py --video game.webm --output results\game_recon `
-  --ball-reconstruction compare `
-  --reconstruction-contacts data\full_video_gold\full_video_annotations.json
-
-# JSON and original-video viewer (default; --no-video remains compatible)
-python analyze_video.py --video game.webm --output results\game --no-video
-
-# Hypothesis replay: fail on missing model outputs instead of running inference
-python analyze_video.py --video game.webm --output results\game_hypothesis --require-model-cache
-
-# Explicitly encode an annotated video
-python analyze_video.py --video game.webm --output results\game_export --require-model-cache --render-video
-
-# Raw tracking only, without the default offline player-identity pass
-python analyze_video.py --video game.webm --output results\game_tracks --no-player-identity
-
-# Manual set boundaries and stable team identities
-python analyze_video.py --video game.webm --output results\game `
-  --match-config configs\match_config.example.json
-```
-
-See every supported option:
-
-```powershell
-python analyze_video.py --help
-```
-
-GPU utilisation. Inference that the cache does not hold yet runs ahead of the
-ordered analysis loop on background threads: one decoder thread, one ball
-thread and two YOLO-pose threads (one model instance each). ByteTrack, ball
-selection, FSM and all cache writes stay on the main thread in frame order.
-`--no-model-prefetch` restores the serial loop for debugging.
-
-- YOLO-pose runs through `src/detection/pose_gpu.py`: frames are decoded into
-  pinned memory, uploaded once, letterboxed on the GPU and the network replays
-  a CUDA graph (eager dispatch cost ~22 ms of GIL-holding Python per 2560
-  frame). Boxes match the CPU letterbox path to a median 0.4 px (658/658
-  detections matched on a 4K sample). This changed the raw-pose cache key:
-  old pose caches recompute once; ball and OSNet caches are untouched.
-- OSNet crop embeddings for every saved pose are computed during the
-  detection loop while the frame is still in memory, so the identity pass (and
-  the contact-author runtime) read them from the cache instead of decoding the
-  video again. Same encoder, crop and key (max 2.4e-6 cosine distance against a
-  fresh identity-pass encode).
-- A stopped MLflow server is detected by a 0.5 s TCP probe instead of ~8 s of
-  HTTP retries per logical model.
-- `--ball-batch-size` stays 8: 16 was only 8% faster and the batch size is part
-  of the ball cache key, so changing it would recompute every cached video.
-
-Measured on the first 30 s (899 frames) of `j0gRhgFCgIs_4_4k`, empty cache,
-RTX 5070 Ti, i9-10900F, MLflow server not running:
-
-| Run | Detection loop (steady) | Identity pass | Wall time |
-|---|---|---|---|
-| Serial, OSNet batch 8 (before, 2026-11-06) | 6.4 fps | 97 s | 314 s |
-| Prefetch, CPU letterbox (2026-11-06) | 15.0 fps | 34 s | 151 s |
-| + GPU letterbox, pinned decode (2026-11-07) | 25.6 fps | 29 s | 119 s |
-| + registry probe, in-loop OSNet, CUDA graph (2026-11-07) | 24 fps | 3 s | 61-64 s |
-| Replay of that run, `--require-model-cache` | - | - | 14 s |
-
-In-loop OSNet moves ~11 s of encoding into the loop (35.6 fps without identity,
-which is the decoder's ceiling) but removes the 24+ s second decode. GPU
-utilisation in the steady loop went 47% -> 67%. Repeated runs are not
-bit-identical even serially (FP16 with `cudnn.benchmark`): two serial runs
-shared 822 of 899 raw ball outputs exactly and pose boxes moved by up to
-15 px, which is why replays should go through the cache.
-
-What limits the loop now (measured 2026-11-07, same clip): GPU work per frame
-is ~20 ms YOLO-pose at 2560, ~10 ms OSNet (0.84 ms per crop for the
-original+flip pair, ~12 crops per frame) plus ball and event models, about
-36 ms, so ~28 fps is the ceiling with identity on; the loop runs at 23-24 fps.
-Without identity it reaches 35.6 fps, which is the VP9 software decoder.
-Tried and not adopted:
-
-| Idea | Result |
-|---|---|
-| Hardware decode through OpenCV (`CAP_PROP_HW_ACCELERATION`, D3D11VA/NVDEC) | Slower (12.9 vs 17.5 fps in the same test) and different pixels (75% differ, up to 11 levels: other NV12->BGR conversion). Ball/OSNet keys do not include the decoder, so it would silently mix values. |
-| FFmpeg decoder threads (`OPENCV_FFMPEG_CAPTURE_OPTIONS=threads;N`) | 34.2-35.1 fps for 1-16 threads; identical pixels, no gain. |
-| OSNet PIL resize in 3 spawned processes | Bit-identical embeddings, loop 24 -> 19.2 fps (pickling crops costs more GIL than it saves). |
-| CUDA graph for OSNet (bit-identical to eager) | Loop 23.1 fps, no gain: OSNet is GPU time, not dispatch. |
-| OSNet `channels_last` / FP16 | -13% / -43% OSNet GPU time but 1.75e-5 / 3e-4 cosine change under the same cache key; would need a new OSNet key and recomputing cached embeddings. |
-
-The next real gains need a decision: a TensorRT FP16 engine for YOLO-pose (new
-pose key) or an FP16 OSNet with a new OSNet key (recomputes saved embeddings,
-including the imported JIZ3 cache).
-
-### 3. Open viewer
+### 2. Start CourtSense
 
 ```powershell
 python viewer.py
 ```
 
-Open `http://localhost:5050`. Viewer can upload a source video, launch analysis, restore saved jobs, edit court geometry, and show ball trail, reconstructed gaps, players, net, FSM events, attacks and match statistics.
+Open [localhost:5050](http://localhost:5050). Choose **Upload**, provide a local video path or drop a file, then open **Preview and edit court & net**. Adjust geometry for the camera and start analysis. Dropped files are copied into local `data/uploads/`.
 
-In **Video Analysis**, open **Set-to-attack trajectories** to find saved sets followed immediately by an attack in the same rally. The default filter shows pairs with both contacts attributed to the near side. The **Left / Center / Right** chips keep only attacks whose contact falls in that third of the net span, and **Setter** keeps one roster ID, the sets not made by the main setter, or unidentified setters. Setter IDs come from assigned contacts in **Player contacts** (automatic and unverified unless reviewed); the main setter is the ID with the most identified sets on the selected side, and a tie has none. Enable **Overlay all matching paths** to draw the filtered paths together over the video. Click a line on the video or a row in the list to select that pair: the other lines fade, and the video plays from just before the set to 2 s after the attack, then pauses. Click empty video to clear the selection. The overlay uses active ball coordinates from the saved analysis. Dashed lines mark saved derived points, and gaps and track restarts break the line. The list marks partial and missing paths.
+Saved analyses appear in the [results library](http://localhost:5050/library). Each result offers **Video Analysis**, **Visual Stats**, **Match Stats** and **Player statistics**.
 
-The overlay trims the incoming and outgoing legs when the ball changes motion near the saved contacts. The path color comes from the ball's horizontal position at the end of the pass arc, using three equal screen sections across the net. The dot marks that endpoint. Left is blue, center yellow, and right pink. Gray marks an unknown zone.
+### 3. Or analyze from the CLI
 
-During a near-side attack, the top-right badge shows the approximate ball contact height above the floor in metres. The viewer projects the saved net height to the estimated depth of the contact and adds the signed offset of the ball above that reference. The attacker's lower ankle positions near the contact approximate the depth. Missing geometry, ball or usable pose evidence gives “Height unavailable.” The Events toggle controls the badge.
-
-On **New analysis**, enter the video path or drop a video file onto the path box (or use **choose a file**). Browsers do not reveal a dropped file's path, so the viewer copies it to `data/uploads/` and fills in that path; dropping the same file again (same name and size) reuses the copy. Then choose **Preview and edit court & net**. Start from the default calibration or a saved camera setup, then drag court lines, corners, or the gold net tape handles. Hovering over or dragging a handle shows a magnifier with a native-resolution crop of that spot; the mouse wheel changes its zoom. Change the preview time to find a clearer frame without losing edits. **Analyze Video** uses the edited geometry for that job, with the court centre line as the floor divider. **Use automatic settings** restores the usual net detection workflow.
-
-The calibration preview shows all three final net references: the gold upper tape, orange lower mesh edge, and magenta player divider. They share the drawn endpoints' native X coordinates. Manual calibration is preserved even when automatic net refresh is requested; automatic post positions never replace explicitly drawn tape endpoints in either the viewer or an exported video. Saving a manual correction in **Calibration & sync** updates all three references together, including their slope, so reloading the result preserves the correction without another model run.
-
-On-video skeletons use the scoreboard team colours: blue for the near side, purple for the far side. A selected roster player or contact candidate is drawn in yellow. The **Event type** chips carry the same colours as the event markers on the timeline.
-
-Viewer selects the ball detector batch automatically. It prefers compatible cached detections and otherwise uses available GPU memory, reducing the batch if CUDA runs out of memory.
-
-Every analysed result under `results/` is listed at:
-
-```text
-http://localhost:5050/library
-```
-
-Library scans for `<stem>_stats.json` / `<stem>_annotations.json` pairs, shows rallies, events, frames, length, ball rate and available artifacts, and opens a run in the viewer. Results without stats are listed but not openable. `/api/library` returns the same index as JSON.
-
-A single result directory can also be loaded directly:
-
-```text
-http://localhost:5050/load?video=<stem>&results_dir=results/<directory>
-```
-
-Second instance next to a running viewer:
+Calibrate each fixed camera placement, then normalize the calibration into the pipeline's corner order:
 
 ```powershell
-python viewer.py --port 5051
+python scripts/interactive_court_calibration.py --input "C:/path/game.webm" --output court_calibration_raw.json
+python scripts/normalize_calibration.py --input court_calibration_raw.json --output court_calibration_game.json
+
+python analyze_video.py `
+  --video "C:/path/game.webm" `
+  --calibration court_calibration_game.json `
+  --output results/game_v1
 ```
 
-## Analysis artifacts
+Use a fresh output directory for each run. Review court and net alignment before relying on derived statistics. The [usage guide](docs/usage.md) covers contact spotting, match configuration, cache-only replay and video export; `python analyze_video.py --help` lists supported options.
 
-For input `game.webm` and `--output results/game`:
+## Results
 
-| Artifact | Purpose |
+For `game.webm` analyzed into `results/game_v1/`:
+
+| File | Contents |
 |---|---|
-| `results/game/game_stats.json` | Aggregate metrics, rallies, events, reconstruction/model provenance |
-| `results/game/game_annotations.json` | Compact frame-level ball, pose, net, FSM and event data |
-| `results/game/game_analyzed.mp4` | Optional annotated video; only with `--render-video` |
+| `game_stats.json` | Rallies, events, aggregate analytics and model/cache provenance. |
+| `game_annotations.json` | Frame-level ball positions, player poses, identities, geometry and event data for the viewer. |
+| `game_analyzed.mp4` | Annotated video, produced only with `--render-video`. |
 
-Annotations distinguish observed and reconstructed ball positions. Each observed ball also carries `ball_size`, the longer side of its detector box in pixels; interpolated and reconstructed points have none. Reconstruction never becomes detector ground truth. By default it also does not alter FSM events; `--reconstruction-affects-fsm` admits only high-confidence reconstructed points into the clean FSM replay.
+Default output is JSON plus interactive overlays on the original video. Keep the original recording accessible to the viewer.
 
-Before clean FSM replay, the pipeline checks poses beyond the sideline tolerance against past and future court observations from the same continuous tracklet. After replay, it recomputes `pose_f` and event-model predictions from the final exported ball coordinates and saved player poses. Predictor and pose history start fresh for each replay. Features can use accepted reconstruction without changing the separate FSM reconstruction policy. Normalized clip features preserve missing/off-camera observations and reset velocity at gaps and new tracks, matching streaming inference; legacy pixel features retain their compatibility behavior. Existing annotations, feature files and checkpoints are not rewritten automatically. Inline video overlays remain provisional unless the final rendering pass is enabled.
+## Current scope and limits
 
-## Ball trajectory workflow
+- **Camera setup matters.** Calibration is required per placement. Current geometry is 2D image/court geometry; displayed attack height is an approximation, not a measured 3D trajectory.
+- **Predictions need review.** Full-match identity and contact-author accuracy with automatic rosters have not been established. Unknown players and unresolved outcomes remain explicit.
+- **Event paths differ.** Viewer analyses enable the configured contact spotter when its checkpoint is available. CLI analyses enable it with `--contact-spotter`; otherwise contacts/rallies use the FSM. With spotting enabled, score and attack heatmap remain FSM-derived.
+- **Match context needs input.** Configure warm-up/non-game intervals, set boundaries and team-side switches for the recording. The contact spotter does not distinguish warm-up from match play.
+- **Estimates retain provenance.** Ball-gap reconstruction is off by default. Missing off-camera ball positions remain missing; reconstructed positions are derived data, never detector ground truth or human labels.
 
-Default analysis applies:
+## Documentation
 
-1. Primary YOLO detection at imgsz 1920 (`best_fullframe` fine-tuned at 1920, registry entry `ball_detector`); optional tiled second detector with `--ball-ensemble`. `--ball-imgsz` overrides the size, e.g. `--ball-model models/best_fullframe/weights/best.pt --ball-imgsz 1280` for the previous model.
-2. Motion-aware live gate.
-3. Static-source suppression for parked false positives.
-4. Global trajectory DP unless `--no-ball-dp` is set.
-5. Contact-preserving smoothing (`--ball-smooth moderate` by default).
-6. Optional offline gap reconstruction.
-7. Clean FSM replay on final accepted trajectory.
+| Guide | Contents |
+|---|---|
+| [Usage and setup](docs/usage.md) | Model assets, viewer controls, CLI options, calibration and saved results. |
+| [Cache and replay](docs/model_output_cache.md) | Repeat processing without compatible YOLO/OSNet inference. |
+| [Player identity](docs/player_identity_workflow.md) | Automatic rosters, confirmed substitutes and optional jersey constraints. |
+| [Player contacts](docs/player_contacts.md) · [Contact-author model](docs/contact_author_production.md) | Attribution, corrections and deployment scope. |
+| [Contact spotting](docs/production_contact_spotter.md) · [Contact review](docs/contact_review_workflow.md) | Typed contacts, rally segmentation and human verification. |
+| [Match analytics](docs/match_analytics_v2.md) | Point confirmation, reception outcomes, sets and team mappings. |
+| [Human annotation](docs/contact_author_annotation.md) | Shared photo roster, author labels and movement review. |
+| [Performance notes](docs/performance.md) | Dated throughput measurements and optimization tradeoffs. |
 
-Standalone reconstruction and review rendering:
+Research experiments and their limitations live in topical `docs/` guides and [experiment history](docs/agent_history.md). Contributor/agent rules live in [AGENTS.md](AGENTS.md).
 
-```powershell
-python scripts/reconstruct_ball_gaps.py `
-  --annotations results\game\game_annotations.json `
-  --output results\game\game_annotations_reconstructed.json `
-  --mode compare `
-  --contacts data\full_video_gold\full_video_annotations.json `
-  --video game.webm
-```
-
-Input is not overwritten unless output points to same file and `--force` is explicitly supplied.
-
-## Court and net calibration
-
-`GameAnalyzer` scales calibration to native video resolution. Team split uses calibrated court homography and net-floor line, not raw pixel `net_y` alone.
-Net workflow:
-
-- SAM detects net tape and caches it in calibration.
-- Isolated SAM3 worker can detect post X positions.
-- Physical net height projects tape-to-floor geometry.
-- Hough post detection is fallback when SAM3 is unavailable.
-- Implausible post spacing emits warning and needs visual validation.
-
-Manual refresh:
-
-```powershell
-python scripts/run_sam_net_detection.py `
-  --video game.webm `
-  --calibration court_calibration.json `
-  --validate
-```
-
-Use `--posts-only` to keep saved tape bounds and refresh only posts/team divider. Use `--no-net-detection` during normal analysis when validated cached calibration must remain unchanged.
-
-## Authoritative 4K event dataset
-
-Verified active checkpoint dataset:
-
-```text
-data/event_clips_three_full_gold_causal_120f_v1
-```
-
-The active checkpoint uses `data/event_clips_three_full_gold_causal_120f_v1`: 414 human-labelled clips (410 core examples) from three complete 4K videos. This was verified against its MLflow parameters. The older 430-clip `data/event_clips_4k_gold_v1` remains available unchanged. Sources:
-
-- `j0gRhgFCgIs_4_4k`
-- `j3BO9GgUFBI_3_4k`
-- `Khe4P8QcJkg_5_4k`
-
-Feature schema: `resolution_normalized_v2`. Split unit is whole source video; clips from one recording must never be divided randomly between train and validation. `Khe4P8QcJkg_5_4k` is validation source in `split_policy.json`.
-
-Train new models only from authoritative gold datasets. Human labels in full-video gold data are authoritative; FSM/model labels are weak labels only.
-
-Available feature variants:
-
-```text
-features/                               original published features
-features_baseline_raw_v1/               refreshed observed-ball baseline
-features_reconstructed_conservative_v1/ conservative reconstructed trajectory
-```
-
-Train current four-class causal event model:
-
-```powershell
-python -m action_recognition.training.train_event_sequence `
-  --manifest data\event_clips_three_full_gold_causal_120f_v1\manifest.json `
-  --features-dir data\event_clips_three_full_gold_causal_120f_v1\features `
-  --model multiscale `
-  --sequence-len 120 --short-sequence-len 60 `
-  --val-stems Khe4P8QcJkg_5_4k `
-  --checkpoint-dir action_recognition\models\experiments_4k_gold_transformer `
-  --epochs 50 `
-  --seed 42
-```
-
-Run cross-video model selection before `--final-fit`. Core sequence classifier intentionally excludes pure `other`/`free_ball` contacts.
-
-## Full-video human annotation
-
-Clip labeling UI:
-
-```powershell
-python -m action_recognition.annotator.event_clip_annotator `
-  --manifest data\event_clips_4k_gold_v1\manifest.json
-# http://localhost:5056
-```
-
-Full-video labeling UI:
-
-```powershell
-python -m action_recognition.annotator.full_video_annotator `
-  --manifest data\event_clips_4k_gold_v1\manifest.json
-# http://localhost:5058
-```
-
-Export one completed video into reusable event, rally, dense-target and spotting artifacts:
-
-```powershell
-python -m action_recognition.annotator.export_full_video_annotations `
-  --project data\event_clips_4k_gold_v1\full_video_annotations.json `
-  --video-id <video-id> `
-  --output-dir data\full_video_gold\<video-id> `
-  --annotations-path results\<video>\<video>_annotations.json `
-  --stats-path results\<video>\<video>_stats.json
-```
-
-Dataset replacement/build tools fail on missing human labels, mappings or Parquet files:
-
-```powershell
-python -m action_recognition.event_clips.build_4k_human_dataset --help
-python -m action_recognition.event_clips.replace_source_dataset --help
-```
-
-## Rally spotting
-
-Current spotting code lives under `action_recognition/rally_spotting/`. It operates on continuous full-video features with taxonomy:
-
-```text
-serve_contact | reception_contact | followup_contact | rally_end
-```
-
-Prepare and train:
-
-```powershell
-python -m action_recognition.rally_spotting.prepare `
-  --manifest data\full_video_gold\rally_spotting_sources.json `
-  --output-dir data\rally_spotting_three_full_gold_v1
-
-python -m action_recognition.rally_spotting.train `
-  --data-dir data\rally_spotting_three_full_gold_v1 `
-  --checkpoint-dir action_recognition\models\rally_spotting_three_full_gold_v1 `
-  --epochs 40
-```
-
-Apply checkpoint to saved analysis results without overwriting source files:
-
-```powershell
-python scripts\inference\predict_rally_spotting_results.py `
-  --results-dir results\game `
-  --checkpoint action_recognition\models\rally_spotting_three_full_gold_v1\best_rally_spotting.pt `
-  --output-dir results\game_spotting
-```
-
-## Model registry
-
-`configs/model_registry.json` lists every model file the pipeline loads, by logical name, with its MLflow alias, local fallback file, a pinned `sha256`, and (in `files`) pinned companion files that must sit next to it:
-
-```text
-ball_detector          models/ball_fullframe_ft1920_20261108_v1/weights/best.pt (imgsz 1920; MLflow name volleystat_ball_detector_1920)
-ball_detector_tiled    models/yolov8_curated_training/yolov8n_volleyball_curated8/weights/best.pt
-pose_estimator         models/pretrained/yolo11m-pose.pt
-player_reid            models/player_reid/osnet_msmt17_v1/ (weights + osnet.py, manifest, LICENSE)
-event_sequence         action_recognition/models/experiments_three_full_gold_multiscale_v2/ (final + 3 fold checkpoints)
-contact_spotter        models/contact_spotter/spotter_20261028_v1.pt (+ .json sidecar)
-contact_author         models/contact_author/expanded_20261106_v1/ (model.joblib + deployment.json)
-net_sam                ~/Downloads/sam_vit_h_4b8939.pth
-spotting               legacy SpottingTCN, optional, file absent
-```
-
-Start the local registry (database `mlflow.db`, artifact copies in `mlartifacts/`, both in the repository root) and back up every pinned file:
-
-```powershell
-python scripts/models/run_mlflow_server.py
-# second terminal
-python scripts/models/register_models.py --all
-python scripts/models/verify_models.py
-```
-
-`register_models.py` refuses a file whose bytes differ from its pin, and registers the companions with the main file, so one registry version restores a whole bundle. `verify_models.py` reports every file as ok / missing / mismatch and whether a registry version holds the pinned bytes; it exits non-zero on a problem. `verify_models.py --restore` copies missing files back from that version, checking the sha256 first. It never overwrites an existing file, and works with the server stopped by reading `mlflow.db` and `mlartifacts/` directly.
-
-Every result records the resolved source, path, registry version and sha256. A fallback file whose bytes differ from its pin is still loaded, but its provenance carries `sha256_mismatch: true` and a warning. Explicit `--ball-model`, `--pose-model`, `--event-checkpoint` and `--contact-spotter` paths override the registry. `--no-model-registry` uses the configured fallback files directly. The viewer takes its contact spotter from the `contact_spotter` entry.
-
-Changing a production model means training it, registering it with `register_models.py --name <name> --path <file>`, and updating the entry's `fallback` and `sha256` in one commit.
-
-Before removing a git worktree, delete its junctions to `models/` and checkpoint folders first (`cmd /c rmdir <junction>` removes only the link). On 2026-11-08, `git worktree remove --force` followed such junctions on Windows and deleted the real `models/` contents.
-
-## Repository map
-
-```text
-analyze_video.py                         production CLI
-viewer.py                                local Flask viewer and analysis launcher
-configs/
-  model_registry.json                    model aliases and fallbacks
-  court_setups.json                      named viewer court setups
-  match_config.example.json              set boundaries and stable team IDs
-src/
-  detection/                              ball, pose, court and net detection
-  pipeline/game_analyzer.py               end-to-end orchestration (frame loop, export)
-  pipeline/analyzer/                      GameAnalyzer mixins: cache, calibration, models,
-                                          detection, ball trajectory, events, identity, rendering
-  tracking/                               trajectory, reconstruction, FSM, analytics
-  models/model_registry.py                model resolution and provenance
-  viewer_app/                             viewer.py helpers (library, media, court editor I/O)
-viewer/
-  templates/                              Flask page templates
-  static/                                 page scripts and styles (viewer_page.js, viewer_*.js)
-action_recognition/
-  event_clips/                            schemas, features and gold dataset builders
-  annotator/                              clip and full-video labeling tools
-  training/                               causal event-model training/evaluation
-  rally_spotting/                         continuous frame-level spotting
-  hierarchical/                           multi-head phase/action/context model code
-scripts/
-  models/                                 local MLflow registry tools
-  inference/                              offline prediction over saved results
-  evaluation/                             trajectory and model diagnostics
-tests/                                    unit and integration tests
-```
-
-## Validation
+Run the test suite in the configured environment with:
 
 ```powershell
 python -m pytest tests -q
 ```
-
-For architecture navigation, repository contains generated graph under `graphify-out/`.
-
-## Experimental SAM3 people masks
-
-Compare body masks with saved poses on a short video interval using the isolated
-SAM3 environment. Outputs include a comparison video, missing-pose review
-candidates, adjacent-frame mask associations and eight versioned mask features
-with validity flags. Production inference and existing checkpoints stay unchanged.
-See [SAM people-mask experiment](docs/sam_people_masks.md) for commands, provenance,
-raw-YOLO diagnostics and the future training contract.
-
-Player detection uses `--pose-imgsz 2560` by default in both CLI and viewer
-for small/far players in 4K. Set `--pose-imgsz 1280` explicitly to reduce cost.
-Geometrically impossible detected net-floor lines fall back to the calibrated
-court centre line in memory, recorded as `calibrated_court_midline_fallback`.
-This prevents both teams collapsing into one six-player cap; it does not add
-unobserved players or rewrite the source calibration.
-
-Optional `--person-masks results/<completed-sam-run>/masks.jsonl` recovers real
-YOLO-pose keypoints from unmatched SAM person crops. It verifies source-video
-identity and keeps recovery inference separate from ByteTrack. Recovered poses
-retain their model provenance and a separate negative SAM-mask ID namespace;
-all poses still pass the existing court gate and six-per-team cap. See the
-[SAM workflow](docs/sam_people_masks.md) for the complete commands and limitations.
-
-
-## Archived research
-
-Finished experiments that were not promoted (offline team/pose and
-trajectory-change clip classifiers, STES / RGB event spotting, contact
-attribution variants) live on branch `archive/research-snapshot-2026-10-30`,
-together with their docs and results summaries. Restore a file with
-`git checkout archive/research-snapshot-2026-10-30 -- <path>`.
-
-## Spatial contact review
-
-Run `start_contact_review.cmd` and open http://127.0.0.1:5062.
-[Ukrainian annotation guide](docs/contact_spatial_annotation_uk.md).
-Reviews land in `data/contact_spatial_gold_v1/reviews.json`; the dense contact
-spotter reads its verified contact frames from there, and
-`action_recognition/rally_spotting/spatial_labels.py` canonicalizes them.
-
-## Reviewing spotted contacts on new video
-
-After running a video through `--contact-spotter`, review the predictions one
-keystroke at a time:
-
-```powershell
-python -m action_recognition.annotator.contact_review_annotator --annotations-dir results\batch
-# http://localhost:5059
-```
-
-Type with `1`-`6`, side with `A`/`B`, `X` rejects a false positive, `+` inserts
-one the model missed. Records stay `label_source: "model"`, `verified: false`
-until a keystroke makes them human, and the model's own prediction is kept
-beside the correction. Calibrate a new camera first and run
-`scripts/normalize_calibration.py` on the result. See
-[contact review workflow](docs/contact_review_workflow.md).
-
-## Contact spotting in the pipeline
-
-The dense contact spotter replaces the rally state machine's contact events on
-any video, with no labels needed:
-
-```powershell
-python analyze_video.py --video "C:\path\game.webm" --output "results\game" `
-  --contact-spotter models\contact_spotter\spotter_20261028_v1.pt
-```
-
-Its typed contacts become `all_events` and per-frame `ev`; the FSM's are kept in
-`all_events_fsm` and `ev_fsm`. Rallies and service attempts are rebuilt from
-the spotter's contacts, each opening on its serve (a serve the decode missed
-is recovered from the spotter's serve probability and marked `inferred`); a
-serve nobody touched is a service attempt, not a rally. The FSM's are kept in
-`rallies_fsm`/`service_attempts_fsm`. Score and the attack heatmap stay
-FSM-derived. `scripts/apply_spotter_rallies.py` rebuilds a saved result into a
-fresh directory without rerunning detection. Viewer uploads run the shipped
-checkpoint (`models/contact_spotter/spotter_20261028_v1.pt`) automatically and
-fall back to the FSM when it is absent; each rally clip shows the rally's first
-frame, decoded from the original video. The spotter cannot tell warm-up from play and does
-not attribute a contact to a team, so exclude non-game time with
-`--match-config`.
-
-Each final contact also gets a proposed side of the net (`side`: `a` far, `b`
-near) from the ball's box size: a ball on the far half is smaller than one on
-the near half, and the size it has at the net follows from the calibration.
-Attacks take the side of their possession. These are separate `side*` fields;
-`team` stays empty and nothing else in the result changes. On the three
-development videos the proposal matched the human side on 0.925 of the
-spotter's contacts (0.956 where `side_confident` is true), below the contact
-author's own side decision on the same contacts, so it is recorded as a second
-opinion and its disagreements with the author are listed for review
-(`contact_side.author_check`). It abstains without net geometry or when the
-camera is not behind a baseline; `--no-contact-side` turns it off. See
-[which side touched the ball](docs/team_attribution.md).
-
-Train a checkpoint with
-`scripts/models/train_contact_spotter.py`. See
-[production contact spotter](docs/production_contact_spotter.md).
-
-## Dense contact spotting with counted structure
-
-An experimental replacement for the hand-written rally state machine: a dense
-per-frame model over the nine phase/contact labels, decoded with a
-constraint-aware Viterbi whose transitions, start/end labels and duration bounds
-are counted from the human annotations instead of written by hand.
-
-```powershell
-python scripts\evaluation\run_dense_contact_spotting.py --help
-```
-
-It uses the audited contact review in `data/contact_spatial_gold_v1`, which
-supplies verified contact frames, and needs no new labelling or extraction. On
-three whole-video folds the counted grammar beats threshold-tuned peak picking
-(core four-class macro F1 at +/-5 frames 0.7528 -> 0.7897 on pose-enabled
-analyses) mainly by removing false positives. The same metric scores the shipped
-FSM at 0.1561 once the pipeline is rerun with poses, so the dense spotter is
-about five times better at putting a contact on the right frame. A matched
-control shows the eight pose channels contribute little outside `block`.
-Rescoring that run into its two halves puts detection at 0.8605 type-agnostic F1
-and typing at 0.9208 accuracy on contacts it located, so the remaining error is
-in finding touches, not naming them. See
-[detection versus typing](docs/contact_detection_vs_typing.md),
-[dense contact spotting](docs/dense_contact_spotting.md) and the
-[landscape review](docs/event_detection_research_2026-10.md). Production models
-and datasets are unchanged.
-
-## Expanded human contact experiments
-
-The [contact-author annotator](docs/contact_author_annotation.md) uses one photo
-roster for contact authors and movement review. Review cached track pieces,
-verify contact frames, and add missed contacts from the original video.
-
-**Default contact authors (2026-11-07):** expanded all-side temporal OSNet +
-soft HGB. Install the frozen artifact with
-`python scripts/models/promote_contact_author.py install`. New analyses apply it
-after roster identity; saved-result replay defaults to the same model and a
-strict cache check. `--no-contact-author` / replay `--legacy` retains geometry.
-The viewer reads exported model predictions. Event models are unchanged.
-See [installation, photo setup and cached replay](docs/contact_author_production.md).
-
-The completed author-review projects can be frozen and evaluated with
-`scripts/evaluation/train_expanded_contacts.py` in the isolated experiment
-worktree. Whole-video folds compare old-three-source and expanded training for
-named authors and contact typing. Unchanged model event types remain unverified;
-only explicit type corrections augment the event dataset. Run artifacts retain
-SQLite snapshots, source hashes, features, seeds, fold predictions, metrics and
-model files. TcUru's confirmed five-person roster is an explicit exception to
-the normal six-person court policy. See
-[expanded training and history](docs/expanded_contact_training.md).
