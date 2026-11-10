@@ -732,6 +732,46 @@ JIZ3exHe3hA annotations cannot recreate discarded raw YOLO proposals, but their
 93155 frozen embeddings have been imported and a full cached ID replay took
 about 47 s with OSNet unloaded. See `docs/model_output_cache.md`.
 
+## Ball box size as a side cue (2026-11-09/10)
+
+Full write-up and the result table: `docs/team_attribution.md`, section "The
+depth cue, measured". Notes that do not belong there:
+
+- Started from a research note proposing monocular 3D for the ball (apparent
+  diameter + flight physics). Only the side cue was built; no metric 3D exists.
+- Read-only check on `X6JdbC8SM_U_4k` (viewer job `job_1793380818`): the old
+  1280 detector with FP16 output reports box edges in 0.75 / 1.5 / 3 px steps
+  by image column and widths cluster at 30/36/42/48 px. Focal length from the
+  four court corners alone is ill-conditioned there (1437 or 2510 px by
+  constraint; the net tape picks about 2020 px, camera about 0.7 m high).
+  Single-frame size depth jumped a median 0.52 m between consecutive frames.
+  Cached boxes are a side cue, not a diameter measurement.
+- Captures for the three gold sources now in `data/inference_cache`:
+  `ball_primary` at imgsz 1280 for Khe4 and j0g (first pass), `ball_primary` at
+  imgsz 1920 for all three, `pose_raw`, spotter probabilities and OSNet crops
+  for the current pose boxes. The first three-video size score (0.851) mixed
+  the two detectors: Khe4 and j0g ran 1280, j3 ran 1920, because the checkout
+  changed branch mid-run. The table in `docs/team_attribution.md` uses 1920
+  throughout.
+- Threshold sweep with the 1920 detector, human contacts, two videos: full rule
+  0.911 at 30 px, 0.937 at 31, 0.941 at 32, 0.948 at 33, 0.937 at 34, 0.904 at
+  35. A per-video median of contact sizes (32.0 px, label-free) gives 0.941;
+  Otsu on log size (35 to 37 px) gives 0.886 and was dropped.
+- Alternation threshold on spotter contacts: 0.923 with it off, 0.925 at 0.10,
+  0.894 at 0.15. It is neutral, not a gain; `side_confident` separates the
+  measured sides from the alternated ones.
+- No regression: three gold videos replayed from cache with the branch code
+  against unmodified `main` (111d5d4) differ only in the added fields. Contact
+  author scores differ in the last float digit between any two runs, including
+  two runs of `main`. Full suite: 730 passed.
+- Local artifacts (gitignored, in the branch worktree): `results/side_baseline_main_v2`
+  (`main`), `results/side_new` (branch, with `contact_side_eval.json`).
+- `analyze_video.py --no-event-overlay` passes no checkpoint, and the analyzer
+  then loads the default event checkpoint anyway. Not changed here.
+- A worktree resolves `models/` and `data/` from its own root. Copy the pinned
+  weights in (no junctions) and pass `--model-cache-dir` and the video by
+  absolute path.
+
 ## Removed dead modules (2026-11-08)
 
 Removed from the working tree because nothing imported them and they had no
