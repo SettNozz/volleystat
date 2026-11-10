@@ -178,8 +178,10 @@ function redraw() {
 
   if (showNet && window._annData) {
     const d = window._annData;
-    const postLeftX = d.net_floor_left ? d.net_floor_left[0] : d.net_x_left;
-    const postRightX = d.net_floor_right ? d.net_floor_right[0] : d.net_x_right;
+    // Drawn tape endpoints own both coordinates. Post X is a fallback for
+    // automatic detections, whose tape is represented by a height alone.
+    const postLeftX = !d.net_tape_endpoint_y && d.net_floor_left ? d.net_floor_left[0] : d.net_x_left;
+    const postRightX = !d.net_tape_endpoint_y && d.net_floor_right ? d.net_floor_right[0] : d.net_x_right;
     const xL = px(Math.min(postLeftX, postRightX));
     const xR = px(Math.max(postLeftX, postRightX));
 

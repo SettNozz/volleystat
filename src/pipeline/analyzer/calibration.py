@@ -287,6 +287,9 @@ class CalibrationMixin:
         return self._projector
 
     def _maybe_run_sam_net_detection(self, video_path, frame_w, frame_h, refresh_floor=False):
+        if self.calibration is not None and self.calibration.net_floor_method == "manual_court_midline":
+            log.info("Preserving manually calibrated net geometry")
+            return
         cache = getattr(self, '_model_cache', None)
         if cache is None or not self.enable_net_detection:
             return self._run_net_detection_uncached(video_path, frame_w, frame_h, refresh_floor)
@@ -337,7 +340,10 @@ class CalibrationMixin:
         runs once per camera setup; in-memory calibration gets the values in
         native calibration resolution.
         """
-        if not self.enable_net_detection:
+        if not self.enable_net_detection or (
+            self.calibration is not None
+            and self.calibration.net_floor_method == "manual_court_midline"
+        ):
             log.info("Net detection disabled for this analysis")
             return
 

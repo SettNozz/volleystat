@@ -5,6 +5,7 @@ const uploadCalibration = (() => {
   const setup = el('calibrationSetup'), mode = el('calibrationMode');
   const status = el('calibrationStatus'), hint = el('calibrationHint');
   const refresh = el('refreshNetFloor');
+  const netProfile = el('netProfile');
   const time = el('previewTime'), timeline = el('previewTimeline');
   let lastSecond = null;
   let original, edit, anchors, drag, path, pending;
@@ -135,7 +136,23 @@ const uploadCalibration = (() => {
     line([...edit.court_corners, edit.court_corners[0]], valid ? '#45ffc3' : '#ff6974');
     const guides = valid && courtGuideLines(edit.court_corners);
     if (guides) {
-      for (const segment of Object.values(guides)) line(segment, '#fff', true);
+      for (const [name, segment] of Object.entries(guides)) {
+        if (name !== 'center_line') line(segment, '#fff', true);
+      }
+      // Show the same three segments that the completed analysis will draw.
+      // The net handles remain in native image pixels; neither post detection
+      // nor a second display coordinate system supplies their X coordinates.
+      const [a, b] = guides.center_line;
+      if (Math.abs(b[0] - a[0]) > 1e-6) {
+        const floorY = x => a[1] + (x - a[0]) * (b[1] - a[1]) / (b[0] - a[0]);
+        const floor = netPoints().map(([x]) => [x, floorY(x)]);
+        const top = netPoints().reduce((sum, [, y]) => sum + y, 0) / 2;
+        const floorMid = (floor[0][1] + floor[1][1]) / 2;
+        const height = netProfile.value === 'men' ? 2.43 : 2.34;
+        const depth = (floorMid - top) / height;
+        line(netPoints().map(([x, y]) => [x, y + depth]), '#ff8c00');
+        line(floor, '#ff00ff');
+      }
     }
     line(netPoints(), '#ffcb55');
     const handleColor = mode.value === 'net' ? '#ffcb55' : '#45ffc3';
@@ -337,13 +354,14 @@ const uploadCalibration = (() => {
     if (mode.value === 'lines') anchors = courtEdgeAnchors(edit.court_corners, canvas.width, canvas.height);
     draw();
   });
+  netProfile.addEventListener('change', draw);
 
   return {
     analysisOptions(selectedPath) {
       if (pending) throw new Error('Wait for the calibration preview to load.');
       if (!edit || selectedPath !== path) return {};
       if (!courtCornersAreConvex(edit.court_corners)) throw new Error('Fix the court outline before analyzing.');
-      return { calibration: edit };
+      return { calibration: structuredClone(edit) };
     },
   };
 })();

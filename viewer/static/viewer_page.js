@@ -234,10 +234,10 @@ fetch('/api/annotations/' + JOB_ID)
     document.getElementById('netYVal').textContent = Math.round(data.net_y);
     const xLSlider = document.getElementById('netXLSlider');
     const xRSlider = document.getElementById('netXRSlider');
-    const postLeftX = data.net_floor_left ? data.net_floor_left[0] : data.net_x_left;
-    const postRightX = data.net_floor_right ? data.net_floor_right[0] : data.net_x_right;
-    xLSlider.max = fw; xLSlider.value = postLeftX || Math.round(fw * 0.29);
-    xRSlider.max = fw; xRSlider.value = postRightX || Math.round(fw * 0.66);
+    const postLeftX = !data.net_tape_endpoint_y && data.net_floor_left ? data.net_floor_left[0] : data.net_x_left;
+    const postRightX = !data.net_tape_endpoint_y && data.net_floor_right ? data.net_floor_right[0] : data.net_x_right;
+    xLSlider.max = fw; xLSlider.value = postLeftX ?? Math.round(fw * 0.29);
+    xRSlider.max = fw; xRSlider.value = postRightX ?? Math.round(fw * 0.66);
     document.getElementById('netXLVal').textContent = Math.round(xLSlider.value);
     document.getElementById('netXRVal').textContent = Math.round(xRSlider.value);
     renderAttackHeatmapSummary(data.attack_heatmap);
@@ -354,6 +354,11 @@ async function saveCourtCorrection(setupName) {
     const saved = await response.json();
     if (!response.ok) throw new Error(saved.error || 'Could not save court correction');
     d.court_corners = saved.court_corners;
+    for (const key of ['net_y', 'net_x_left', 'net_x_right', 'net_tape_top',
+      'net_tape_bottom', 'net_tape_endpoint_y', 'net_floor_left', 'net_floor_right']) {
+      if (key in saved) d[key] = saved[key];
+    }
+    redraw();
     if (saved.attack_heatmap) d.attack_heatmap = saved.attack_heatmap;
     courtEditor.originalCorners = JSON.parse(JSON.stringify(saved.court_corners));
     courtEditor.setupId = saved.court_setup_id || null;

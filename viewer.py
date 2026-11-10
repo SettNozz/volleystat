@@ -49,7 +49,10 @@ from src.viewer_app.stats import _prepare_viewer_stats
 from src.viewer_app.library import _annotation_original_video, _library_summary
 from src.viewer_app.calibration_preview import _manual_calibration, _calibration_frame
 from src.viewer_app.player_contacts_io import _load_player_contact_inputs, _player_contact_inputs  # noqa: F401 (tests clear its cache)
-from src.viewer_app.court_correction import _read_annotations, _write_annotations, _validated_corners, _projector_for
+from src.viewer_app.court_correction import (
+    _read_annotations, _write_annotations, _validated_corners, _projector_for,
+    _sync_manual_net_geometry,
+)
 from src.viewer_app.media import _stream_video, _decode_thumbnail, _decode_player_portrait
 from src.viewer_app.uploads import UploadError, find_existing_upload, store_upload
 
@@ -736,6 +739,10 @@ def _court_state(job: dict, payload: dict) -> dict:
         "net_y": payload.get("net_y"),
         "net_x_left": payload.get("net_x_left"),
         "net_x_right": payload.get("net_x_right"),
+        **{key: payload.get(key) for key in (
+            "net_tape_top", "net_tape_bottom", "net_tape_endpoint_y",
+            "net_floor_left", "net_floor_right",
+        )},
         "frame_width": payload.get("frame_width"),
         "frame_height": payload.get("frame_height"),
         "court_setup_id": payload.get("court_setup_id"),
@@ -767,6 +774,7 @@ def court_correction(job_id):
     width = float(payload.get("frame_width") or 1280)
     height = float(payload.get("frame_height") or 720)
     try:
+        previous_net_y = payload.get("net_y")
         payload["court_corners"] = _validated_corners(
             update.get("court_corners"), width, height,
         )
@@ -777,7 +785,9 @@ def court_correction(job_id):
             number = float(update[key])
             if not math.isfinite(number):
                 raise ValueError(f"{key} must be finite")
-            payload[key] = round(number, 2)
+            payload[key] = number
+
+        _sync_manual_net_geometry(payload, previous_net_y)
 
         setup_name = str(update.get("save_as_setup") or "").strip()
         if setup_name:
