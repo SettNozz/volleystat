@@ -138,6 +138,10 @@ def main():
                         help="Court side for roster identities (default b, near team)")
     parser.add_argument("--player-identity-seed", metavar="JSON",
                         help="Per-video verified seed or roster with confirmed new-player anchors; default initial P1-P6")
+    parser.add_argument("--player-identity-method", choices=("roster-discovery", "seed-frame"),
+                        default="roster-discovery",
+                        help="roster-discovery (default): find the constant players from tracklets of the whole "
+                             "video; seed-frame: the older tracker started from one complete frame")
     parser.add_argument("--player-reid-assets", metavar="DIR",
                         help="Override pinned OSNet bundle (osnet.py + osnet_msmt17.pth)")
     parser.add_argument("--player-reid-device", choices=("auto", "cpu", "cuda"), default="auto",
@@ -285,6 +289,7 @@ def main():
         enable_player_identity=not args.no_player_identity,
         player_identity_side=args.player_identity_side,
         player_identity_seed=args.player_identity_seed,
+        player_identity_method=args.player_identity_method,
         player_reid_assets=args.player_reid_assets,
         player_reid_device=args.player_reid_device,
         enable_contact_author=not args.no_contact_author,

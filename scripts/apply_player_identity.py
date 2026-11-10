@@ -148,6 +148,7 @@ def apply(args):
         analyzer.enable_player_identity=True
         analyzer.player_identity_side=args.side
         analyzer.player_identity_seed=str(args.seed) if args.seed else None
+        analyzer.player_identity_method=args.method
         analyzer.player_reid_assets=str(args.assets) if args.assets else None
         analyzer.player_reid_device=args.device
         analyzer.max_players_per_team=6
@@ -212,6 +213,9 @@ def main():
     replay.add_argument('--output',type=Path,required=True)
     replay.add_argument('--seed',type=Path)
     replay.add_argument('--side',choices=('a','b'),default='b')
+    replay.add_argument('--method',choices=('roster-discovery','seed-frame'),default='roster-discovery',
+                        help='roster-discovery (default) finds the constant players from tracklets of the whole video; '
+                             'seed-frame is the older tracker started from one complete frame')
     replay.add_argument('--assets',type=Path)
     replay.add_argument('--device',choices=('auto','cpu','cuda'),default='auto')
     replay.add_argument('--no-model-registry',action='store_true')

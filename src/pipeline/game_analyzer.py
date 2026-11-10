@@ -123,6 +123,7 @@ class GameAnalyzer(
         enable_player_identity: bool = True,
         player_identity_side: str = "b",
         player_identity_seed: Optional[str] = None,
+        player_identity_method: str = "roster-discovery",
         player_reid_assets: Optional[str] = None,
         player_reid_device: str = "auto",
         model_cache_dir: Optional[str] = None,
@@ -189,6 +190,9 @@ class GameAnalyzer(
             raise ValueError("player_reid_device must be auto, cpu or cuda")
         self.player_identity_side = player_identity_side
         self.player_identity_seed = player_identity_seed
+        if player_identity_method not in {"roster-discovery", "seed-frame"}:
+            raise ValueError("player_identity_method must be roster-discovery or seed-frame")
+        self.player_identity_method = player_identity_method
         self.player_reid_assets = player_reid_assets
         self.player_reid_device = player_reid_device
         self.model_cache_dir = Path(model_cache_dir) if model_cache_dir else DEFAULT_CACHE

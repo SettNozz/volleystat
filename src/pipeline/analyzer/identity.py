@@ -167,6 +167,7 @@ class IdentityMixin:
                 video_path=video_path, progress=progress,
                 feature_cache=feature_cache,
                 jersey_reads=getattr(self, "player_jersey_reads", None),
+                method=getattr(self, "player_identity_method", "roster-discovery"),
             )
             stats.player_identity["model_resolution"] = resolved.as_dict()
             self.model_provenance["player_reid"].update(encoder.provenance)

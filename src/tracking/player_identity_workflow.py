@@ -10,9 +10,16 @@ from scipy.optimize import linear_sum_assignment
 
 from src.models.player_reid_encoder import file_sha256
 from src.tracking.player_identity import default_seed, overlap
-from src.tracking.player_reid import ReIDParameters, associate
+from src.tracking.player_reid import ReIDParameters, associate, identity_anchors
+from src.tracking.player_roster_discovery import (
+    RosterDiscoveryParameters, RosterNotFound, assign_roster, discover_roster, name_left_to_right)
 
-METHOD='osnet_frozen_gallery_kalman_roster_v4'
+# Default: the roster comes from tracklets of the whole video. The sequential
+# seed-frame tracker stays for short clips, jersey constraints and old replays.
+METHOD='osnet_tracklet_roster_v5'
+SEED_FRAME_METHOD='osnet_frozen_gallery_kalman_roster_v4'
+IDENTITY_METHODS=('roster-discovery','seed-frame')
+DISCOVERY_PARAMETERS=RosterDiscoveryParameters()
 PRODUCTION_PARAMETERS=ReIDParameters(motion_model='kalman',tracklet_consistency=True,
                                     local_appearance_regret_max=.04)
 
@@ -121,37 +128,44 @@ def apply_player_identities(annotations,frames,seed,features,fps,side='b',parame
     return apply_identity_result(annotations,seed,result,side)
 
 
-def apply_identity_result(annotations,seed,result,side='b'):
-    """Export a validated association; detectors, geometry and events stay intact."""
+def _write_predictions(annotations,predictions,side,method):
+    """Add IDs to saved poses; detectors, geometry and events stay intact."""
     expected={f'{ann["f"]}:{i}' for ann in annotations for i,p in enumerate(ann.get('poses') or [])
               if p.get('team') in (side,'team_'+side)}
-    if set(result['predictions'])!=expected:
+    if set(predictions)!=expected:
         raise ValueError('Association keys differ from saved court-side observations')
+    for ann in annotations:
+        assigned=[predictions[key]['player_id'] for index in range(len(ann.get('poses') or []))
+                  if (key:=f'{ann["f"]}:{index}') in predictions and predictions[key]['player_id'] is not None]
+        if len(set(assigned))!=len(assigned):
+            raise ValueError('Two simultaneous detections share a roster identity')
+    counts=Counter()
+    by_person=Counter()
+    for ann in annotations:
+        for index,pose in enumerate(ann.get('poses') or []):
+            key=f'{ann["f"]}:{index}'
+            if key not in predictions:
+                continue
+            prediction=predictions[key]
+            pid=prediction['player_id']
+            if pid is not None:
+                by_person[pid]+=1
+            pose['player_id']=pid
+            pose['identity']={'method':method,**{k:v for k,v in prediction.items() if k!='player_id'}}
+            counts['observations']+=1
+            counts['assigned']+=pid is not None
+    return counts,by_person
+
+
+def apply_identity_result(annotations,seed,result,side='b'):
+    """Export a validated association; detectors, geometry and events stay intact."""
     parameters=result['parameters']
     method=('osnet_frozen_gallery_kalman_roster_v3'
             if parameters.get('tracklet_consistency') or seed.get('introductions')
             else 'osnet_frozen_gallery_kalman_v2')
     if parameters.get('local_appearance_regret_max') is not None:
         method='osnet_frozen_gallery_kalman_roster_v4'
-    counts=Counter()
-    by_person=Counter()
-    for ann in annotations:
-        assigned=set()
-        for index,pose in enumerate(ann.get('poses') or []):
-            key=f'{ann["f"]}:{index}'
-            if key not in result['predictions']:
-                continue
-            prediction=result['predictions'][key]
-            pid=prediction['player_id']
-            if pid is not None:
-                if pid in assigned:
-                    raise ValueError('Two simultaneous detections share a roster identity')
-                assigned.add(pid)
-                by_person[pid]+=1
-            pose['player_id']=pid
-            pose['identity']={'method':method,**{k:v for k,v in prediction.items() if k!='player_id'}}
-            counts['observations']+=1
-            counts['assigned']+=pid is not None
+    counts,by_person=_write_predictions(annotations,result['predictions'],side,method)
     return {'enabled':True,'status':'completed','method':method,'side':side,'roster_size':len(result['gallery_keys']),
             'max_on_court':len(seed['assignments']),'tracklet_consistency':result['tracklet_consistency'],
             'seed':seed,'gallery_keys':result['gallery_keys'],'parameters':result['parameters'],
@@ -159,6 +173,65 @@ def apply_identity_result(annotations,seed,result,side='b'):
             'coverage':counts['assigned']/max(counts['observations'],1),'person_observations':dict(by_person),
             'label_source':'model','verified':False,'contact_attribution':False,
             'scope':'one court side; roster grows only from confirmed new-person anchors; existing IDs are retained on return'}
+
+
+def discovery_possible(frames,fps,roster_size=6,parameters=DISCOVERY_PARAMETERS):
+    """Cheap check before any embedding is read: enough clean tracklets for a roster?"""
+    limit=max(1,round(parameters.chunk_seconds*fps))
+    gap=max(1,round(parameters.chunk_gap_seconds*fps))
+    usable=0
+    runs={}
+    for frame in frames:
+        for obs in frame['players']:
+            raw=obs.get('raw_id')
+            if raw is None or obs['occlusion']>=parameters.clean_overlap_max:
+                continue
+            start,previous,count=runs.get(raw,(frame['f'],frame['f'],0))
+            if frame['f']-previous>gap or frame['f']-start>=limit:
+                start,count=frame['f'],0
+            runs[raw]=(start,frame['f'],count+1)
+            usable+=count+1==parameters.chunk_min_clean
+    return usable>=roster_size
+
+
+def apply_discovered_identities(annotations,frames,features,fps,side='b',roster_size=6,seed=None,
+                                parameters=DISCOVERY_PARAMETERS):
+    """Roster from tracklets of the whole video; confirmed anchors name it when given.
+
+    Raises ``RosterNotFound`` before anything is written when the video does not
+    show ``roster_size`` separable constant players.
+    """
+    anchors=identity_anchors(seed) if seed is not None else None
+    found=discover_roster(frames,features,fps,roster_size,parameters,anchors=anchors)
+    roster=found['roster']
+    forced,available={},{}
+    if seed is None:
+        seed=name_left_to_right(frames,roster)
+    else:
+        forced={a['key']:a['player_id'] for a in anchors}
+        available={a['player_id']:a.get('available_from_frame') for a in anchors}
+    predictions=assign_roster(frames,features,fps,roster,parameters,available_from=available,forced=forced,
+                              cohort=found['cohort'])
+    counts,by_person=_write_predictions(annotations,predictions,side,METHOD)
+    return {'enabled':True,'status':'completed','method':METHOD,'side':side,'roster_size':len(roster),
+            'max_on_court':len(seed['assignments']),'tracklet_consistency':{'enabled':False},
+            'seed':seed,'gallery_keys':{p['player_id']:p['gallery_keys'] for p in roster},
+            'parameters':parameters.to_dict(),
+            'roster_discovery':{
+                'status':'completed','tracklets':found['tracklets'],'people':found['people'],
+                'selection':'confirmed_anchors' if anchors else 'longest_presence',
+                'players':[{k:p[k] for k in ('player_id','presence_frames','tracklets','first_frame','last_frame')}
+                           for p in roster],
+                # People seen on this side who are not in the roster. 'other_person' was
+                # seen together with every roster player; 'unresolved' may be a bystander,
+                # a roster player from an unusual angle, or a substitute awaiting confirmation.
+                'other_people':found['other_people'],'known_other_people':len(found['cohort']),
+                'label_source':'model','verified':False},
+            'observations':counts['observations'],'assigned':counts['assigned'],
+            'coverage':counts['assigned']/max(counts['observations'],1),'person_observations':dict(by_person),
+            'label_source':'model','verified':False,'contact_attribution':False,
+            'scope':'one court side; roster people are found from tracklets of the whole video; '
+                    'substitutes still need a confirmed new-person anchor'}
 
 
 def apply_jersey_identities(annotations,frames,seed,features,fps,reads,side='b',jersey_parameters=None,
@@ -182,10 +255,29 @@ def apply_jersey_identities(annotations,frames,seed,features,fps,reads,side='b',
 
 
 def run_identity_pass(annotations,images,fps,encoder,side='b',roster_size=6,seed_path=None,video_path=None,progress=None,
-                      feature_cache=None,jersey_reads=None):
+                      feature_cache=None,jersey_reads=None,method='roster-discovery'):
+    if method not in IDENTITY_METHODS:
+        raise ValueError(f'Unknown identity method: {method}')
     frames=observations_from_annotations(annotations,side)
     if not any(f['players'] for f in frames):
         return {'enabled':True,'status':'no_players','method':METHOD,'side':side,'assigned':0,'coverage':0.}
+    # Jersey constraints are implemented in the sequential tracker only.
+    discover=method=='roster-discovery' and jersey_reads is None
+    fallback=None
+    if discover and not discovery_possible(frames,fps,roster_size):
+        discover,fallback=False,'too few clean tracklets for a roster'
+    from src.models.inference_cache import collect_embeddings
+    features=None
+    if discover:
+        seed=load_seed(seed_path,frames,video_path,side,roster_size) if seed_path is not None else None
+        features=collect_embeddings(frames,images,encoder,feature_cache,progress=progress)
+        try:
+            report=apply_discovered_identities(annotations,frames,features,fps,side,roster_size,seed)
+        except RosterNotFound as exc:
+            fallback=str(exc)
+        else:
+            report['encoder']=encoder.provenance
+            return report
     try:
         seed=identity_seed(frames,roster_size,seed_path,video_path,side)
     except ValueError:
@@ -196,12 +288,18 @@ def run_identity_pass(annotations,images,fps,encoder,side='b',roster_size=6,seed
                 if pose.get('team') in (side,f'team_{side}'):
                     pose['player_id']=None
                     pose['identity']={'method':METHOD,'reason':'no_complete_roster','verified':False,'label_source':'model'}
-        return {'enabled':True,'status':'no_complete_roster','method':METHOD,'side':side,'assigned':0,'coverage':0.}
-    from src.models.inference_cache import collect_embeddings
-    features=collect_embeddings(frames,images,encoder,feature_cache,progress=progress)
+        report={'enabled':True,'status':'no_complete_roster','method':METHOD,'side':side,'assigned':0,'coverage':0.}
+        if fallback:
+            report['roster_discovery']={'status':'not_found','reason':fallback}
+        return report
+    if features is None:
+        features=collect_embeddings(frames,images,encoder,feature_cache,progress=progress)
     if jersey_reads is not None:
         report=apply_jersey_identities(annotations,frames,seed,features,fps,jersey_reads,side)
     else:
         report=apply_player_identities(annotations,frames,seed,features,fps,side)
+    if fallback:
+        # The seed-frame tracker ran because the whole-video roster was not found.
+        report['roster_discovery']={'status':'fallback_to_seed_frame','reason':fallback}
     report['encoder']=encoder.provenance
     return report
