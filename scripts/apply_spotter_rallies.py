@@ -80,10 +80,20 @@ def rebuild(annotations_path: Path, output: Path, checkpoint: str | None) -> dic
         frame_width=annotations["frame_width"],
         frame_height=annotations["frame_height"],
         net_y=annotations["net_y"],
+        # Saved net geometry for the contact-side pass. The court homography
+        # is not exported, so its end-on check is skipped on a rebuild.
+        homography=None,
+        **{key: annotations.get(key) for key in (
+            "net_floor_left", "net_floor_right", "net_tape_top",
+            "net_tape_endpoint_y", "net_height_m",
+        )},
     )
     analyzer._spot_contacts(stats, fps)
     if not stats.contact_spotter.get("diagnostics"):
         raise RuntimeError(f"Contact spotter did not run: {stats.contact_spotter}")
+    # The contact list was rebuilt, so any saved side report is stale. Results
+    # older than ``ball_size`` report ``no_ball_sizes`` instead of a guess.
+    analyzer._assign_contact_sides(stats, fps)
 
     stats.contact_spotter["rebuilt_from"] = {
         "script": "scripts/apply_spotter_rallies.py",
@@ -96,10 +106,11 @@ def rebuild(annotations_path: Path, output: Path, checkpoint: str | None) -> dic
     for key in (
         "total_rallies", "rallies", "service_attempts", "rally_lifecycle",
         "all_events", "all_events_fsm", "rallies_fsm", "service_attempts_fsm",
-        "rally_lifecycle_fsm", "contact_spotter",
+        "rally_lifecycle_fsm", "contact_spotter", "contact_side",
     ):
         result[key] = rebuilt[key]
     annotations["contact_spotter"] = stats.contact_spotter
+    annotations["contact_side"] = stats.contact_side
     from src.tracking.player_contacts import build_player_contacts
     annotations["player_contacts"] = result["player_contacts"] = build_player_contacts(
         result["all_events"], frames, fps, annotations.get("player_identity"),
