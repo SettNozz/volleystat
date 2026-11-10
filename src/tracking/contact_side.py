@@ -176,7 +176,8 @@ def assign_contact_sides(
     ]
     contacts = sorted((c for c in contacts if c["core"]), key=lambda c: c["frame"])
     for contact in contacts:
-        contact["event"].update(side=None, side_score=None, side_source=None, side_ball_px=None)
+        contact["event"].update(side=None, side_score=None, side_source=None,
+                                side_confident=None, side_ball_px=None)
 
     geometry = net_plane_ball_px(calibration)
     report["geometry"] = geometry
@@ -242,6 +243,8 @@ def assign_contact_sides(
                 side="b" if score > 0 else "a",
                 side_score=round(score, 3),
                 side_source=source,
+                # Measured size evidence, as opposed to the order of play alone.
+                side_confident=source == "ball_size_possession",
             )
             assigned += 1
             by_source[source] = by_source.get(source, 0) + 1
@@ -251,3 +254,38 @@ def assign_contact_sides(
         sides={side: sum(1 for c in contacts if c["event"]["side"] == side) for side in ("a", "b")},
     )
     return report
+
+
+def cross_check_authors(events: Sequence[Dict[str, Any]], player_contacts: Dict[str, Any]) -> Dict[str, Any]:
+    """Where the ball-size side contradicts the contact author's side.
+
+    The author report is not changed. An ``assigned`` contact is a near-side
+    (``b``) player, ``other_side`` is the far side (``a``). A disagreement is
+    a review hint, not a correction: on the development videos the author's
+    side was right more often than this one, and the disagreements held five
+    of its nine side errors in under a tenth of the contacts.
+    """
+    disagreements: List[Dict[str, Any]] = []
+    compared = 0
+    for row in (player_contacts or {}).get("contacts") or []:
+        author_side = {"assigned": "b", "other_side": "a"}.get(row.get("status"))
+        index = row.get("event_index")
+        if author_side is None or not isinstance(index, int) or not 0 <= index < len(events):
+            continue
+        event = events[index]
+        if event.get("side") not in ("a", "b"):
+            continue
+        compared += 1
+        if event["side"] != author_side:
+            disagreements.append({
+                "event_index": index, "frame": int(event["frame"]), "type": event.get("type"),
+                "author_side": author_side, "ball_size_side": event["side"],
+                "side_score": event.get("side_score"),
+                "side_confident": bool(event.get("side_confident")),
+            })
+    return {
+        "author_method": (player_contacts or {}).get("method"),
+        "compared": compared, "agree": compared - len(disagreements),
+        "disagreements": disagreements,
+        "use": "review hint only; the author report is unchanged",
+    }

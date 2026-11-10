@@ -82,6 +82,7 @@ def test_weak_possession_alternates_against_the_previous_one_inside_a_rally():
     sizes = {10: 40.0, 60: 14.0, 90: 15.0, 120: 20.0, 150: 21.5}
     cs.assign_contact_sides(events, frames(sizes), FPS, calibration())
     assert events[4]["side"] == "b" and events[4]["side_source"] == "possession_alternation"
+    assert events[4]["side_confident"] is False and events[1]["side_confident"] is True
     # A serve opens a new rally and owes nothing to the previous possession.
     events = [event(10, "attack"), event(200, "serve")]
     cs.assign_contact_sides(events, frames({10: 14.0}), FPS, calibration())
@@ -134,6 +135,52 @@ def test_pipeline_pass_is_additive_and_can_be_disabled():
     stats.all_events = [dict(e) for e in before]
     analyzer._assign_contact_sides(stats, FPS)
     assert stats.contact_side == {"status": "disabled"} and stats.all_events == before
+
+
+def test_author_cross_check_lists_confident_disagreements_and_changes_nothing():
+    events = [
+        {"frame": 10, "type": "serve", "side": "b", "side_confident": True, "side_score": 0.6},
+        {"frame": 60, "type": "reception", "side": "a", "side_confident": True, "side_score": -0.4},
+        {"frame": 90, "type": "set", "side": "a", "side_confident": False, "side_score": -0.1},
+        {"frame": 120, "type": "attack", "side": None, "side_confident": None, "side_score": None},
+    ]
+    report = {"method": "author", "contacts": [
+        {"event_index": 0, "status": "assigned"},        # near: agrees
+        {"event_index": 1, "status": "assigned"},        # near against a confident far
+        {"event_index": 2, "status": "assigned"},        # near against an alternated far
+        {"event_index": 3, "status": "other_side"},      # no side: not compared
+        {"event_index": 1, "status": "unresolved"},      # author abstained
+        {"event_index": 9, "status": "assigned"},        # stale index
+    ]}
+    before = ([dict(e) for e in events], [dict(r) for r in report["contacts"]])
+    check = cs.cross_check_authors(events, report)
+    assert (check["compared"], check["agree"]) == (3, 1)
+    assert check["disagreements"] == [
+        {"event_index": 1, "frame": 60, "type": "reception", "author_side": "b",
+         "ball_size_side": "a", "side_score": -0.4, "side_confident": True},
+        {"event_index": 2, "frame": 90, "type": "set", "author_side": "b",
+         "ball_size_side": "a", "side_score": -0.1, "side_confident": False},
+    ]
+    assert (events, report["contacts"]) == before
+    assert cs.cross_check_authors(events, {})["compared"] == 0
+
+
+def test_pipeline_records_the_author_cross_check(monkeypatch):
+    from src.tracking import contact_author_runtime as runtime
+    analyzer = GameAnalyzer.__new__(GameAnalyzer)
+    analyzer.calibration = calibration()
+    analyzer.model_provenance = {}
+    stats = GameStats(video_name="t", fps=FPS)
+    stats.frame_annotations = frames({10: 40.0, 60: 14.0})
+    stats.all_events = [event(10, "serve"), event(60, "reception")]
+    analyzer._assign_contact_sides(stats, FPS)
+    authors = {"method": "author", "contacts": [
+        {"event_index": 0, "status": "assigned"}, {"event_index": 1, "status": "assigned"}]}
+    monkeypatch.setattr(runtime, "attribute_contacts", lambda *_a, **_k: authors)
+    analyzer._apply_contact_authors(stats, "t.webm", 200, 200)
+    assert stats.player_contacts is authors                       # author report untouched
+    check = stats.contact_side["author_check"]
+    assert check["compared"] == 2 and [d["event_index"] for d in check["disagreements"]] == [1]
 
 
 def test_pipeline_pass_never_fails_the_analysis(monkeypatch):

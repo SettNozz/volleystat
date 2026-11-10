@@ -195,3 +195,8 @@ class IdentityMixin:
         if provenance:
             self.model_provenance["contact_author"] = provenance
             stats.models = dict(self.model_provenance)
+        # Two independent side estimates now exist for a contact. Record where
+        # they disagree for review; neither report is rewritten.
+        if (getattr(stats, "contact_side", None) or {}).get("status") == "completed":
+            from src.tracking.contact_side import cross_check_authors
+            stats.contact_side["author_check"] = cross_check_authors(stats.all_events, stats.player_contacts)

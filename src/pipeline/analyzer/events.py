@@ -274,7 +274,7 @@ class EventsMixin:
             # Additive output: a failure here must not cost the analysis.
             log.warning(f"Contact side failed, events keep no side: {error}")
             for event in stats.all_events:
-                for key in ("side", "side_score", "side_source", "side_ball_px"):
+                for key in ("side", "side_score", "side_source", "side_confident", "side_ball_px"):
                     event.pop(key, None)
             stats.contact_side = {"status": "error", "error": str(error)}
             return
