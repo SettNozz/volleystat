@@ -38,6 +38,74 @@ def confirm(store):
     return store.roster_action({"video_id":"game","action":"confirm","revision":store.load()["revision"]})
 
 
+def test_contact_frame_review_adds_human_contact_and_preserves_original_proposal(project_dir):
+    client = create_app(project_dir).test_client()
+    frame_url = "/api/contact-frame"
+    added = {"video_id": "game", "action": "add", "type": "dig", "frame": 7, "revision": 0}
+    assert client.post(frame_url, json=added).get_json()["progress"]["game"]["total"] == 5
+    assert client.post(frame_url, json={**added, "revision": 1}).status_code == 400
+    timing = {"video_id": "game", "action": "timing", "contact_id": "c0", "frame": 8, "revision": 1}
+    assert client.post(frame_url, json=timing).status_code == 200
+    store = AnnotationStore(project_dir)
+    confirm(store)
+    store.label({"contact_id": "game:human:r1", "decision": "player", "player_id": "P1", "revision": 3})
+    exported = store.export()
+    contact = exported["contacts"][0]
+    assert (contact["frame"], contact["type"], contact["author_key"]) == (7, "dig", "game:P1")
+    assert contact["event_verified"] and contact["timing_verified"]
+    corrected = next(row for row in exported["queue"] if row["id"] == "c0")
+    assert corrected["frame"] == 8 and corrected["timing_source"] == "human"
+    assert store.contacts["c0"]["frame"] == 2
+
+
+def test_movement_review_splits_track_and_rejects_overlapping_player_id(project_dir, tmp_path):
+    project = json.loads((project_dir / "project.json").read_bytes())
+    annotation = tmp_path / "poses.json"
+    a = {"id": 10, "team": "b", "bb": [2, 2, 20, 80], "player_id": "P4"}
+    b = {**a, "id": 20, "bb": [25, 2, 45, 80]}
+    write_new(annotation, {"frames": [{"f": 0, "poses": [a, b]}, {"f": 1, "poses": [b, a]},
+                                      {"f": 2, "poses": []}, {"f": 3, "poses": [a]}]})
+    source = fingerprint_file(annotation)
+    project["sources"].append(source)
+    project["videos"]["game"]["annotations_source"] = source
+    directory = tmp_path / "movement"
+    write_new(directory / "project.json", project)
+    client = create_app(directory).test_client()
+    queue = client.get("/api/movement/game").get_json()["segments"]
+    assert [(row["id"], row["end"]) for row in queue] == [("0:0", 1), ("0:1", 1), ("3:0", 3)]
+    assert client.get("/api/movement/game/0:0").get_json() == {"boxes": [a["bb"], a["bb"]]}
+    url = "/api/movement"
+    label = {"video_id": "game", "segment_id": "0:0", "decision": "player", "player_id": "P1", "end": 0}
+    assert client.post(url, json={**label, "revision": 0}).status_code == 400
+    store = AnnotationStore(directory)
+    confirm(store)
+    assert client.post(url, json={**label, "revision": 1}).status_code == 200
+    conflict = client.post(url, json={**label, "revision": 2, "segment_id": "0:1"})
+    assert conflict.status_code == 400
+    assert conflict.get_json()["overlap"] == {"frame": 0, "bbox": a["bb"]}
+    assert client.post(url, json={**label, "revision": 2, "end": 1, "player_id": "P2"}).status_code == 200
+    assert client.post(url, json={**label, "revision": 2, "decision": "undo"}).status_code == 409
+    rows = store.export()["movement"]["videos"]["game"]["spans"]
+    assert [(row["player_id"], row["start"], row["pose_indices"]) for row in rows] == [("P1", 0, [0]), ("P2", 1, [1])]
+    assert client.post(url, json={**label, "revision": 3, "decision": "undo"}).status_code == 200
+    assert len(store.export()["movement"]["videos"]["game"]["spans"]) == 1
+    false_positive = {**label, "decision": "false_positive", "revision": 4, "end": 1}
+    assert client.post(url, json=false_positive).status_code == 400  # A false detection has no player.
+    assert client.post(url, json={**false_positive, "player_id": None}).status_code == 200
+    resumed = AnnotationStore(directory).export()["movement"]["videos"]["game"]["spans"]
+    assert [(row["decision"], row["player_id"]) for row in resumed] == [("player", "P1"), ("false_positive", None)]
+    assert resumed[-1]["verified"] and resumed[-1]["pose_indices"] == [1]
+    duplicate = {**label, "segment_id": "0:1", "revision": 5, "end": 1, "confirm_overlap": True}
+    assert client.post(url, json=duplicate).status_code == 200
+    rows = store.export()["movement"]["videos"]["game"]["spans"]
+    assert "duplicate_frames" not in rows[0]
+    assert rows[-1]["player_id"] == "P1" and rows[-1]["duplicate_frames"] == [0]
+    for revision in (6, 7):
+        assert client.post(url, json={**label, "revision": revision, "decision": "undo"}).status_code == 200
+    remaining = store.export()["movement"]["videos"]["game"]["spans"]
+    assert len(remaining) == 1 and "duplicate_frames" not in remaining[0]
+
+
 def test_contact_type_correction_preserves_author_source_and_timing_and_can_be_reset(project_dir):
     store=AnnotationStore(project_dir);confirm(store)
     store.label({"contact_id":"c0","decision":"player","player_id":"P2","revision":1})

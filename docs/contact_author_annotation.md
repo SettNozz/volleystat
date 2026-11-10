@@ -187,6 +187,42 @@ available. Startup checks SHA-256 fingerprints; requests also check size/mtime.
 Changed inputs block writes without deleting existing decisions. A changed
 queue needs a new project, not an implicit migration of human labels.
 
+## Review movement and fill contact gaps
+
+Both tabs use the same confirmed photo roster. In **Контакти**, step to the
+observed touch and click **Підтвердити поточний кадр контакту** to verify or move
+the proposed frame. For missed touches, pause on the correct frame, pick a type
+in **Тип пропущеного контакту…**, then click **+ Контакт тут** and assign its
+author. The proposal queue alone does not measure full-video coverage. Play the
+source from frame zero to find contacts outside the queue.
+
+In **Рух та ID**, click **▶ Відрізок** or press A to play or pause, and follow the turquoise box. Each item
+contains consecutive observed poses with one raw track ID, up to six seconds.
+Click a roster card or press 1–9 once for the whole piece if it follows the same
+person. If the box changes person, pause on the last frame of the first person,
+check **Позначити лише до поточного кадру включно**, then assign the card. Review
+the rest from the next frame. D marks a person outside the roster, U marks an
+uncertain span, and F (**Хибна детекція**) marks an empty or duplicate box. False
+positives export as verified `false_positive` spans with the source pose indices
+and no player ID. Undo the latest span to correct a decision. If a player is
+already labelled in an overlapping frame, compare the two boxes and press Enter
+if both show that person. The JSON export retains both labels, marking overlapping
+frames of later labels in `duplicate_frames` for one-pose-per-player metrics.
+
+Review chronologically for full coverage or use **Сумнівні першими** to prioritize
+pieces where the saved model ID changes or goes unknown. The tool hides those
+predicted identities. Progress counts reviewed cached poses on the target side
+and reports uncertain ones separately. Missing detections and intervals on the
+other side are outside that count. Newly encountered substitutes get a new
+card, and returning players keep their existing card.
+
+Contact and movement decisions autosave in the same SQLite project. JSON export
+includes human-added contacts, reviewed contact frames, and `movement` spans
+with source frame/pose indices, roster IDs and explicit verification. Evaluate
+wrong IDs, unknowns, identity switches and recoveries after gaps separately.
+Keep evaluation ranges out of seed/gallery corrections when comparing replays
+on this video. Use another complete source for unseen-video evaluation.
+
 ## Dataset export and interpretation
 
 **Експорт JSON** downloads `contact_authors_rNNNNNN.json` with schema

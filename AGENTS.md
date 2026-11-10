@@ -249,6 +249,8 @@ Run cross-video model selection before `--final-fit`. Do not resurrect metrics o
 
 ## Human annotation
 
+Contact author and movement review share the same confirmed roster in `action_recognition.annotator.contact_author_annotator`. See `docs/contact_author_annotation.md`.
+
 Clip annotator is Flask, not Streamlit:
 
 ```powershell

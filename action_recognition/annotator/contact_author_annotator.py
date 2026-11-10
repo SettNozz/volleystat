@@ -10,13 +10,15 @@ from pathlib import Path
 import cv2
 from flask import Flask, jsonify, request, send_file
 
-from .contact_author_dataset import AnnotationStore, Conflict
+from .contact_author_dataset import AnnotationStore, Conflict, MovementOverlap
+from .contact_author_movement import segment_queue, segments_for
 
 
 def progress(project,state):
     result = {}
+    queue = [*project["contacts"], *state.get("added_contacts", {}).values()]
     for video in project["videos"]:
-        rows = [c for c in project["contacts"] if c["video_id"]==video]
+        rows = [c for c in queue if c["video_id"]==video]
         counts = Counter(state["labels"][c["id"]]["decision"] for c in rows if c["id"] in state["labels"])
         result[video] = {"total":len(rows),"reviewed":sum(counts.values()),"unlabelled":len(rows)-sum(counts.values()),
                          "decisions":dict(counts)}
@@ -56,6 +58,9 @@ def create_app(project_dir,verify_full=True):
     @app.errorhandler(Conflict)
     def conflict(error): return jsonify(error=str(error)),409
 
+    @app.errorhandler(MovementOverlap)
+    def movement_overlap(error): return jsonify(error=str(error), overlap=error.details), 400
+
     @app.errorhandler(ValueError)
     def invalid(error): return jsonify(error=str(error)),400
 
@@ -70,6 +75,8 @@ def create_app(project_dir,verify_full=True):
         store.check_sources()
         videos = {key:{k:v[k] for k in ("video_id","name","fps","width","height","num_frames","target_side","contact_count")}
                   for key,v in store.project["videos"].items()}
+        for key, metadata in videos.items():
+            metadata["movement_available"] = bool(store.project["videos"][key].get("annotations_source"))
         return jsonify(videos=videos,contacts=store.project["contacts"],source_scope=store.project["source_scope"],
                        evaluation_scope=store.project["evaluation_scope"],**snapshot())
 
@@ -107,6 +114,29 @@ def create_app(project_dir,verify_full=True):
 
     @app.post("/api/event")
     def event(): return jsonify(**snapshot(store.event_action(body())))
+
+    @app.post("/api/contact-frame")
+    def contact_frame(): return jsonify(**snapshot(store.contact_frame_action(body())))
+
+    def movement(video_id):
+        store.check_sources()
+        metadata = store.project["videos"].get(video_id)
+        if metadata is None:
+            raise ValueError("Unknown video")
+        return segments_for(metadata)
+
+    @app.get("/api/movement/<video_id>")
+    def movement_queue(video_id): return jsonify(segments=segment_queue(movement(video_id)))
+
+    @app.get("/api/movement/<video_id>/<segment_id>")
+    def movement_boxes(video_id, segment_id):
+        segment = movement(video_id).get(segment_id)
+        if segment is None:
+            raise ValueError("Unknown movement segment")
+        return jsonify(boxes=segment["boxes"])
+
+    @app.post("/api/movement")
+    def movement_review(): return jsonify(**snapshot(store.movement_action(body())))
 
     @app.post("/api/roster")
     def roster(): return jsonify(**snapshot(store.roster_action(body())))
