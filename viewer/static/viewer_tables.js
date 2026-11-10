@@ -116,7 +116,7 @@ function renderTables() {
     log.insertAdjacentHTML('beforeend',
       `<tr class="clickable" onclick="showPage('video');seekAndPlay(${ev.frame})">` +
       `<td>${ri >= 0 ? ri + 1 : '—'}</td><td>${ev.time.toFixed(2)}s</td>` +
-      `<td style="color:${EV_COLORS[ev.type] || '#888'};font-weight:700">${ev.type.replace(/_/g, ' ')}</td>` +
+      `<td style="color:${evColor(ev.type)};font-weight:700">${ev.type.replace(/_/g, ' ')}</td>` +
       `<td>${ev.team === 'team_a' ? 'Team A'
             : (ev.team === 'team_b' ? 'Team B' : '—')}</td>` +
       `<td class="c-muted">${(ev.rally_phase || '—').replace(/_/g, ' ')}</td>` +

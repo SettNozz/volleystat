@@ -158,6 +158,14 @@ def apply(args):
         analyzer._model_cache=ModelOutputCache(source,args.model_cache_dir,args.require_model_cache)
         analyzer._cache_frame_size=(annotations['frame_width'],annotations['frame_height'])
         analyzer.progress_callback=None
+        analyzer.player_jersey_reads=None
+        if args.jersey_reads:
+            reads=json.loads(args.jersey_reads.read_text(encoding='utf-8'))
+            if reads.get('schema')!='jersey_number_reads_v1' or reads.get('annotations_sha256')!=file_sha256(path):
+                raise ValueError('Jersey reads must be jersey_number_reads_v1 made from these exact annotations')
+            if reads.get('side') not in (args.side,'all'):
+                raise ValueError('Jersey reads cover another court side')
+            analyzer.player_jersey_reads=reads
         stats=GameStats(video_name=annotations['video'],fps=annotations['fps'],frame_annotations=annotations['frames'])
         analyzer._apply_player_identity(stats,images(),annotations['fps'],source)
     finally:
@@ -209,6 +217,7 @@ def main():
     replay.add_argument('--no-model-registry',action='store_true')
     replay.add_argument('--model-cache-dir',type=Path,default=DEFAULT_CACHE)
     replay.add_argument('--require-model-cache',action='store_true',help='Refuse inference; use saved OSNet embeddings only')
+    replay.add_argument('--jersey-reads',type=Path,help='Optional jersey_number_reads_v1 file from scripts/evaluation/read_jersey_numbers.py; adds jersey-number constraints')
     args=parser.parse_args()
     if args.command=='export-seed':
         export_seed(args.review_project,args.output)

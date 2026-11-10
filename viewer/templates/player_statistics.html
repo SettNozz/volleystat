@@ -163,7 +163,8 @@
   <img id="photo-preview" alt="Player photo candidate">
   <p id="photo-status" role="status"></p>
   <div class="photo-actions">
-    <button type="button" id="next-photo">Next photo</button>
+    <button type="button" id="prev-photo">← Previous photo</button>
+    <button type="button" id="next-photo">Next photo →</button>
     <button type="button" id="save-photo">Use this photo</button>
     <form method="dialog"><button>Cancel</button></form>
   </div>
@@ -271,8 +272,8 @@ function updatePhotos(id, candidate) {
   }
 }
 
-function nextPhoto() {
-  index = (index + 1) % count;
+function showPhoto(step) {
+  index = ((index + step) % count + count) % count;
   save.disabled = true;
   photoStatus.textContent = 'Loading photo…';
   preview.src = photoUrl(photos.find(img => img.dataset.playerPhoto === player), index);
@@ -286,7 +287,12 @@ preview.onerror = () => {
   save.disabled = true;
   photoStatus.textContent = 'Photo unavailable. Try the next one.';
 };
-document.getElementById('next-photo').onclick = nextPhoto;
+document.getElementById('next-photo').onclick = () => showPhoto(1);
+document.getElementById('prev-photo').onclick = () => showPhoto(-1);
+picker.addEventListener('keydown', event => {
+  if (event.key === 'ArrowRight') { event.preventDefault(); showPhoto(1); }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); showPhoto(-1); }
+});
 save.onclick = () => {
   updatePhotos(player, index);
   try { localStorage.setItem(storageKey(player), index); } catch {}
@@ -305,8 +311,11 @@ for (const button of document.querySelectorAll('.change-photo')) {
     count = total;
     index = selected.get(id) ?? 0;
     document.getElementById('photo-title').textContent = 'Change photo · ' + id;
+    document.getElementById('prev-photo').disabled = count < 2;
+    document.getElementById('next-photo').disabled = count < 2;
     picker.showModal();
-    nextPhoto();
+    // Open on the photo in use; Previous and Next step from there.
+    showPhoto(0);
   };
 }
 </script>

@@ -246,3 +246,59 @@ parameters still default to no veto. Production selects it explicitly.
 The cached runner's optional `--appearance-regret-max 0.04` evaluates one
 candidate in a fresh directory against existing frozen controls. No additional
 encoder pass is required. Original v2/v3 results remain available for review.
+
+## Jersey-number constraints (opt-in)
+
+A pinned TrOCR scene-text model (`microsoft/trocr-base-str@26c151f`, MIT)
+reads shoulder-to-hip torso crops of saved near-side poses. Only one- or
+two-digit strings count. Default analysis does not run OCR.
+
+```powershell
+python scripts/models/install_jersey_ocr.py               # or --from-dir <downloaded files>
+python scripts/evaluation/read_jersey_numbers.py --annotations results/game/game_annotations.json --output results/game_jersey_v1/reads.json --stride 3
+python scripts/apply_player_identity.py apply --annotations results/game/game_annotations.json --output results/game_jersey_v1/result --require-model-cache --jersey-reads results/game_jersey_v1/reads.json
+```
+
+`src/tracking/jersey_numbers.py` splits raw track IDs into continuous
+tracklets. A tracklet gets a number when at least two reads with probability
+≥ 0.8 agree and hold ≥ 75% of its confident reads. A first identity pass
+assigns tracklets to roster IDs. A roster ID gets a number when at least two
+of its tracklets vote and one number holds ≥ 60% of them. A number claimed by
+two IDs is dropped. In the second pass, a detection cannot take an ID when its
+tracklet shows another roster player's number or a number other than this
+player's. A matching number replaces the appearance margin for a lost return
+or a near-net candidate. Distance, motion and recovery-confirmation gates
+stay. Reads, tracklet numbers and roster numbers stay `label_source=model`,
+unverified.
+
+Measured on `e2F6pef-te0_2160p` (2026-11-10, one match, one camera); artifacts
+are in `results/experiments/jersey_ocr_e2f_20261110_v1/`.
+
+- The reader is weak on this footage. It often adds a leading 1 (8 read as
+  18, 3 as 13) and reads 7 as 1. A full-video pass at stride 3 read 30,057
+  torso crops in 708 s. 11,815 crops read as a number; 1,079 of those had
+  probability ≥ 0.8. Front views and small players give no reads.
+- The 52 diagnostic ID checks from PR #20 use the #20 final side policy, the
+  same windows and cached features only (`scripts/evaluation/compare_jersey_identity.py`).
+  The #20 policy alone scores 42 correct / 0 wrong / 10 missing with 4,257
+  assigned observations. Read probability ≥ 0.8 (default) leaves the checks
+  at 42/0/10 with 4,308 assigned and finds one correct roster number (#8).
+  At 0.6 one roster ID got a misread number (7 read as 1) and 17 IDs changed;
+  0.4 lost 254 assignments.
+- The full-video `apply` replay set `P5=#8`. The replay without reads
+  assigned 49,570 of 90,266 observations, and its automatic roster mixes
+  people. P5 tracklets read #8 16 times, #9 5 times and #3 once; P4 splits
+  between #11 and #9. With the constraints:
+  - 1,074 P5 observations of #3 and 205 of #9 lose the ID. Eight random crops
+    of each group show players #3 and #9, so these removals are correct.
+  - 376 #8 observations gain P5, and the sampled crops show #8.
+  - 236 observations gain P4. The sampled crops show player #7 read as "1",
+    so these are new errors. The number did not cause them: P4 has no number
+    to veto with, and the ID arrives through the motion tracker.
+  - Overall 2,292 lost, 1,882 gained and 53 changed. See `jersey_changes.jpg`.
+
+Number evidence finds mixed roster IDs that appearance alone misses. This
+generic reader is not reliable enough for default use. Next steps are a
+jersey-specific recogniser, such as PARSeq fine-tuned on jersey numbers, and a
+check of whether a tracklet faces the camera. None of these numbers are
+held-out or human-verified identity accuracy.

@@ -325,8 +325,11 @@ Viewer reads actual annotations, not redrawn guesses. It supports ball/trail, re
 
 Viewer uploads select the ball batch automatically. Prefer compatible cached detections before sizing from available GPU memory. Reduce the batch on CUDA memory exhaustion. Explicit CLI batches remain supported.
 
-New analysis can preview a source frame and adjust saved court lines/corners and
-net tape before processing. Confirmed geometry is stored as a job-local
+New analysis accepts a dropped video file: `/api/upload_video` copies it to
+`data/uploads/` (same name + size reuses the copy) because browsers never expose
+a dropped file's path. It can preview a source frame and adjust saved court
+lines/corners and net tape before processing; a magnifier shows a native-res
+crop (`/api/analysis_calibration/frame`) around the active handle. Confirmed geometry is stored as a job-local
 `court_calibration.json`; net detection is disabled for that job and its floor
 divider follows the edited court centre line. Shared calibrations and saved
 camera setups are not modified.
@@ -450,7 +453,11 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   (`scripts/apply_player_identity.py add-player`); returning players keep their
   IDs. Install assets once with `scripts/models/install_player_reid.py`; no
   runtime downloads. `scripts/apply_player_identity.py export-seed|apply`
-  writes fresh paired results. See `docs/player_identity_workflow.md`.
+  writes fresh paired results. Opt-in jersey OCR (pinned TrOCR,
+  `scripts/models/install_jersey_ocr.py`; reads from
+  `scripts/evaluation/read_jersey_numbers.py`; `apply --jersey-reads`) adds
+  number constraints to `associate()`; it is not in default analysis. See
+  `docs/player_identity_workflow.md`.
 - **Contact author** (default on): `src/tracking/contact_author_runtime.py` runs
   after identity and final events with logical model `contact_author` (all10
   `expanded_soft_hgb`, SHA256 `4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091`,
@@ -469,7 +476,9 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
 - **Pose input and net floor**: default `--pose-imgsz 2560`.
   `GameAnalyzer._validated_net_floor` falls back to the homography world-y=0
   line (`calibrated_court_midline_fallback`) when the detected divider fails the
-  post-spacing gate; source calibration stays unchanged.
+  post-spacing gate; source calibration stays unchanged. The user draws the
+  divider by hand when needed (viewer `manual_court_midline`); do not make the
+  court-midline divider the default without asking.
 - **Optional SAM pose recovery**: `--person-masks <masks.jsonl>` enables
   `src/detection/sam_pose_recovery.py`. Keypoints come only from YOLO crops;
   output `source=sam_guided_yolo_pose` with negative mask-track IDs (separate

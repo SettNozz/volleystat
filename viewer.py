@@ -51,6 +51,7 @@ from src.viewer_app.calibration_preview import _manual_calibration, _calibration
 from src.viewer_app.player_contacts_io import _load_player_contact_inputs, _player_contact_inputs  # noqa: F401 (tests clear its cache)
 from src.viewer_app.court_correction import _read_annotations, _write_annotations, _validated_corners, _projector_for
 from src.viewer_app.media import _stream_video, _decode_thumbnail, _decode_player_portrait
+from src.viewer_app.uploads import UploadError, find_existing_upload, store_upload
 
 app = Flask(__name__, template_folder="viewer/templates", static_folder="viewer/static")
 # Jinja caches compiled templates in memory, so UI edits need a server restart
@@ -65,6 +66,8 @@ RESULTS_ROOT = PROJECT_ROOT / "results"
 RESULTS_DIR = RESULTS_ROOT / "viewer"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 COURT_SETUPS_PATH = PROJECT_ROOT / "configs" / "court_setups.json"
+# Videos dropped on the New analysis page (browsers never expose their path).
+UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
 # Viewer uploads run the dense contact spotter, so their events and rallies
 # match `analyze_video.py --contact-spotter`. Without the checkpoint the
 # analysis falls back to the FSM's events and rallies. The file is the
@@ -402,6 +405,48 @@ def analysis_calibration():
         app.logger.exception("Could not decode or encode calibration preview")
         return jsonify(error="Could not decode or encode the preview frame. Try another preview time."), 422
     except (ValueError, TypeError, OSError) as exc:
+        return jsonify(error=str(exc)), 400
+
+
+@app.route("/api/analysis_calibration/frame")
+def analysis_calibration_frame():
+    """Native-resolution preview frame for the calibration magnifier."""
+    import cv2
+
+    try:
+        video_path = _resolve_video_path(request.args.get("video_path", "").strip())
+        seconds = float(request.args.get("seconds", 0))
+        if not video_path.is_file() or not math.isfinite(seconds) or seconds < 0:
+            raise ValueError("Choose an existing video and a nonnegative preview time")
+        frame, _ = _calibration_frame(video_path, seconds)
+        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        if not ok:
+            raise ValueError("Could not encode preview frame")
+    except cv2.error:
+        return jsonify(error="Could not decode the preview frame"), 422
+    except (ValueError, TypeError, OSError) as exc:
+        return jsonify(error=str(exc)), 400
+    return Response(encoded.tobytes(), mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.route("/api/upload_video", methods=["GET", "POST"])
+def upload_video():
+    """Store a video dropped on the New analysis page (GET checks for a copy)."""
+    try:
+        if request.method == "GET":
+            name = request.args.get("name", "")
+            size = int(request.args.get("size", "-1"))
+            path = find_existing_upload(UPLOAD_DIR, name, size)
+            return jsonify(path=str(path) if path else None)
+        name = urllib.parse.unquote(request.headers.get("X-File-Name", ""))
+        size = request.content_length
+        if size is None:
+            raise UploadError("Upload needs a Content-Length header", status=411)
+        path, reused = store_upload(UPLOAD_DIR, name, size, request.stream)
+        return jsonify(path=str(path), reused=reused)
+    except UploadError as exc:
+        return jsonify(error=str(exc)), exc.status
+    except (ValueError, OSError) as exc:
         return jsonify(error=str(exc)), 400
 
 

@@ -70,8 +70,20 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
 .calibration-stage { position: relative; }
 .calibration-stage img { display: block; width: 100%; }
 .calibration-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.calibration-stage canvas.calibration-loupe { inset: 8px auto auto auto; width: 220px; height: 220px; border: 2px solid #fff; border-radius: 10px; box-shadow: 0 6px 20px rgb(0 0 0 / .45); pointer-events: none; }
+.calibration-stage canvas.calibration-loupe[hidden] { display: none; }
 .calibration-timeline input[type=range] { flex: 1 1 160px; }
 .calibration-timeline input[type=number] { width: 6rem; padding: 8px; }
+.dropzone { border: 1.5px dashed var(--border); border-radius: 10px; padding: 10px; transition: border-color .15s, background .15s; }
+.dropzone.dragging { border-color: var(--primary); background: var(--primary-soft); }
+.drop-hint { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.drop-hint code { font-size: 11.5px; }
+button.link-button { display: inline; width: auto; margin: 0; padding: 0; background: none; color: var(--primary-dark); font-size: inherit; font-weight: 700; text-decoration: underline; }
+button.link-button:hover { background: none; }
+.upload-progress { margin-top: 8px; font-size: 11.5px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
+.upload-progress .progress-track { margin-bottom: 5px; background: var(--primary-soft); }
+.upload-progress .progress-fill { background: var(--primary); transition: width .2s linear; }
+.upload-progress.error { color: var(--red); }
 </style>
 </head>
 <body>
@@ -90,8 +102,16 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
   <h1>Volleyball Analytics</h1>
   <p class="subtitle">Upload match footage — ball tracking, poses, rallies &amp; contact events</p>
   <div class="card">
-    <label>Video file path</label>
-    <input type="text" id="videoPath" placeholder="C:/path/to/game.mp4" value="data/processed/ball_extraction_results/original_images_video.mp4">
+    <label for="videoPath">Video file path</label>
+    <div class="dropzone" id="dropZone">
+      <input type="text" id="videoPath" placeholder="C:/path/to/game.mp4" value="data/processed/ball_extraction_results/original_images_video.mp4">
+      <p class="drop-hint">Drop a video here, or <button type="button" class="link-button" id="browseVideo">choose a file</button>. It is copied to <code>data/uploads</code>; an earlier copy of the same file is reused.</p>
+      <input type="file" id="videoFile" accept="video/*,.webm,.mkv,.mov,.avi,.m4v" hidden>
+      <div class="upload-progress" id="uploadProgress" hidden>
+        <div class="progress-track"><div class="progress-fill" id="uploadFill"></div></div>
+        <span id="uploadText" role="status"></span>
+      </div>
+    </div>
     <button type="button" id="previewCalibration">Preview and edit court &amp; net</button>
     <p class="hint" id="calibrationStatus" role="status"></p>
     <section id="calibrationEditor" hidden aria-label="Court and net calibration">
@@ -108,6 +128,7 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
       <div class="calibration-stage">
         <img id="calibrationImage" alt="Preview frame from the selected video">
         <canvas id="calibrationCanvas" aria-label="Drag handles to adjust court and net tape"></canvas>
+        <canvas id="calibrationLoupe" class="calibration-loupe" aria-hidden="true" hidden></canvas>
       </div>
       <div class="calibration-toolbar calibration-timeline" aria-label="Choose preview frame">
         <button type="button" id="previewBack" aria-label="Go back 5 seconds">−5 s</button>
@@ -155,6 +176,7 @@ button:disabled { background: var(--border); color: var(--muted); cursor: not-al
 
 <script src="/static/court_geometry.js"></script>
 <script src="/static/upload_calibration.js"></script>
+<script src="/static/upload_drop.js"></script>
 <script>
 let pollInterval = null;
 

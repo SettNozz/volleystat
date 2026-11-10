@@ -525,7 +525,7 @@ function redraw() {
     if (recentEv) {
       const dt    = t - recentEv.time;
       const alpha = Math.pow(1 - dt / FADE_SEC, 1.5);
-      const color = EV_COLORS[recentEv.type] || '#ffffff';
+      const color = evColor(recentEv.type);
       const label = recentEv.type.replace(/_/g, ' ').toUpperCase();
       const team  = recentEv.team ? ` · ${teamLabel(recentEv.team)}` : '';
       const fs    = Math.round(28 * Math.max(sx, 0.6));
