@@ -5,16 +5,18 @@ hypotheses reuse them; `--require-model-cache` forbids accidental inference.
 Default outputs are JSON and the original-video viewer. Use `--render-video`
 only for an accepted video export. See [cache/replay workflow](docs/model_output_cache.md).
 
-Stable player IDs now run by default in CLI and viewer analyses: frozen OSNet
-appearance galleries plus a Kalman motion filter and lost-ID recovery. Occluded
-boxes do not update motion; ambiguous overlapping crops stay unknown. Raw tracker IDs remain
-separate; uncertain IDs stay unknown. Install the pinned encoder once and see
+Stable player IDs run by default in CLI and viewer analyses. The roster is
+found from the whole video: short detector tracklets are grouped by frozen
+OSNet appearance, people visible together are kept apart, and the six people
+present longest become P1-P6. Every box is then matched to these
+multi-segment galleries; weak or ambiguous boxes and known other people stay
+unknown. Raw tracker IDs remain separate. Install the pinned encoder once and see
 [player identity workflow](docs/player_identity_workflow.md). Default scope is
 six players on the near side. Confirmed substitutes can receive additional
 IDs through a per-video roster file; returning players retain their original
-IDs. Local tracklet contradictions are rejected rather than relabelled.
-Motion cannot assign an ID whose frozen appearance is clearly worse than
-another known person's appearance.
+IDs. `--player-identity-method seed-frame` selects the older tracker started
+from one complete frame (Kalman motion, lost-ID recovery); it also runs when a
+clip is too short for a roster.
 Full-match production identity accuracy remains unverified. The experimental
 [human contact-author benchmark](docs/contact_author_benchmark.md) now measures
 person attribution on reviewed contacts from three complete videos: 382 strict
@@ -108,7 +110,7 @@ Current production path is `analyze_video.py` -> `GameAnalyzer` -> JSON/video ar
 | Ball cleanup | Static-source suppression and contact-preserving quadratic smoothing | Stable trajectory without parked false positives |
 | Gap reconstruction | Conservative or contact-aware offline reconstruction | Inferred 2D coordinates with provenance/confidence |
 | Player tracking | YOLO11m-pose + ByteTrack + calibrated court gate | Player boxes, 17 keypoints, track/team IDs |
-| Player identity | Offline frozen OSNet galleries + Kalman motion + lost-ID recovery | Roster IDs, confirmed substitutes and provenance; unknowns preserved |
+| Player identity | Offline frozen OSNet; roster found from tracklets of the whole video, appearance assignment per frame | Roster IDs, confirmed substitutes and provenance; unknowns preserved |
 | Model output cache | Persistent source/model/input fingerprints; raw detections, poses, embeddings and logits | Replay hypotheses without repeating compatible neural inference |
 | Court and net | Perspective calibration, SAM net tape, optional SAM3 posts, Hough fallback | Court homography, tape band, net-floor divider |
 | Game logic | Integrated volleyball FSM + clean trajectory replay | Rallies, serves, contacts, attack map |

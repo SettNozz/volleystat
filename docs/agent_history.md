@@ -710,6 +710,35 @@ feedback through motion means this is not a monotonic coverage sweep. Selected
 0.04 is an engineering choice favouring rejection, not a held-out optimum.
 Legacy `ReIDParameters` defaults retain no veto; production selects it explicitly.
 
+### Whole-video roster discovery (2026-11-10)
+
+Default method is now `osnet_tracklet_roster_v5`
+(`src/tracking/player_roster_discovery.py`); v4 remains as
+`--player-identity-method seed-frame` and as the fallback for clips without
+six separable constant players. First dense human identity labels:
+`results/player_identity_iKhVYAof2as_4k_r000787_baseline_v1/human_movement.json`
+(30,256 reviewed near-side poses, 0:00-3:13, annotator database
+`results/contact_author_iKhVYAof2as_20261110_v1/annotations.sqlite3`).
+
+Diagnosis on those labels: v4 was 67.3% correct / 4.1% wrong / 28.6% unknown.
+Its automatic seed frame 72 held a bystander and missed one player. Nearest
+centroid on the same frozen OSNet embeddings, with a gallery from the first
+minute only, was already 96% correct, so the encoder was not the limit; the
+one-frame roster and the eight-crop gallery were. ByteTrack tracks were 94%
+pure (19 of 145 mix people), so tracks are cut into one-second tracklets.
+
+v5: 97.6% / 0.2% / 2.2%; hy2S 100 checks 99/0/1 against 94/0/6. Controls,
+sensitivity and limits are in `docs/player_identity_workflow.md`. Artifacts:
+`results/player_identity_iKhVYAof2as_4k_r000787_methods_20261110_v2`,
+`results/player_identity_iKhVYAof2as_4k_roster_discovery_20261110_v2`
+(`roster_sheet.jpg` is the visual check). Development numbers, not held out.
+
+Tried and kept out: a stricter similarity floor (0.7-0.8) does not remove the
+few post-game assignments and costs up to 1 pp; a cohort of every leftover
+group (not only people seen with the whole roster) also rejects boxes of a
+roster player (one player 97% to 95%). Without fragment absorption one player fell to 79% because a
+69 s half of his tracklets entered the other-people cohort.
+
 ## Model-output capture and replay (2026-10-30)
 
 `src/models/inference_cache.py` is the shared persistent cache. Video bytes,

@@ -12,10 +12,14 @@ membership or pose features. A separate derived
 [per-player contact report](player_contacts.md) proposes attribution after
 identity; its ambiguous cases remain unknown and can be reviewed in the viewer.
 
-Default: six players on side **b** (near team). P1–P6 are assigned left-to-right
-on an early complete frame, then tracked with immutable OSNet galleries and
-Kalman motion, including lost-ID recovery. Automatic initialisation is unverified.
-IDs belong to a roster within one source video, not names or cross-match IDs.
+Default: six players on side **b** (near team). The roster is found from
+tracklets of the whole video (`osnet_tracklet_roster_v5`, see
+[Whole-video roster](#whole-video-roster-v5-current-default)), not from one
+frame. P1–P6 are named left to right on the first frame that cleanly shows all
+six. The automatic roster is unverified. IDs belong to a roster within one
+source video, not names or cross-match IDs. The older tracker started from one
+complete frame remains as `--player-identity-method seed-frame`; it also runs
+when a clip is too short for a roster and for jersey-number constraints.
 
 ## Install once
 
@@ -65,6 +69,106 @@ choose a fresh output directory instead of overwriting old results.
 Missing default assets record `model_unavailable` and P? with an installation
 warning. Explicit broken assets/seed fail the run. No complete six-player frame
 records `no_complete_roster` and unknown IDs; no roster is fabricated.
+
+## Whole-video roster (v5, current default)
+
+`src/tracking/player_roster_discovery.py`, method `osnet_tracklet_roster_v5`.
+A roster from one frame fails in two ways. A bystander standing on court in
+that frame becomes a player for the whole match, and a player missing from it
+never gets an ID. Eight crops from half a second also describe a person from
+one angle only.
+
+1. Detector tracks are cut into tracklets of at most one second. Each gets the
+   mean frozen OSNet embedding of its clean boxes (overlap < 0.3). A tracklet
+   whose boxes disagree is dropped. At most 3,000 tracklets are kept, spread
+   evenly over the video.
+2. Tracklets merge by appearance (average linkage, cosine distance ≤ 0.3).
+   Two tracklets cleanly visible in the same three frames are different people
+   and never merge. The video supplies this constraint itself.
+3. A leftover group joins a larger look-alike when they share at most 2% of
+   the smaller group's clean frames. One duplicate detection can otherwise
+   split a player in two.
+4. The roster is the six people present longest. Each must be present for at
+   least 3 s and a quarter of the longest presence. With a human seed or a
+   confirmed roster file, the anchors choose and name the people instead.
+5. Every saved box is scored against all tracklets of each roster person (mean
+   of the three best). Scores are averaged over ±0.5 s of the same detector
+   track; overlapped boxes count 0.3. IDs are assigned one-to-one per frame.
+   A box needs similarity ≥ 0.6 and a margin of 0.03 over the next person.
+6. A non-roster group seen together with every roster person is a known other
+   person, such as an opponent at the net. A box that looks more like one of
+   them than like any roster person stays unknown (`reason: other_person`).
+
+No motion model is used: ByteTrack continuity enters only through the
+tracklets and the per-track average. Nothing is trained and no human check
+enters the method. `player_identity.roster_discovery` records the players'
+presence, the people left out (`other_person` or `unresolved`) and the
+selection rule. `seed` holds one reference box per player.
+
+Substitutes still need a confirmed anchor (`add-player`): a leftover group is
+never given an ID on its own. When fewer than six constant players are found,
+the seed-frame tracker runs and the report says
+`roster_discovery.status: fallback_to_seed_frame`.
+
+```powershell
+python scripts/apply_player_identity.py apply --annotations results/old/game_annotations.json --output results/game_ids_v1 --require-model-cache
+python scripts/evaluation/render_player_roster_sheet.py --annotations results/game_ids_v1/game_annotations.json --output results/game_ids_v1/roster_sheet.jpg
+python scripts/evaluation/evaluate_player_identity_movement.py --movement human_movement.json --annotations results/old/game_annotations.json results/game_ids_v1/game_annotations.json --output results/game_ids_score_v1 --replay
+```
+
+The roster sheet shows crops of every ID across the video and the people left
+out; check it before trusting an automatic roster. The evaluation script
+scores saved results against a `human_player_movement_v1` export
+(`src/tracking/player_identity_scoring.py`) and, with `--replay`, runs the
+methods from cached embeddings.
+
+### Measured (2026-11-10)
+
+`iKhVYAof2as_4k`, human movement review revision 787: 30,256 reviewed near-side
+poses in 0:00–3:13, one pose per player and frame. Model IDs are named by the
+one-to-one mapping that agrees best with the reviewer. Artifacts:
+`results/player_identity_iKhVYAof2as_4k_r000787_methods_20261110_v2/metrics.json`,
+result `results/player_identity_iKhVYAof2as_4k_roster_discovery_20261110_v2`.
+
+| Method | Correct | Wrong ID | Unknown |
+|---|---|---|---|
+| Seed frame, automatic (v4, previous default) | 67.3% | 4.1% | 28.6% |
+| Seed frame, human roster on the earliest complete frame | 73.6% | 3.3% | 23.0% |
+| Seed frame, human roster on the median complete frame | 71.8% | 2.6% | 25.6% |
+| Seed frame, human roster on the cleanest complete frame | 84.0% | 0.8% | 15.2% |
+| Seed-frame tracker with the discovered roster and gallery | 91.6% | 0.4% | 8.0% |
+| Whole-video roster (v5) | **97.6%** | **0.2%** | 2.2% |
+
+- The automatic seed frame held a bystander and missed one player. v5 finds
+  the six players the reviewer confirmed.
+- Per player v5 is 96.0–99.4% correct. Adjacent-frame ID switches fall from 12
+  to 4. After a gap of at least 1 s the right ID is on the first frame in 26
+  of 30 returns (v4: 2 of 8).
+- IDs on poses the reviewer marked "not in the roster": 256 of 438 with v4, 18
+  with v5.
+- Coverage of all 90,146 near-side poses in the 10-minute video rises from
+  71.0% to 94.6%. Coverage is not accuracy.
+- On clean boxes v5 is about 99% correct. Most remaining unknowns are runs under
+  2 s in heavy overlap.
+- The identity pass takes 6 s instead of 24 s on cached embeddings.
+- Changing one parameter at a time (tracklet length, merge distance,
+  co-visibility, smoothing, margin, thresholds) gives 93.9–98.1% correct and
+  at most 0.3% wrong.
+
+Second video, no parameter change: the 100 sparse human checks of
+`results/player_identity_hy2S_20261029_v1` (stride 3, 45 s). v4 scores
+94 correct / 0 wrong / 6 unknown, v5 99 / 0 / 1.
+
+Limits:
+
+- These are development numbers from two cameras. The defaults were chosen
+  while looking at the first video, so it is not a held-out score.
+- Missed detections are not scored.
+- After the last rally (from about 9:40) people leave the court and others
+  walk in. A few boxes there still get roster IDs and there are no labels to
+  count them.
+- Teammates in identical kit with similar build have not been measured.
+- A substitute is listed among the people left out until confirmed.
 
 ## Human initial IDs
 
@@ -222,7 +326,7 @@ values are checked. The chosen case uses the same production association and
 video renderer as normal analysis. Original detector poses, ball, FSM and
 events remain unchanged. Target-video coverage is not identity accuracy.
 
-## Appearance contradiction veto (v4, current default)
+## Appearance contradiction veto (v4, seed-frame method)
 
 `osnet_frozen_gallery_kalman_roster_v4` also checks a local match against all
 active immutable galleries. If its cosine distance is more than 0.04 worse

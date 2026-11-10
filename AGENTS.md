@@ -78,6 +78,7 @@ Current high-value analysis options:
 --no-player-identity
 --player-identity-side a|b
 --player-identity-seed <JSON>
+--player-identity-method roster-discovery|seed-frame
 --player-reid-assets <DIR>
 --player-reid-device auto|cpu|cuda
 --no-model-prefetch
@@ -132,7 +133,7 @@ Video / frame directory
      -> clean IntegratedVolleyballFSM replay
      -> event model + match analytics
      -> contact side proposals (ball box size + possession order)
-     -> offline OSNet + Kalman roster identity (default near side, raw IDs preserved)
+     -> offline OSNet whole-video roster identity (default near side, raw IDs preserved)
      -> final annotation-based video/frame rendering
   -> *_stats.json
   -> *_annotations.json
@@ -450,9 +451,18 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   quote leave-one-video-out experiments. `scripts/apply_spotter_rallies.py`
   rebuilds a saved result. See `docs/production_contact_spotter.md`.
 - **Player identity** (default on, side b, initial P1-P6): method
-  `osnet_frozen_gallery_kalman_roster_v4` (`src/models/player_reid_encoder.py`,
-  `src/tracking/player_identity_workflow.py`, `player_motion.py`,
-  `player_identity_consistency.py`). `poses[].id` stays raw; `player_id` and
+  `osnet_tracklet_roster_v5` (`src/tracking/player_roster_discovery.py`,
+  `player_identity_workflow.py`, `src/models/player_reid_encoder.py`). The
+  roster is the six people present longest among appearance groups of clean
+  tracklets from the whole video; co-visible tracklets never merge; boxes are
+  matched to those galleries per frame, and known other people stay unknown.
+  `--player-identity-method seed-frame` is the older
+  `osnet_frozen_gallery_kalman_roster_v4` (`player_reid.py`, `player_motion.py`,
+  `player_identity_consistency.py`); it also runs for short clips and jersey
+  constraints. Score identity changes with
+  `scripts/evaluation/evaluate_player_identity_movement.py` against a
+  `human_player_movement_v1` export before changing defaults.
+  `poses[].id` stays raw; `player_id` and
   `identity` are separate; unknown is null / `P?`, never a recycled ID.
   Substitutes come only from explicit `player_identity_roster_v2` anchors
   (`scripts/apply_player_identity.py add-player`); returning players keep their
