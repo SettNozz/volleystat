@@ -18,6 +18,21 @@ def _results_page_source() -> str:
 
 
 class TestViewerUploadWorkflow(unittest.TestCase):
+    def test_pages_link_the_brand_icon_and_root_favicon_is_served(self):
+        with viewer.app.test_client() as client:
+            page = client.get("/").get_data(as_text=True)
+            favicon = client.get("/favicon.ico")
+            svg = client.get("/static/brand/icon.svg")
+
+        self.assertIn('href="/static/brand/favicon.ico"', page)
+        self.assertIn('href="/static/brand/icon.svg"', page)
+        self.assertEqual(favicon.status_code, 200)
+        self.assertEqual(favicon.mimetype, "image/vnd.microsoft.icon")
+        self.assertEqual(favicon.data[:4], b"\x00\x00\x01\x00")
+        favicon.close()
+        self.assertEqual(svg.status_code, 200)
+        svg.close()
+
     def test_home_page_describes_cached_repeats_and_explicit_video_export(self):
         with viewer.app.test_client() as client:
             response = client.get("/")

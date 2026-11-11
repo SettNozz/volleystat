@@ -294,6 +294,13 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/favicon.ico")
+def favicon():
+    """Browsers ask for /favicon.ico even on pages that link another icon."""
+    return send_file(PROJECT_ROOT / "viewer" / "static" / "brand" / "favicon.ico",
+                     mimetype="image/vnd.microsoft.icon", max_age=86400)
+
+
 @app.route("/library")
 def library():
     """Browse every analysed result on disk and open one in the viewer."""

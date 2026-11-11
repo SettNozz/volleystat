@@ -38,7 +38,7 @@ The viewer requires `flask` and `flask-cors`; feature/annotation workflows use `
 
 ## Viewer workflow
 
-Start `python viewer.py` and open [localhost:5050](http://localhost:5050). A second instance can use `python viewer.py --port 5051`. On Windows, `scripts/start_viewer.ps1 [-Port 5050]` starts the viewer (or reuses a running one) and opens the library; point a desktop shortcut at `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <repo>\scripts\start_viewer.ps1`.
+Start `python viewer.py` and open [localhost:5050](http://localhost:5050). A second instance can use `python viewer.py --port 5051`. On Windows, `scripts/start_viewer.ps1 [-Port 5050]` starts the viewer (or reuses a running one) and opens the library; `scripts/install_viewer_shortcut.ps1 [-StartMenu]` creates a "CourtSense" desktop shortcut for it with the project icon (`viewer/static/brand/`).
 
 1. Choose **Upload** and provide a path or drop a video. Dropped files are copied into `data/uploads/`; the same name and size reuse the existing copy.
 2. Open **Preview and edit court & net**. Start from a saved camera setup or the default calibration. Drag court lines/corners and net tape handles. The handle magnifier shows a native-resolution crop; use the mouse wheel to change its zoom.

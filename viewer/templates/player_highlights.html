@@ -3,6 +3,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{ player }} highlights · CourtSense</title>
+<link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
@@ -15,8 +18,7 @@
   .topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-height: 60px;
     padding: .5rem clamp(1rem, 3vw, 28px); background: var(--card); border-bottom: 1px solid var(--border); }
   .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
-  .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--primary); }
-  .brand-mark::after { content: ''; width: 11px; height: 11px; border-radius: 50%; background: var(--card); }
+  .brand-mark { width: 28px; height: 28px; display: block; }
   .back { padding: 9px 16px; border-radius: 8px; background: var(--head-bg); color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 700; }
   .head { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-bottom: 1rem; }
   .portrait { position: relative; display: inline-grid; place-items: center; width: 56px; height: 64px; overflow: hidden; flex: none;
@@ -55,7 +57,7 @@
   .empty, .note { padding: 1rem; color: var(--muted); font-size: .88rem; line-height: 1.6; }
 </style>
 <header class="topbar">
-  <span class="brand"><span class="brand-mark" aria-hidden="true"></span>CourtSense</span>
+  <span class="brand"><img class="brand-mark" src="/static/brand/icon.svg" alt="">CourtSense</span>
   <a class="back" href="{{ url_for('player_statistics', job_id=job.job_id, player=player) }}">← Player statistics</a>
 </header>
 <main>

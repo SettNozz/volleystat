@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CourtSense — Volleyball Analytics</title>
+<link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -24,8 +27,7 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 
 .topbar { height: 60px; display: flex; align-items: center; gap: 28px; padding: 0 28px; background: var(--card); border-bottom: 1px solid var(--border); }
 .logo { display: flex; align-items: center; gap: 10px; }
-.logo-mark { width: 28px; height: 28px; border-radius: 8px; background: var(--primary); display: flex; align-items: center; justify-content: center; }
-.logo-mark div { width: 11px; height: 11px; border-radius: 50%; background: #fff; }
+.logo-mark { width: 28px; height: 28px; display: block; }
 .logo-name { font-size: 17px; font-weight: 800; letter-spacing: -0.02em; }
 .nav { display: flex; gap: 6px; }
 .nav a { padding: 7px 13px; border-radius: 8px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; }
@@ -89,7 +91,7 @@ button.link-button:hover { background: none; }
 <body>
 <div class="topbar">
   <div class="logo">
-    <div class="logo-mark"><div></div></div>
+    <img class="logo-mark" src="/static/brand/icon.svg" alt="">
     <div class="logo-name">CourtSense</div>
   </div>
   <div class="nav">
