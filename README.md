@@ -18,6 +18,7 @@ Analysis runs locally and prioritizes accuracy over real-time speed. The pipelin
 - **Review players and contacts.** Track 17-keypoint poses, assign court sides, discover a player roster and inspect proposed contact authors. Select a player to highlight their skeleton and seek to their contacts.
 - **Navigate rallies.** Browse playable rallies, service attempts and typed contact events. Inspect set-to-attack trajectories with zone and setter filters.
 - **Explore match statistics.** View serve, reception and attack maps, contact logs, team summaries and per-player attack/reception outcomes where evidence is available.
+- **Inspect the evidence.** Click player statistics to watch their counted contacts and matched rallies. Review source conflicts and point winners; author confirmation and derived outcomes remain separate. Excel includes the same reviewed totals and evidence.
 - **Calibrate and correct.** Preview a source frame, edit court and net geometry, and save contact-author corrections separately from model predictions.
 - **Reuse analysis.** Open saved results from the library, replay processing from cached model outputs and export JSON or an annotated video.
 
@@ -121,6 +122,7 @@ Default output is JSON plus interactive overlays on the original video. Keep the
 | [Player contacts](docs/player_contacts.md) · [Contact-author model](docs/contact_author_production.md) | Attribution, corrections and deployment scope. |
 | [Contact spotting](docs/production_contact_spotter.md) · [Contact review](docs/contact_review_workflow.md) | Typed contacts, rally segmentation and human verification. |
 | [Match analytics](docs/match_analytics_v2.md) | Point confirmation, reception outcomes, sets and team mappings. |
+| [Statistics evidence](docs/statistics_evidence.md) | Reconciled contacts/rallies/points, metric video evidence and source-bound point reviews. |
 | [Human annotation](docs/contact_author_annotation.md) | Shared photo roster, author labels and movement review. |
 | [Performance notes](docs/performance.md) | Dated throughput measurements and optimization tradeoffs. |
 

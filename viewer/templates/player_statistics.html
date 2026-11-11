@@ -80,12 +80,19 @@
   .personal-block dt { color: var(--muted2); }
   .personal-block dd { margin: 0; text-align: right; font-weight: 650; }
   .personal-block a { font-size: .82rem; font-weight: 650; }
+  .stat-evidence { color: inherit; text-underline-offset: .2em; }
+  .stat-evidence:hover { color: var(--primary); }
+  .evidence-note { display: block; font-size: .72rem; color: var(--muted2); line-height: 1.5; white-space: nowrap; }
+  .reconciliation-note { padding: 1rem 0 0; line-height: 1.7; }
 </style>
 <header class="topbar">
   <span class="brand"><img class="brand-mark" src="/static/brand/icon.svg" alt="">CourtSense</span>
   <a class="back" href="{{ url_for('results', job_id=job.job_id) }}">← Back to match</a>
 </header>
 <main>
+  {% macro evidence_link(player, mode, key, value) -%}
+  <a class="stat-evidence" href="{{ url_for('statistics_evidence_page', job_id=job.job_id, player=player, kind=mode, metric=key) }}" title="Watch contacts counted by this metric; inspect author confirmation and unresolved outcomes">{{ value }}</a>
+  {%- endmacro %}
   <header class="hero">
     <p class="eyebrow">Match report</p>
     <h1>Player statistics</h1>
@@ -94,6 +101,9 @@
       <span>{{ summary.players | length }} tracked players</span>
     </p>
   </header>
+  <p class="reconciliation-note"><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}#point-reconciliation">Review statistics evidence and point winners</a>
+    · {{ summary.reconciliation.conflicts }} conflicts · {{ summary.reconciliation.point_summary.get('unresolved', 0) }} unresolved points.<br>
+    Click any statistic to watch its evidence. Human-confirmed authors and derived outcomes are counted separately.</p>
   {% if summary.players %}
   {% set requested = request.args.get('view') %}
   {% set kind = requested if requested in modes else 'attack' %}
@@ -134,7 +144,7 @@
         <h3>All touches</h3>
         <dl>
           {% for key, label in [('attack', 'Attacks'), ('serve', 'Serves'), ('reception', 'Receptions'), ('dig_pass', 'Digs, passes and sets'), ('block', 'Blocks')] %}
-          <dt>{{ label }}</dt><dd{% if not touches.get(key) %} class="zero"{% endif %}>{{ touches.get(key, 0) }}</dd>
+          <dt>{{ label }}</dt><dd{% if not touches.get(key) %} class="zero"{% endif %}>{{ evidence_link(selected_player, key, 'total', touches.get(key, 0)) }}</dd>
           {% endfor %}
         </dl>
       </div>
@@ -146,9 +156,9 @@
           {% set value = stat_value(mode, prow[mode], key) %}
           <dt>{{ label }}</dt>
           {% if key == 'rate' %}
-          <dd>{{ ('%.1f%%' | format(100 * value)) if value is not none else '—' }}</dd>
+          <dd>{{ evidence_link(selected_player, mode, key, ('%.1f%%' | format(100 * value)) if value is not none else '—') }}</dd>
           {% else %}
-          <dd{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ value }}</dd>
+          <dd{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ evidence_link(selected_player, mode, key, value) }}</dd>
           {% endif %}
           {% endfor %}
         </dl>
@@ -180,6 +190,7 @@
       <thead><tr>
         <th scope="col">Player</th>
         {% for key, label in columns %}<th scope="col">{{ label }}</th>{% endfor %}
+        <th scope="col">Evidence coverage</th>
       </tr></thead>
       <tbody>
         {% for player, row in summary.players.items() %}
@@ -199,11 +210,14 @@
           {% for key, label in columns %}
           {% set value = stat_value(kind, row[kind], key) %}
           {% if key == 'rate' %}
-          <td>{{ ('%.1f%%' | format(100 * value)) if value is not none else '—' }}</td>
+          <td>{{ evidence_link(player, kind, key, ('%.1f%%' | format(100 * value)) if value is not none else '—') }}</td>
           {% else %}
-          <td{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ value }}</td>
+          <td{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ evidence_link(player, kind, key, value) }}</td>
           {% endif %}
           {% endfor %}
+          {% set coverage = summary.coverage[player][kind] %}
+          <td><span class="evidence-note">Authors: {{ coverage.human }} human · {{ coverage.automatic }} automatic</span>
+            <span class="evidence-note">Outcomes: {{ coverage.classified }} derived · {{ coverage.unknown }} unresolved</span></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -212,7 +226,7 @@
   </section>
   <details class="notes">
     <summary>How these statistics are counted</summary>
-    <p>Without an assigned player: {{ summary.unassigned.get('attack', 0) }} attacks, {{ summary.unassigned.get('serve', 0) }} serves and {{ summary.unassigned.get('reception', 0) }} receptions. These contacts may include either side when the side is unknown.</p>
+    <p>Without an assigned player: {{ evidence_link('unassigned', 'attack', 'total', summary.unassigned.get('attack', 0)) }} attacks, {{ evidence_link('unassigned', 'serve', 'total', summary.unassigned.get('serve', 0)) }} serves and {{ evidence_link('unassigned', 'reception', 'total', summary.unassigned.get('reception', 0)) }} receptions. These contacts may include either side when the side is unknown.</p>
     <p>Author assignments include model proposals and saved human corrections. Point-winning attacks are inferred from the final recorded contact and the team point ledger. Attack errors require a recorded fault reason. Reception quality comes from the matched serve lifecycle. Controlled percentage uses classified receptions.</p>
     <p>Serve error percentage uses classified serves. Explicit faults can use proximity to estimate the server. Unresolved serves are excluded from the percentage.</p>
   </details>

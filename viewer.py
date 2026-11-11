@@ -42,10 +42,14 @@ from src.utils.path_utils import local_path_from_uri
 from src.models.model_registry import fallback_path, load_config as load_registry_config
 from src.tracking.player_contacts import apply_reviews, source_fingerprint
 from src.tracking.player_match_statistics import build_player_match_statistics
+from src.tracking.statistics_reconciliation import statistic_evidence
 from src.tracking.player_statistics_excel import (
     PLAYER_POSITIONS, STATISTICS_VIEWS, export_player_statistics, player_statistic_value,
 )
 from src.viewer_app.player_highlights import HIGHLIGHT_CATEGORIES, player_highlights
+from src.viewer_app.statistics_reviews import (
+    StatisticsSourceChanged, load_point_reviews, validate_point_review, append_point_review,
+)
 from src.tracking.contact_author_experiments import ExperimentSourceChanged
 from src.tracking.volleyball_contact_lab import load_lab
 from src.viewer_app.stats import _prepare_viewer_stats
@@ -577,7 +581,18 @@ def player_highlights_page(job_id):
     return _player_contact_response(job_id, statistics_page=True, highlights_page=True)
 
 
-def _player_contact_response(job_id, *, statistics_page=False, highlights_page=False):
+@app.route("/statistics-evidence/<job_id>")
+def statistics_evidence_page(job_id):
+    return _player_contact_response(job_id, statistics_page=True, evidence_page=True)
+
+
+@app.route("/api/statistics/<job_id>", methods=["GET", "POST"])
+def statistics_data(job_id):
+    return _player_contact_response(job_id, statistics_page=True, statistics_api=True)
+
+
+def _player_contact_response(job_id, *, statistics_page=False, highlights_page=False,
+                             evidence_page=False, statistics_api=False):
     job = _get_job(job_id)
     if not job or job["status"] != "done":
         return jsonify({"error": "Results not ready"}), 404
@@ -647,11 +662,37 @@ def _player_contact_response(job_id, *, statistics_page=False, highlights_page=F
                                        portraits={p: len(c) for p, c in references.items()})
             if statistics_page:
                 stats_raw = stats_path.read_bytes()
-                if hashlib.sha256(stats_raw).hexdigest() != source["stats_sha256"]:
+                with Path(job["annotations_path"]).open("rb") as stream:
+                    ann_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
+                if {"stats_sha256": hashlib.sha256(stats_raw).hexdigest(), "annotations_sha256": ann_sha256} != source:
                     return jsonify({"error": "Analysis changed; reload statistics"}), 409
+                point_reviews = load_point_reviews(stats_path, source)
+                contact_report = dict(result, contacts=result["contacts"] + fault_contacts)
+                stats = json.loads(stats_raw)
+                if statistics_api and request.method == "POST":
+                    if body.get("source") != source:
+                        return jsonify({"error": "Analysis changed; reload statistics before reviewing"}), 409
+                    review = validate_point_review(body)
+                    # Validate the target and winner before appending anything.
+                    build_player_match_statistics(stats, contact_report, point_reviews + [review])
+                    append_point_review(stats_path, source, review)
+                    point_reviews.append(review)
                 summary = build_player_match_statistics(
-                    json.loads(stats_raw), dict(result, contacts=result["contacts"] + fault_contacts),
+                    stats, contact_report, point_reviews,
                 )
+                if statistics_api:
+                    return jsonify(dict(summary, source=source, point_review_count=len(point_reviews)))
+                if evidence_page:
+                    player = request.args.get("player") or "all"
+                    kind = request.args.get("kind") or "attack"
+                    metric = request.args.get("metric") or "total"
+                    evidence = statistic_evidence(summary, player, kind, metric)
+                    video_url = (f"/api/original_video?path={job['original_video_path_url']}"
+                                 if job.get("original_video_path_url") else url_for("video", job_id=job_id))
+                    return render_template("statistics_evidence.html", job=job, summary=summary,
+                                           source=source, evidence=evidence, player=player, kind=kind,
+                                           metric=metric, modes=STATISTICS_VIEWS, fps=float(stats["fps"]),
+                                           video_url=video_url)
                 if request.endpoint == "player_statistics_excel":
                     submitted = json.loads(request.form.get("profiles", "{}"))
                     if not isinstance(submitted, dict):
@@ -677,7 +718,7 @@ def _player_contact_response(job_id, *, statistics_page=False, highlights_page=F
                 selected = request.args.get("player")
                 return render_template("player_statistics.html", job=job, summary=summary,
                                        selected_player=selected if selected in summary["players"] else None,
-                                       contact_counts={row["player_id"]: row["counts"] for row in result["players"]},
+                                       contact_counts=summary["touch_counts"],
                                        position_labels=PLAYER_POSITIONS,
                                        modes=STATISTICS_VIEWS, stat_value=player_statistic_value,
                                        portraits={player: len(choices) for player, choices in references.items()},
@@ -688,7 +729,7 @@ def _player_contact_response(job_id, *, statistics_page=False, highlights_page=F
             result["methods"] = bundle["methods"] if bundle else {}
             result["experiment_selection"] = bundle.get("selection") if bundle else None
             return jsonify(result)
-    except ExperimentSourceChanged as error:
+    except (ExperimentSourceChanged, StatisticsSourceChanged) as error:
         return jsonify({"error": str(error)}), 409
     except (ValueError, KeyError, TypeError) as error:
         return jsonify({"error": str(error)}), 400

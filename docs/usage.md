@@ -55,6 +55,7 @@ The preview and result share three net references: upper tape, lower mesh edge a
 - **Visual Stats:** serve/reception maps, attack origin/direction, team contact totals and serve lifecycle summaries.
 - **Match Stats:** rallies, service attempts and a contact log, with team/outcome filters.
 - **Player statistics:** attack attempts, inferred point-winning attacks and reception outcomes from saved contacts, reviews and point evidence. Missing evidence leaves outcomes unresolved. **Edit players** sets name, jersey and position (outside hitter, middle blocker, setter, opposite hitter) in this browser; Excel export includes them. Pick a player (or click a name) for a personal panel with all categories; **Player highlights** opens a separate page that plays that player's attributed attacks, receptions, serves and other contacts with adjustable lead-in and follow-through.
+- **Statistics evidence:** click any player statistic to watch exactly its counted contacts, or its classified denominator for a percentage. Inspect author confirmation and unresolved outcomes, play matched rally context, and review point winners. Source conflicts remain explicit. Excel uses the same reviewed totals and adds contact/point evidence sheets. See [counting rules and review persistence](statistics_evidence.md).
 
 Near-side attack height is an approximate projection from saved ball, pose and net geometry. Without usable evidence, the badge reports that height is unavailable.
 

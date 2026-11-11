@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Statistics evidence · CourtSense</title>
+<link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
+<link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='statistics_evidence.css') }}" rel="stylesheet">
+<header><strong>CourtSense · Statistics evidence</strong>
+  <a href="{{ url_for('player_statistics', job_id=job.job_id, player=player if player in summary.players else none, view=kind) }}">← Player statistics</a>
+  <a href="{{ url_for('results', job_id=job.job_id) }}">Match viewer</a>
+</header>
+<main>
+  <h1>Behind the numbers</h1>
+  <p>Inspect the contacts behind a metric, watch its rally and confirm point winners.</p>
+  <form class="filters" method="get">
+    <label>Player <select name="player">
+      <option value="all"{% if player == 'all' %} selected{% endif %}>All assigned players</option>
+      <option value="unassigned"{% if player == 'unassigned' %} selected{% endif %}>Without an assigned player</option>
+      {% for id in summary.players %}<option value="{{ id }}"{% if player == id %} selected{% endif %}>{{ id }}</option>{% endfor %}
+    </select></label>
+    <label>Category <select name="kind" id="category">
+      {% for id, label in [('attack', 'Attacks'), ('serve', 'Serves'), ('reception', 'Receptions'), ('dig_pass', 'Digs, passes and sets'), ('block', 'Blocks')] %}
+      <option value="{{ id }}"{% if kind == id %} selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select></label>
+    <label>Metric <select name="metric" id="metric">
+      {% if kind in modes %}{% for id, label in modes[kind][1] %}<option value="{{ id }}"{% if metric == id %} selected{% endif %}>{{ label }}</option>{% endfor %}{% endif %}
+      {% if kind not in modes %}<option value="total">Contacts</option>{% endif %}
+    </select></label>
+    <button>Show evidence</button>
+  </form>
+  <section class="coverage" aria-label="Evidence coverage">
+    <strong>{{ evidence.total }} contacts{% if metric == 'rate' %} in denominator · {{ evidence.numerator }} in numerator{% endif %}</strong>
+    <span>{{ evidence.human_authors }} human-confirmed authors</span>
+    <span>{{ evidence.automatic_authors }} automatic authors</span>
+    <span>{{ evidence.unassigned_authors }} unassigned authors</span>
+    <span>{{ evidence.unknown_outcomes }} unresolved outcomes</span>
+  </section>
+  <p class="note">Author confirmation verifies who touched the ball. Event detection, event type and derived outcome remain separate. Point-winning attacks are inferred from the last recorded contact and point winner. Unknown outcomes are excluded from percentages.</p>
+  {% if player == 'unassigned' %}<p class="note">Unknown-side contacts may belong to either team. They are excluded from player totals.</p>{% endif %}
+  <div class="workspace">
+    <section class="playback" aria-label="Video evidence">
+      <video id="evidence-video" controls preload="metadata" src="{{ video_url }}"></video>
+      <div class="controls">
+        <button type="button" id="previous">← Previous</button>
+        <button type="button" id="next">Next →</button>
+        <button type="button" id="watch-rally" disabled>Watch rally</button>
+      </div>
+      <p id="now" role="status">Choose a contact.</p>
+      <p id="explanation" class="note"></p>
+      <a id="open-contact" hidden>Open contact in match viewer ↗</a>
+    </section>
+    <section class="contact-panel" aria-label="Counted contacts">
+      <h2>{{ kind | replace('_', ' ') | title }} · {{ metric | replace('_', ' ') }}</h2>
+      <ol id="evidence-contacts"></ol>
+    </section>
+  </div>
+  <details id="point-reconciliation"{% if summary.reconciliation.conflicts %} open{% endif %}>
+    <summary>Point reconciliation · {{ summary.reconciliation.conflicts }} conflicts · {{ summary.reconciliation.point_summary.get('unresolved', 0) }} unresolved points</summary>
+    <p>Confirm the winner on the court side occupied during this rally: A = far, B = near. Saving updates this statistics view and its Excel export. Original FSM score and heatmap retain their original provenance.</p>
+    <p>Point confirmation does not confirm an attack kill or an attack error. Reset restores the saved analysis proposal; review history stays available.</p>
+    <p id="review-status" role="status"></p>
+    {% if summary.reconciliation.contact_conflicts %}
+    <h2>Contacts with conflicting sources</h2>
+    <ul class="source-conflicts">
+      {% for contact in summary.reconciliation.contact_conflicts %}
+      <li><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id, player=contact.player_id, kind=contact.kind, metric='unknown') }}">{{ contact.player_id }} · {{ contact.kind }} · {{ '%.2f' | format(contact.frame / fps) }}s</a>
+        · {{ contact.issues | join(', ') | replace('_', ' ') }}</li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+    <div class="point-table"><table>
+      <thead><tr><th>Score rally</th><th>Time</th><th>Point winner</th><th>Evidence</th><th>Review point winner</th></tr></thead>
+      <tbody>
+      {% for point in summary.reconciliation.points %}
+      <tr>
+        <td>{{ loop.index }}{% if point.set_id %} · {{ point.set_id }}{% endif %}</td>
+        <td>{% if point.start_frame is not none %}<button type="button" data-rally-start="{{ point.start_frame }}"{% if point.end_frame is not none %} data-rally-end="{{ point.end_frame }}"{% endif %}>{{ '%.2f' | format(point.start_frame / fps) }}s ▶</button>{% else %}—{% endif %}</td>
+        <td>{{ {'a': 'A · far', 'b': 'B · near'}.get(point.winner_side, 'Unresolved') }}</td>
+        <td>{{ 'Human-confirmed winner' if point.verified else ('Human left unresolved' if point.reviewed else 'Automatic · ' + point.status) }}
+          {% if point.issues %}<br><span class="warning">{{ point.issues | join(', ') | replace('_', ' ') }}</span>{% endif %}
+        </td>
+        <td><form class="point-review" data-attempt="{{ point.attempt_ref }}">
+          <select aria-label="Winner for score rally {{ loop.index }}">
+            <option value="b"{% if point.winner_side == 'b' %} selected{% endif %}>B · near</option>
+            <option value="a"{% if point.winner_side == 'a' %} selected{% endif %}>A · far</option>
+            <option value="unknown"{% if not point.winner_side %} selected{% endif %}>Leave unresolved</option>
+            <option value="reset">Reset to proposal</option>
+          </select><button type="submit">Save</button>
+        </form></td>
+      </tr>
+      {% else %}<tr><td colspan="5">No score rally windows in this analysis. Contacts remain available; unsupported outcomes stay unresolved.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </details>
+</main>
+<script id="evidence-data" type="application/json">{{ {'contacts': evidence.contacts, 'source': source, 'fps': fps, 'job': job.job_id, 'metric': metric, 'kind': kind, 'modes': modes, 'api': url_for('statistics_data', job_id=job.job_id), 'viewer': url_for('results', job_id=job.job_id)} | tojson }}</script>
+<script src="{{ url_for('static', filename='statistics_evidence.js') }}"></script>
+</html>
