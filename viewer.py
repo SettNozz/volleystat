@@ -23,7 +23,7 @@ import uuid
 from collections import OrderedDict
 from pathlib import Path
 
-from flask import Flask, jsonify, render_template, request, send_file, Response
+from flask import Flask, jsonify, render_template, request, send_file, Response, url_for
 from flask_cors import CORS
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -42,7 +42,10 @@ from src.utils.path_utils import local_path_from_uri
 from src.models.model_registry import fallback_path, load_config as load_registry_config
 from src.tracking.player_contacts import apply_reviews, source_fingerprint
 from src.tracking.player_match_statistics import build_player_match_statistics
-from src.tracking.player_statistics_excel import STATISTICS_VIEWS, export_player_statistics, player_statistic_value
+from src.tracking.player_statistics_excel import (
+    PLAYER_POSITIONS, STATISTICS_VIEWS, export_player_statistics, player_statistic_value,
+)
+from src.viewer_app.player_highlights import HIGHLIGHT_CATEGORIES, player_highlights
 from src.tracking.contact_author_experiments import ExperimentSourceChanged
 from src.tracking.volleyball_contact_lab import load_lab
 from src.viewer_app.stats import _prepare_viewer_stats
@@ -562,7 +565,12 @@ def player_statistics_excel(job_id):
     return _player_contact_response(job_id, statistics_page=True)
 
 
-def _player_contact_response(job_id, *, statistics_page=False):
+@app.route("/player-highlights/<job_id>")
+def player_highlights_page(job_id):
+    return _player_contact_response(job_id, statistics_page=True, highlights_page=True)
+
+
+def _player_contact_response(job_id, *, statistics_page=False, highlights_page=False):
     job = _get_job(job_id)
     if not job or job["status"] != "done":
         return jsonify({"error": "Results not ready"}), 404
@@ -613,6 +621,23 @@ def _player_contact_response(job_id, *, statistics_page=False):
                     stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
                 reviews.append(review)
             result = apply_reviews(report, reviews)
+            if highlights_page:
+                stats = json.loads(Path(job["stats_path"]).read_bytes())
+                player = request.args.get("player") or (result["roster_ids"] or [None])[0]
+                if player not in result["roster_ids"]:
+                    return "Unknown roster player", 404
+                moments = player_highlights(
+                    result, stats.get("all_events") or [], stats["fps"], player,
+                    extra_contacts=fault_contacts, include_suggestions=request.args.get("suggestions") == "1",
+                )
+                video_url = (f"/api/original_video?path={job['original_video_path_url']}"
+                             if job.get("original_video_path_url") else url_for("video", job_id=job_id))
+                return render_template("player_highlights.html", job=job, player=player, moments=moments,
+                                       roster=result["roster_ids"], categories=HIGHLIGHT_CATEGORIES,
+                                       fps=float(stats["fps"]), video_url=video_url,
+                                       include_suggestions=request.args.get("suggestions") == "1",
+                                       position_labels=PLAYER_POSITIONS,
+                                       portraits={p: len(c) for p, c in references.items()})
             if statistics_page:
                 stats_raw = stats_path.read_bytes()
                 if hashlib.sha256(stats_raw).hexdigest() != source["stats_sha256"]:
@@ -630,15 +655,23 @@ def _player_contact_response(job_id, *, statistics_page=False):
                         if not isinstance(profile, dict):
                             raise ValueError("Invalid player profile")
                         name, number = profile.get("name", ""), profile.get("number", "")
-                        if not isinstance(name, str) or not isinstance(number, str):
-                            raise ValueError("Player name and jersey must be text")
-                        profiles[player] = {"name": name.strip()[:64], "number": number.strip()[:8]}
+                        position = profile.get("position", "")
+                        if not all(isinstance(v, str) for v in (name, number, position)):
+                            raise ValueError("Player name, jersey and position must be text")
+                        if position and position not in PLAYER_POSITIONS:
+                            raise ValueError("Unknown player position")
+                        profiles[player] = {"name": name.strip()[:64], "number": number.strip()[:8],
+                                            "position": position}
                     return send_file(
                         export_player_statistics(summary, profiles), as_attachment=True,
                         download_name=f"{job['video_stem']}-player-statistics.xlsx",
                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
+                selected = request.args.get("player")
                 return render_template("player_statistics.html", job=job, summary=summary,
+                                       selected_player=selected if selected in summary["players"] else None,
+                                       contact_counts={row["player_id"]: row["counts"] for row in result["players"]},
+                                       position_labels=PLAYER_POSITIONS,
                                        modes=STATISTICS_VIEWS, stat_value=player_statistic_value,
                                        portraits={player: len(choices) for player, choices in references.items()},
                                        portrait_version=source["annotations_sha256"])

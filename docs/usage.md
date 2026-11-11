@@ -54,7 +54,7 @@ The preview and result share three net references: upper tape, lower mesh edge a
 - **Player contacts:** select a roster ID, highlight that player and seek to their saved contacts. Contact-author corrections are stored separately and bound to the analyzed result. Unknown-team contacts show `—` with both teams selected and are excluded by a single-team filter.
 - **Visual Stats:** serve/reception maps, attack origin/direction, team contact totals and serve lifecycle summaries.
 - **Match Stats:** rallies, service attempts and a contact log, with team/outcome filters.
-- **Player statistics:** attack attempts, inferred point-winning attacks and reception outcomes from saved contacts, reviews and point evidence. Missing evidence leaves outcomes unresolved.
+- **Player statistics:** attack attempts, inferred point-winning attacks and reception outcomes from saved contacts, reviews and point evidence. Missing evidence leaves outcomes unresolved. **Edit players** sets name, jersey and position (outside hitter, middle blocker, setter, opposite hitter) in this browser; Excel export includes them. Pick a player (or click a name) for a personal panel with all categories; **Player highlights** opens a separate page that plays that player's attributed attacks, receptions, serves and other contacts with adjustable lead-in and follow-through.
 
 Near-side attack height is an approximate projection from saved ball, pose and net geometry. Without usable evidence, the badge reports that height is unavailable.
 

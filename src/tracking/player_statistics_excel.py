@@ -3,6 +3,13 @@
 from io import BytesIO
 
 
+PLAYER_POSITIONS = {
+    "outside_hitter": "Outside hitter",
+    "middle_blocker": "Middle blocker",
+    "setter": "Setter",
+    "opposite_hitter": "Opposite hitter",
+}
+
 STATISTICS_VIEWS = {
     "attack": ("Attacks", [
         ("total", "Attempts"), ("point", "Point-winning"), ("continued", "Play continued"),
@@ -39,7 +46,7 @@ def export_player_statistics(summary, profiles):
         percent = workbook.add_format({"num_format": "0.0%"})
         for kind, (title, columns) in STATISTICS_VIEWS.items():
             sheet = workbook.add_worksheet(title)
-            headers = ["Player", "Jersey", "Roster ID"] + [label for _, label in columns]
+            headers = ["Player", "Jersey", "Position", "Roster ID"] + [label for _, label in columns]
             sheet.write_row(0, 0, headers, header)
             sheet.set_column(0, 0, 24)
             for index, label in enumerate(headers[1:], start=1):
@@ -48,8 +55,9 @@ def export_player_statistics(summary, profiles):
                 profile = profiles.get(player, {})
                 number = profile.get("number", "")
                 label = profile.get("name") or (f"#{number}" if number else player)
-                sheet.write_row(row, 0, [label, number, player])
-                for index, (key, _) in enumerate(columns, start=3):
+                position = PLAYER_POSITIONS.get(profile.get("position", ""), "")
+                sheet.write_row(row, 0, [label, number, position, player])
+                for index, (key, _) in enumerate(columns, start=4):
                     value = player_statistic_value(kind, stats[kind], key)
                     if value is not None:
                         sheet.write_number(row, index, value, percent if key == "rate" else None)

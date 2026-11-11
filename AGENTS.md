@@ -502,7 +502,12 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   per-roster counts/outcomes from saved contacts, reviews, FSM attempts and the
   point ledger without inference; unknowns are excluded from totals. With both
   teams selected, unknown-team contacts are listed as `—`; selecting one team
-  excludes them. Never infer a team to fill the list.
+  excludes them. Never infer a team to fill the list. `?player=Pn` adds a
+  personal panel above the team table; `/player-highlights/<job>` plays that
+  player's assigned contacts (`src/viewer_app/player_highlights.py`; uncertain
+  suggestions only with `suggestions=1`). Name, jersey and position
+  (outside/middle/setter/opposite) are per-browser `localStorage`, never
+  written to results.
 - **Pose input and net floor**: default `--pose-imgsz 2560`.
   `GameAnalyzer._validated_net_floor` falls back to the homography world-y=0
   line (`calibrated_court_midline_fallback`) when the detected divider fails the
