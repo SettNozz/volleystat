@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tactics · CourtSense</title>
+<link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
+<link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='workspace.css') }}" rel="stylesheet">
+<style>
+  .tactics-main { max-width: 92rem; margin: auto; padding: 1.5rem 3vw 3rem; }
+  .tactics-main h1 { margin: 0; } .tactics-main h2 { font-size: 1.15rem; }
+  .tactics-main .note { color: var(--muted2); line-height: 1.5; }
+  .tactics-filters { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; margin: 1.25rem 0; }
+  .tactics-filters label, .rotation-editor label { display: grid; gap: .3rem; }
+  .tactics-main button, .tactics-main select, .tactics-main input { font: inherit; padding: .5rem .65rem; border: 1px solid var(--border); border-radius: 7px; color: var(--ink); background: var(--card); }
+  .tactics-main button { cursor: pointer; } .tactics-main button:disabled { cursor: default; opacity: .5; }
+  .tactics-main :is(button, select, input, a):focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .tactics-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 1fr); gap: 1rem; align-items: start; }
+  .tactics-card { padding: 1rem; margin-bottom: 1rem; background: var(--card); border: 1px solid var(--border); border-radius: 12px; }
+  .tactics-card h2 { margin-top: 0; } #tactics-video { width: 100%; max-height: 56vh; background: #111827; border-radius: 8px; }
+  .tactics-controls { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .7rem; }
+  .tactics-table { overflow: auto; max-height: 33rem; } .tactics-table table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  .tactics-table th, .tactics-table td { padding: .6rem .75rem; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .tactics-table th { background: var(--head-bg); } .tactics-summary { padding: .85rem 1rem; background: var(--primary-soft); border-radius: 9px; }
+  .tactics-pair { display: block; width: 100%; text-align: left; margin-bottom: .5rem; line-height: 1.5; }
+  .tactics-pair small { display: block; color: var(--muted2); } .tactics-pair[aria-current="true"] { border-color: var(--primary); background: var(--primary-soft); }
+  .rotation-editor { display: flex; flex-wrap: wrap; gap: .7rem; align-items: end; } .rotation-editor input[type=number] { max-width: 9rem; }
+  #rotation-labels { display: grid; gap: .5rem; list-style: none; padding: 0; } #rotation-labels li { display: flex; flex-wrap: wrap; gap: .7rem; align-items: center; }
+  #tactics-status[data-error=true] { color: var(--red); } @media(max-width: 800px) { .tactics-grid { grid-template-columns: 1fr; } }
+</style>
+<header class="workspace-header"><a href="/"><strong>CourtSense</strong></a><span>{{ job.video_stem }} · Tactics</span><a href="/library">Library</a></header>
+{% set active_tab = 'tactics' %}{% include 'workspace_tabs.html' %}
+<main class="tactics-main">
+  <h1>Setter choices & rotations</h1>
+  <p class="note">Explore who sets, where the next attack happens and how each confirmed rotation performs. Every count opens saved video evidence.</p>
+  <p id="tactics-status" role="status">Loading tactical evidence…</p>
+  <p id="tactics-mapping-source" class="note"></p>
+  <form id="tactics-filters" class="tactics-filters">
+    <label>Set <select id="tactics-set"><option value="all">All sets</option></select></label>
+    <label>Team <select id="tactics-team"><option value="all">All teams</option></select></label>
+    <label>Setter <select id="tactics-setter"><option value="all">All setters</option></select></label>
+    <label>Attack lane <select id="tactics-zone"><option value="all">All lanes</option><option value="left">Camera-left</option><option value="center">Center</option><option value="right">Camera-right</option><option value="unknown">Unknown</option></select></label>
+    <label>Reception quality <select id="tactics-quality"><option value="all">All qualities</option><option value="controlled">Controlled</option><option value="overpass">Overpass</option><option value="error">Error</option><option value="negative">Negative</option><option value="positive">Positive</option><option value="perfect">Perfect</option><option value="unknown">Unknown</option></select></label>
+    <label>Rotation <select id="tactics-rotation"><option value="all">All rotations</option>{% for n in range(1, 7) %}<option value="{{ n }}">R{{ n }}</option>{% endfor %}<option value="unknown">Unlabelled</option></select></label>
+    <button type="reset">Reset filters</button>
+  </form>
+  <p class="tactics-summary" id="tactics-coverage"></p>
+  <div class="tactics-grid">
+    <div>
+      <section class="tactics-card" aria-label="Tactical video evidence">
+        <video id="tactics-video" src="{{ video_url }}" controls preload="metadata"></video>
+        <div class="tactics-controls"><button type="button" id="tactics-prev" disabled>← Previous</button><button type="button" id="tactics-next" disabled>Next →</button><button type="button" id="tactics-rally" disabled>Watch full rally</button></div>
+        <p id="tactics-now" role="status">Choose a set-to-attack pair.</p>
+        <a id="tactics-viewer" hidden>Open attack in match viewer ↗</a>
+      </section>
+      <section class="tactics-card">
+        <h2>Setter distribution</h2>
+        <p class="note">Percentages use the currently filtered pairs for each setter. Unknown setters, teams and lanes stay explicit. Lanes are approximate camera-width thirds of the calibrated net, not measured 3D attack positions.</p>
+        <div class="tactics-table"><table><thead><tr><th>Team</th><th>Setter</th><th>Lane</th><th>Reception</th><th>Pairs</th><th>Share</th></tr></thead><tbody id="tactics-distribution"></tbody></table></div>
+      </section>
+    </div>
+    <section class="tactics-card"><h2>Set → attack evidence</h2><div id="tactics-pairs" class="tactics-table"></div></section>
+  </div>
+  <section class="tactics-card">
+    <h2>Rotation outcomes</h2>
+    <p class="note">Set, team and rotation filters apply here. Setter, attack lane and reception filters apply to set-to-attack pairs only. Side-out = point won while receiving; break point = point won while serving. Rates use classified points; unknown winners and serving teams stay outside the denominator. Rotations require manual time labels and never advance automatically.</p>
+    <div class="tactics-table"><table><thead><tr><th>Team</th><th>Set</th><th>Rotation</th><th>Side-out</th><th>Unknown points</th><th>Break point</th><th>Unknown points</th><th>Unknown service role</th></tr></thead><tbody id="tactics-rotations"></tbody></table></div>
+    <details><summary>Rally evidence for these rotation statistics</summary><div id="rotation-rallies" class="tactics-table"></div></details>
+  </section>
+  <section class="tactics-card">
+    <h2>Confirm rotation over a time range</h2>
+    <p class="note">R1–R6 are your explicit rotation labels for a stable team. Use the same convention throughout the match. Label only intervals you can confirm from video.</p>
+    <form id="rotation-editor" class="rotation-editor">
+      <label>Team <select id="rotation-team" required></select></label>
+      <label>Rotation <select id="rotation-number">{% for n in range(1, 7) %}<option value="{{ n }}">R{{ n }}</option>{% endfor %}</select></label>
+      <label>Start seconds <input id="rotation-start" type="number" min="0" step="0.001" value="0" required></label>
+      <button type="button" id="rotation-use-start">Use video time</button>
+      <label>End seconds <input id="rotation-end" type="number" min="0" step="0.001" required></label>
+      <button type="button" id="rotation-use-end">Use video time</button>
+      <button type="submit" id="rotation-save">Save confirmed label</button>
+    </form>
+    <p id="rotation-status" role="status"></p>
+    <ul id="rotation-labels"></ul>
+  </section>
+</main>
+<script id="tactics-data" type="application/json">{{ {'job': job.job_id, 'api_url': api_url, 'context_api_url': context_api_url, 'fps': fps, 'total_frames': total_frames, 'viewer_url': url_for('results', job_id=job.job_id)} | tojson }}</script>
+<script src="{{ url_for('static', filename='tactics.js') }}"></script>
+</html>

@@ -1,0 +1,7 @@
+.workspace-tabs { display: flex; flex-wrap: wrap; gap: .35rem; padding: .7rem 3vw; background: var(--card); border-bottom: 1px solid var(--border); }
+.workspace-tabs a { padding: .6rem .85rem; color: var(--muted2); text-decoration: none; border-radius: 8px; font-weight: 650; font-size: .85rem; }
+.workspace-tabs a:hover { background: var(--head-bg); }
+.workspace-tabs [aria-current="page"] { background: var(--primary-soft); color: var(--primary); }
+.workspace-tabs .developer-workspace-link { margin-left: auto; border: 1px dashed var(--border); }
+[data-developer-tab][hidden], [data-developer-tool][hidden] { display: none !important; }
+@media (max-width:850px) { .workspace-tabs .developer-workspace-link { margin-left: 0; } }

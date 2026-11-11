@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Developer review · CourtSense</title>
+<link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
+<link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='workspace.css') }}" rel="stylesheet">
+<style>
+  .review-layout { display:grid; grid-template-columns:minmax(0,1.5fr) minmax(20rem,1fr); gap:1.25rem; align-items:start; }
+  .review-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:1rem; }
+  .review-video { width:100%; max-height:55vh; background:#111827; border-radius:8px; }
+  .review-controls,.review-filters,.review-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin:.75rem 0; }
+  .review-controls input { width:4.5rem; }
+  .review-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(11rem,1fr)); gap:.75rem; }
+  .review-fields label { display:grid; gap:.3rem; }
+  .review-checkbox { display:flex; align-items:center; gap:.45rem; margin:.65rem 0; }
+  #review-list { max-height:60vh; overflow:auto; padding:0; list-style:none; }
+  #review-list li + li { margin-top:.4rem; }
+  #review-list button { width:100%; text-align:left; line-height:1.5; }
+  #review-list button[aria-current="true"] { background:var(--primary-soft); border-color:var(--primary); }
+  #review-list small { display:block; color:var(--muted2); }
+  .review-meta { padding:.65rem; background:var(--head-bg); border-radius:7px; line-height:1.55; }
+  .review-history { max-height:20rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .review-note { color:var(--muted2); line-height:1.5; }
+  .review-status { min-height:1.5rem; }
+  .review-dev-badge { display:inline-block; padding:.3rem .6rem; border:1px solid var(--border); border-radius:8px; color:var(--muted2); font-size:.8rem; }
+  @media(max-width:800px) { .review-layout { grid-template-columns:1fr; } #review-list { max-height:25rem; } }
+</style>
+<header class="workspace-header"><a href="{{ url_for('results', job_id=job.job_id) }}">CourtSense</a><span class="review-dev-badge">Developer workspace</span></header>
+{% include 'workspace_tabs.html' %}
+<main class="workspace-main">
+  <h1>Review uncertain moments</h1>
+  <p class="review-note">Inspect source conflicts, uncertain contacts and missing touches. Corrections apply to this result's reviewed views; source annotations and training datasets remain unchanged.</p>
+  <p id="review-summary" class="review-meta" role="status">Loading review queue…</p>
+  <p id="review-status" class="review-status" role="status"></p>
+  <div class="review-layout">
+    <section class="review-card" aria-label="Review video and correction">
+      <video class="review-video" id="review-video" controls preload="metadata" src="{{ video_url }}"></video>
+      <div class="review-controls">
+        <button type="button" id="review-prev">← Previous</button><button type="button" id="review-next">Next →</button>
+        <button type="button" id="review-play">Play clip</button>
+        <label>Before <input id="review-before" type="number" min="0" max="15" step=".5" value="2"> s</label>
+        <label>After <input id="review-after" type="number" min="0" max="15" step=".5" value="3"> s</label>
+        <button type="button" id="review-step-back">−1 frame</button><button type="button" id="review-step-forward">+1 frame</button>
+      </div>
+      <p id="review-current" class="review-meta">Choose a moment.</p>
+      <p id="review-reasons" class="review-note"></p>
+      <form id="review-contact-form" hidden>
+        <div class="review-fields">
+          <label>Contact frame <input id="review-frame" type="number" min="0" max="{{ total_frames - 1 if total_frames else '' }}" step="1" required></label>
+          <label>Contact type <select id="review-type" required><option value="">Choose type</option></select></label>
+          <label>Court side <select id="review-side"><option value="">Unknown</option><option value="a">A · far</option><option value="b">B · near</option></select></label>
+          <label>Contact author <select id="review-author"><option value="unchanged">Keep current attribution</option></select></label>
+        </div>
+        <button type="button" id="review-use-time">Use current video frame</button>
+        <label class="review-checkbox"><input type="checkbox" id="review-detection-verified"> I verified this is a contact</label>
+        <label class="review-checkbox"><input type="checkbox" id="review-type-verified"> I verified the contact type</label>
+        <p class="review-note">Author, event detection and type are independent. Moving a contact clears its old frame-specific automatic attribution unless you explicitly select its author.</p>
+        <div class="review-actions">
+          <button type="submit" id="review-save">Save correction</button>
+          <button type="button" id="review-remove">Not a contact</button>
+          <button type="button" id="review-reset">Reset to saved proposal</button>
+        </div>
+      </form>
+      <form id="review-point-form" hidden>
+        <label>Point winner <select id="review-point-winner"><option value="unknown">Leave unresolved</option><option value="a">A · far</option><option value="b">B · near</option><option value="reset">Reset to proposal</option></select></label>
+        <button type="submit">Save point winner</button>
+        <p class="review-note">Confirming a winner does not verify the contact author or an attack kill/error.</p>
+      </form>
+      <div class="review-actions"><button type="button" id="review-dismiss" disabled>Dismiss queue item</button><button type="button" id="review-add">Add missed contact at current time</button></div>
+      <p class="review-note">Keys: J/K = previous/next, Space = clip, ←/→ = one frame, 1–6 = serve/reception/set/dig/attack/block, Enter = save, X = not a contact, D = dismiss, + = add. Shortcuts pause while editing fields.</p>
+    </section>
+    <section class="review-card" aria-label="Prioritized review queue">
+      <h2>Review queue</h2>
+      <div class="review-filters">
+        <label>Status <select id="review-filter-status"><option value="pending">Pending</option><option value="all">All</option><option value="reviewed">Reviewed events</option><option value="dismissed">Dismissed</option><option value="removed">Removed</option></select></label>
+        <label>Issue <select id="review-filter-issue"><option value="all">All issues</option><option value="conflict">Source conflicts</option><option value="unresolved_author">Unknown author</option><option value="low_event_confidence">Low event confidence</option><option value="point">Point winners</option><option value="same_frame_contacts">Same-frame contacts</option></select></label>
+        <label>Order <select id="review-sort"><option value="priority">Review impact</option><option value="time">Time</option></select></label>
+        <button type="button" id="review-refresh">Refresh queue</button>
+      </div>
+      <ol id="review-list"></ol>
+      <p class="review-note">Priority ranks review impact, not calibrated model confidence. Dismissal clears a queue task without verifying any label.</p>
+    </section>
+  </div>
+  <details class="review-card" style="margin-top:1.25rem"><summary>Review history</summary><ol id="review-history" class="review-history"></ol></details>
+</main>
+<script id="developer-review-data" type="application/json">{{ {'api': api_url, 'pointApi': point_api_url | default(url_for('statistics_data', job_id=job.job_id)), 'source': source, 'revision': revision, 'fps': fps, 'totalFrames': total_frames} | tojson }}</script>
+<script src="{{ url_for('static', filename='developer_review.js') }}"></script>
+</html>
