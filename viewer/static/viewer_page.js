@@ -713,7 +713,14 @@ function resizeCanvas() {
   redraw();
 }
 
-vid.addEventListener('loadedmetadata', () => { resizeCanvas(); startRenderLoop(); });
+vid.addEventListener('loadedmetadata', () => {
+  resizeCanvas(); startRenderLoop();
+  const params = new URLSearchParams(location.search);
+  const entryFrame = Number(params.get('frame'));
+  if (params.has('frame') && Number.isFinite(entryFrame) && entryFrame >= 0) {
+    seekAndPlay(Math.min(entryFrame, Math.max(0, TOTAL_FRAMES - 1)), false);
+  }
+});
 window.addEventListener('resize', resizeCanvas);
 
 vid.addEventListener('timeupdate', () => {

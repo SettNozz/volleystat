@@ -1,0 +1,33 @@
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px system-ui, sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: 1rem 3vw; border-bottom: 1px solid var(--border); background: var(--card); }
+header strong { margin-right: auto; }
+a { color: var(--primary); }
+main { max-width: 90rem; margin: auto; padding: 1.5rem 3vw 3rem; }
+h1 { margin: 0; } h2 { font-size: 1.1rem; }
+button, select { font: inherit; padding: .5rem .65rem; border: 1px solid var(--border); border-radius: 7px; background: var(--card); color: var(--ink); }
+button { cursor: pointer; } button:disabled { opacity: .5; cursor: default; }
+button:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.filters, .coverage, .controls { display: flex; flex-wrap: wrap; gap: .7rem 1rem; align-items: center; }
+.filters label { display: grid; gap: .3rem; }
+.filters { align-items: end; margin: 1.5rem 0; }
+.coverage { padding: 1rem; background: var(--primary-soft); border-radius: 10px; }
+.note { color: var(--muted2); line-height: 1.5; }
+.workspace { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(18rem, 1fr); gap: 1.25rem; align-items: start; }
+.playback, .contact-panel, details { padding: 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+video { width: 100%; max-height: 65vh; background: #111827; border-radius: 8px; }
+.controls { margin-top: .7rem; }
+.contact-panel h2 { margin-top: 0; }
+ol { list-style: none; padding: 0; margin: 0; max-height: 65vh; overflow: auto; }
+li + li { margin-top: .5rem; }
+.contact { display: block; text-align: left; width: 100%; line-height: 1.6; }
+.contact[aria-current="true"] { border-color: var(--primary); background: var(--primary-soft); }
+.contact small { display: block; color: var(--muted2); }
+.warning { color: var(--danger, #a34414); }
+details { margin-top: 1.5rem; } summary { font-weight: 700; cursor: pointer; }
+.point-table { overflow: auto; max-height: 32rem; }
+table { border-collapse: collapse; width: 100%; min-width: 42rem; }
+th, td { padding: .75rem; text-align: left; border-bottom: 1px solid var(--border); }
+th { background: var(--head-bg); }
+.point-review { display: flex; gap: .5rem; }
+@media (max-width: 760px) { .workspace { grid-template-columns: 1fr; } ol { max-height: 26rem; } }

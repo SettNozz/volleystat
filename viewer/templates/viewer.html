@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CourtSense — {{ job.video_stem }}</title>
+<link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
@@ -14,7 +17,7 @@
 <!-- ── Top bar ─────────────────────────────────────────── -->
 <div class="topbar">
   <a class="logo" href="/">
-    <div class="logo-mark"><div></div></div>
+    <img class="logo-mark" src="/static/brand/icon.svg" alt="">
     <div class="logo-name">CourtSense</div>
   </a>
   <div class="nav">
@@ -258,6 +261,7 @@
 
 <!-- ── Page 3: Match Stats ─────────────────────────────── -->
 <div class="page" id="page-table">
+  <p><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}#point-reconciliation">Review point winners and statistics evidence ↗</a></p>
   <div class="presets-row" id="rallyPresets"></div>
 
   <div class="card table-filterbar">

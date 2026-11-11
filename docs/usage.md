@@ -38,7 +38,7 @@ The viewer requires `flask` and `flask-cors`; feature/annotation workflows use `
 
 ## Viewer workflow
 
-Start `python viewer.py` and open [localhost:5050](http://localhost:5050). A second instance can use `python viewer.py --port 5051`.
+Start `python viewer.py` and open [localhost:5050](http://localhost:5050). A second instance can use `python viewer.py --port 5051`. On Windows, `scripts/start_viewer.ps1 [-Port 5050]` starts the viewer (or reuses a running one) and opens the library; `scripts/install_viewer_shortcut.ps1 [-StartMenu]` creates a "CourtSense" desktop shortcut for it with the project icon (`viewer/static/brand/`).
 
 1. Choose **Upload** and provide a path or drop a video. Dropped files are copied into `data/uploads/`; the same name and size reuse the existing copy.
 2. Open **Preview and edit court & net**. Start from a saved camera setup or the default calibration. Drag court lines/corners and net tape handles. The handle magnifier shows a native-resolution crop; use the mouse wheel to change its zoom.
@@ -54,7 +54,8 @@ The preview and result share three net references: upper tape, lower mesh edge a
 - **Player contacts:** select a roster ID, highlight that player and seek to their saved contacts. Contact-author corrections are stored separately and bound to the analyzed result. Unknown-team contacts show `—` with both teams selected and are excluded by a single-team filter.
 - **Visual Stats:** serve/reception maps, attack origin/direction, team contact totals and serve lifecycle summaries.
 - **Match Stats:** rallies, service attempts and a contact log, with team/outcome filters.
-- **Player statistics:** attack attempts, inferred point-winning attacks and reception outcomes from saved contacts, reviews and point evidence. Missing evidence leaves outcomes unresolved.
+- **Player statistics:** attack attempts, inferred point-winning attacks and reception outcomes from saved contacts, reviews and point evidence. Missing evidence leaves outcomes unresolved. **Edit players** sets name, jersey and position (outside hitter, middle blocker, setter, opposite hitter) in this browser; Excel export includes them. Pick a player (or click a name) for a personal panel with all categories; **Player highlights** opens a separate page that plays that player's attributed attacks, receptions, serves and other contacts with adjustable lead-in and follow-through.
+- **Statistics evidence:** click any player statistic to watch exactly its counted contacts, or its classified denominator for a percentage. Inspect author confirmation and unresolved outcomes, play matched rally context, and review point winners. Source conflicts remain explicit. Excel uses the same reviewed totals and adds contact/point evidence sheets. See [counting rules and review persistence](statistics_evidence.md).
 
 Near-side attack height is an approximate projection from saved ball, pose and net geometry. Without usable evidence, the badge reports that height is unavailable.
 

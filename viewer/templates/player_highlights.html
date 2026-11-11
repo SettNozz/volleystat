@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ player }} highlights · CourtSense</title>
+<link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { font: 15px Inter, system-ui, sans-serif; color: var(--ink); background: var(--bg); margin: 0; }
+  main { max-width: 90rem; margin: auto; padding: clamp(1rem, 3vw, 2rem); }
+  a { color: var(--primary); }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-height: 60px;
+    padding: .5rem clamp(1rem, 3vw, 28px); background: var(--card); border-bottom: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
+  .brand-mark { width: 28px; height: 28px; display: block; }
+  .back { padding: 9px 16px; border-radius: 8px; background: var(--head-bg); color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 700; }
+  .head { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+  .portrait { position: relative; display: inline-grid; place-items: center; width: 56px; height: 64px; overflow: hidden; flex: none;
+    background: var(--head-bg); color: var(--muted2); border: 1px solid var(--border); border-radius: 8px; font-size: .8rem; }
+  .portrait img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
+  .eyebrow { margin: 0; color: var(--primary); font-size: .76rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+  h1 { margin: .2rem 0 0; font-size: clamp(1.4rem, 3vw, 2rem); letter-spacing: -.03em; }
+  .position { display: inline-block; margin-left: .5rem; padding: .15rem .5rem; border-radius: 6px; background: var(--primary-soft); color: var(--primary); font-size: .8rem; font-weight: 700; vertical-align: middle; }
+  .position:empty { display: none; }
+  .head form { margin-left: auto; display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; font-size: .85rem; color: var(--muted2); }
+  select, input[type=number] { padding: .4rem .55rem; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+  input[type=number] { width: 4.2rem; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(18rem, 24rem); gap: 1rem; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .75rem 1rem; border-top: 1px solid var(--border-soft); }
+  button { cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: .45rem .75rem; background: var(--card); color: var(--ink); font: inherit; font-size: .85rem; font-weight: 600; }
+  button:hover:not(:disabled) { border-color: var(--primary); }
+  button:disabled { cursor: default; opacity: .5; }
+  button.primary { background: var(--primary); border-color: var(--primary); color: var(--card); }
+  #now { margin-left: auto; color: var(--muted2); font-size: .85rem; font-variant-numeric: tabular-nums; }
+  .window { display: flex; flex-wrap: wrap; gap: .75rem; align-items: center; padding: 0 1rem .75rem; font-size: .82rem; color: var(--muted2); }
+  .chips { display: flex; flex-wrap: wrap; gap: .4rem; padding: .85rem 1rem; border-bottom: 1px solid var(--border-soft); }
+  .chip { border-radius: 999px; padding: .3rem .7rem; font-size: .8rem; }
+  .chip[aria-pressed="true"] { background: var(--primary-soft); border-color: var(--primary); color: var(--primary); }
+  .chip small { color: var(--muted); margin-left: .25rem; }
+  ol { list-style: none; margin: 0; padding: 0; max-height: min(70vh, 44rem); overflow-y: auto; }
+  li button { display: grid; grid-template-columns: 96px 1fr; gap: .7rem; align-items: center; width: 100%; text-align: left;
+    border: 0; border-bottom: 1px solid var(--border-soft); border-radius: 0; padding: .55rem 1rem; font-weight: 500; }
+  li button[aria-current="true"] { background: var(--primary-soft); }
+  li img { width: 96px; height: 54px; object-fit: cover; border-radius: 6px; background: var(--head-bg); }
+  .kind { font-weight: 700; text-transform: capitalize; }
+  .sub { display: block; color: var(--muted); font-size: .78rem; }
+  .uncertain { color: oklch(60% 0.15 70); }
+  .empty, .note { padding: 1rem; color: var(--muted); font-size: .88rem; line-height: 1.6; }
+</style>
+<header class="topbar">
+  <span class="brand"><img class="brand-mark" src="/static/brand/icon.svg" alt="">CourtSense</span>
+  <a class="back" href="{{ url_for('player_statistics', job_id=job.job_id, player=player) }}">← Player statistics</a>
+</header>
+<main>
+  <div class="head">
+    <span class="portrait" aria-hidden="true">{{ player }}
+      {% if player in portraits %}<img id="portrait" src="{{ url_for('player_portrait', job_id=job.job_id, player_id=player) }}" alt="" onerror="this.hidden = true">{% endif %}
+    </span>
+    <div>
+      <p class="eyebrow">Player highlights · {{ player }}</p>
+      <h1><span id="player-name">{{ player }}</span><span class="position" id="player-position"></span></h1>
+    </div>
+    <form method="get" id="player-form">
+      <label>Player
+        <select name="player" onchange="this.form.submit()">
+          {% for id in roster %}<option value="{{ id }}" data-player-option="{{ id }}"{% if id == player %} selected{% endif %}>{{ id }}</option>{% endfor %}
+        </select>
+      </label>
+      <input type="hidden" name="type" id="type-input" value="{{ request.args.get('type', '') }}">
+      <label><input type="checkbox" name="suggestions" value="1"{% if include_suggestions %} checked{% endif %} onchange="this.form.submit()"> Include uncertain suggestions</label>
+      <noscript><button type="submit">Show</button></noscript>
+    </form>
+  </div>
+  <div class="layout">
+    <div class="card">
+      <video id="vid" preload="metadata" controls playsinline src="{{ video_url }}"></video>
+      <div class="controls">
+        <button type="button" id="prev" aria-label="Previous moment">◀ Prev</button>
+        <button type="button" class="primary" id="play-all">▶ Play all</button>
+        <button type="button" id="next" aria-label="Next moment">Next ▶</button>
+        <span id="now" role="status"></span>
+      </div>
+      <div class="window">
+        <label>Before contact <input type="number" id="before" min="0" max="15" step="0.5" value="3"> s</label>
+        <label>After contact <input type="number" id="after" min="0" max="15" step="0.5" value="2"> s</label>
+      </div>
+    </div>
+    <div class="card">
+      <div class="chips" id="chips" role="group" aria-label="Moment type"></div>
+      <ol id="list" aria-label="Highlight moments"></ol>
+      <p class="note">Moments are contacts assigned to {{ player }} by the contact-author model or by saved human review. Automatic attribution is unverified; unresolved contacts are not included.</p>
+    </div>
+  </div>
+</main>
+<script>
+const MOMENTS = {{ moments | tojson }};
+const CATEGORIES = {{ categories | tojson }};
+const FPS = {{ fps | tojson }};
+const PLAYER = {{ player | tojson }};
+const POSITIONS = {{ position_labels | tojson }};
+const JOB = {{ request.view_args.job_id | tojson }};
+
+const vid = document.getElementById('vid');
+const list = document.getElementById('list');
+const now = document.getElementById('now');
+const before = document.getElementById('before');
+const after = document.getElementById('after');
+const playAll = document.getElementById('play-all');
+let filter = new URLSearchParams(location.search).get('type') || 'all';
+if (filter !== 'all' && !(filter in CATEGORIES)) filter = 'all';
+let shown = [];
+let current = -1;
+let continuous = false;
+
+function store(key, value) { try { localStorage.setItem(JSON.stringify(['highlight-window', key]), value); } catch {} }
+function load(key) { try { return localStorage.getItem(JSON.stringify(['highlight-window', key])); } catch { return null; } }
+for (const input of [before, after]) {
+  const saved = Number(load(input.id));
+  if (load(input.id) !== null && Number.isFinite(saved) && saved >= 0 && saved <= 15) input.value = saved;
+  input.addEventListener('change', () => store(input.id, input.value));
+}
+
+let profiles = {};
+try { profiles = JSON.parse(localStorage.getItem(JSON.stringify(['player-profiles', JOB]))) || {}; } catch {}
+function playerLabel(id) {
+  const {name, number} = profiles[id] || {};
+  return name || (number ? '#' + number : id);
+}
+document.getElementById('player-name').textContent = playerLabel(PLAYER);
+document.getElementById('player-position').textContent = POSITIONS[(profiles[PLAYER] || {}).position] || '';
+for (const option of document.querySelectorAll('[data-player-option]')) {
+  const id = option.dataset.playerOption;
+  option.textContent = [playerLabel(id), POSITIONS[(profiles[id] || {}).position]].filter(Boolean).join(' · ');
+}
+document.title = playerLabel(PLAYER) + ' highlights · CourtSense';
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60), s = Math.floor(seconds % 60);
+  return m + ':' + String(s).padStart(2, '0');
+}
+function windowOf(moment) {
+  const lead = Math.max(0, Number(before.value) || 0), tail = Math.max(0, Number(after.value) || 0);
+  return [Math.max(0, moment.time - lead), moment.time + tail];
+}
+
+function renderChips() {
+  const chips = document.getElementById('chips');
+  chips.replaceChildren();
+  const counts = {};
+  for (const m of MOMENTS) counts[m.category] = (counts[m.category] || 0) + 1;
+  for (const [key, label] of [['all', 'All'], ...Object.entries(CATEGORIES)]) {
+    const count = key === 'all' ? MOMENTS.length : counts[key] || 0;
+    if (!count && key !== 'all' && key !== filter) continue;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'chip';
+    button.setAttribute('aria-pressed', String(filter === key));
+    button.append(label);
+    const small = document.createElement('small');
+    small.textContent = count;
+    button.append(small);
+    button.onclick = () => {
+      filter = key;
+      document.getElementById('type-input').value = key === 'all' ? '' : key;
+      const url = new URL(location.href);
+      if (key === 'all') url.searchParams.delete('type'); else url.searchParams.set('type', key);
+      history.replaceState(null, '', url);
+      stop();
+      renderChips();
+      renderList();
+    };
+    chips.append(button);
+  }
+}
+
+function renderList() {
+  shown = MOMENTS.filter(m => filter === 'all' || m.category === filter);
+  current = -1;
+  list.replaceChildren();
+  if (!shown.length) {
+    const empty = document.createElement('li');
+    empty.className = 'empty';
+    empty.textContent = 'No moments of this type for this player.';
+    list.append(empty);
+  }
+  shown.forEach((moment, index) => {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    const img = document.createElement('img');
+    img.loading = 'lazy';
+    img.alt = '';
+    img.src = '/api/frame/' + encodeURIComponent(JOB) + '/' + moment.frame;
+    img.onerror = () => { img.style.visibility = 'hidden'; };
+    const text = document.createElement('span');
+    const kind = document.createElement('span');
+    kind.className = 'kind';
+    kind.textContent = moment.type.replace(/_/g, ' ');
+    const sub = document.createElement('span');
+    sub.className = 'sub';
+    sub.textContent = formatTime(moment.time) + ' · f' + moment.frame + ' · ' +
+      (moment.label_source === 'human' ? 'human review' : 'model proposal');
+    text.append(kind, sub);
+    if (moment.uncertain) {
+      const note = document.createElement('span');
+      note.className = 'sub uncertain';
+      note.textContent = 'Uncertain suggestion';
+      text.append(note);
+    }
+    button.append(img, text);
+    button.onclick = () => { continuous = false; play(index); };
+    item.append(button);
+    list.append(item);
+  });
+  updateStatus();
+}
+
+function updateStatus() {
+  for (const [index, button] of Array.from(list.querySelectorAll('li > button')).entries()) {
+    button.setAttribute('aria-current', String(index === current));
+  }
+  document.getElementById('prev').disabled = current <= 0;
+  document.getElementById('next').disabled = current >= shown.length - 1;
+  playAll.disabled = !shown.length;
+  playAll.textContent = continuous && !vid.paused ? '❚❚ Pause' : '▶ Play all';
+  now.textContent = current >= 0
+    ? (current + 1) + ' / ' + shown.length + ' · ' + shown[current].type.replace(/_/g, ' ') + ' · ' + formatTime(shown[current].time)
+    : shown.length + ' moments';
+}
+
+function play(index) {
+  if (index < 0 || index >= shown.length) { stop(); return; }
+  current = index;
+  vid.currentTime = windowOf(shown[index])[0];
+  vid.play().catch(() => {});
+  list.querySelectorAll('li > button')[index].scrollIntoView({block: 'nearest'});
+  updateStatus();
+}
+
+function stop() {
+  continuous = false;
+  vid.pause();
+  updateStatus();
+}
+
+vid.addEventListener('timeupdate', () => {
+  if (current < 0 || vid.paused) return;
+  const [, end] = windowOf(shown[current]);
+  if (vid.currentTime < end) return;
+  if (continuous && current < shown.length - 1) play(current + 1);
+  else { vid.pause(); continuous = false; updateStatus(); }
+});
+vid.addEventListener('play', updateStatus);
+vid.addEventListener('pause', updateStatus);
+
+playAll.onclick = () => {
+  if (continuous && !vid.paused) { stop(); return; }
+  continuous = true;
+  play(current >= 0 && current < shown.length - 1 ? current : 0);
+};
+document.getElementById('prev').onclick = () => play(current - 1);
+document.getElementById('next').onclick = () => play(current + 1);
+document.addEventListener('keydown', event => {
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
+  if (event.key === 'ArrowRight' && event.shiftKey) { event.preventDefault(); play(current + 1); }
+  if (event.key === 'ArrowLeft' && event.shiftKey) { event.preventDefault(); play(current - 1); }
+});
+
+renderChips();
+renderList();
+</script>
+</html>

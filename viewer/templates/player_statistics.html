@@ -3,6 +3,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Player statistics · CourtSense</title>
+<link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/static/brand/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
@@ -15,8 +18,7 @@
   .topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-height: 60px;
     padding: .5rem clamp(1rem, 3vw, 28px); background: var(--card); border-bottom: 1px solid var(--border); }
   .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
-  .brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--primary); }
-  .brand-mark::after { content: ''; width: 11px; height: 11px; border-radius: 50%; background: var(--card); }
+  .brand-mark { width: 28px; height: 28px; display: block; }
   .back { padding: 9px 16px; border-radius: 8px; background: var(--head-bg); color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 700; }
   .back:hover { text-decoration: underline; }
   .hero { padding: clamp(1.5rem, 4vw, 2.75rem); border: 1px solid var(--border); border-radius: 12px; overflow-wrap: anywhere;
@@ -28,8 +30,8 @@
   section { margin-top: 1.5rem; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
   .section-head { padding: 1.15rem 1.35rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; }
   .stat-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-left: auto; }
-  .roster-editor { display: grid; grid-template-columns: auto minmax(7rem, 1fr) minmax(4rem, 6rem); gap: .55rem; align-items: center; margin: 1rem 0; }
-  .roster-editor input { min-width: 0; padding: .45rem; font: inherit; border: 1px solid var(--border); border-radius: 8px; }
+  .roster-editor { display: grid; grid-template-columns: auto minmax(7rem, 1fr) minmax(4rem, 6rem) minmax(8rem, 10rem); gap: .55rem; align-items: center; margin: 1rem 0; }
+  .roster-editor input, .roster-editor select { min-width: 0; padding: .45rem; font: inherit; border: 1px solid var(--border); border-radius: 8px; }
   h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.02em; }
   .stat-modes { display: flex; flex-wrap: wrap; gap: 4px; padding: .7rem 1.35rem; border-bottom: 1px solid var(--border-soft); }
   .stat-modes a { padding: 8px 16px; border-radius: 8px; color: var(--muted2); text-decoration: none; font-size: .85rem; font-weight: 600; }
@@ -61,12 +63,36 @@
   .zero { color: var(--muted); }
   .notes { color: var(--muted); font-size: .88rem; line-height: 1.6; margin: 1.35rem .15rem 0; }
   .notes summary { cursor: pointer; color: var(--ink); }
+  .player-filter { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: 1rem 0 0; font-size: .85rem; font-weight: 650; color: var(--muted2); }
+  select { padding: .45rem .6rem; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+  .position { display: inline-block; margin-left: .45rem; padding: .1rem .45rem; border-radius: 6px; background: var(--head-bg); color: var(--muted2); font-size: .72rem; font-weight: 650; }
+  .position:empty { display: none; }
+  .player-link { color: inherit; text-decoration: none; }
+  .player-link:hover { color: var(--primary); text-decoration: underline; }
+  .personal-head { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1.15rem 1.35rem; border-bottom: 1px solid var(--border-soft); }
+  .personal-head .portrait { width: 64px; height: 72px; }
+  .personal-head h2 { font-size: 1.4rem; }
+  .button-link { display: inline-block; padding: .5rem .8rem; border-radius: 8px; background: var(--primary); color: var(--card); text-decoration: none; font-weight: 700; font-size: .85rem; }
+  .personal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .personal-block { padding: 1rem 1.35rem; box-shadow: inset -1px -1px var(--border-soft); }
+  .personal-block h3 { margin: 0 0 .6rem; font-size: 1rem; }
+  .personal-block dl { display: grid; grid-template-columns: 1fr auto; gap: .3rem 1rem; margin: 0 0 .6rem; font-variant-numeric: tabular-nums; }
+  .personal-block dt { color: var(--muted2); }
+  .personal-block dd { margin: 0; text-align: right; font-weight: 650; }
+  .personal-block a { font-size: .82rem; font-weight: 650; }
+  .stat-evidence { color: inherit; text-underline-offset: .2em; }
+  .stat-evidence:hover { color: var(--primary); }
+  .evidence-note { display: block; font-size: .72rem; color: var(--muted2); line-height: 1.5; white-space: nowrap; }
+  .reconciliation-note { padding: 1rem 0 0; line-height: 1.7; }
 </style>
 <header class="topbar">
-  <span class="brand"><span class="brand-mark" aria-hidden="true"></span>CourtSense</span>
+  <span class="brand"><img class="brand-mark" src="/static/brand/icon.svg" alt="">CourtSense</span>
   <a class="back" href="{{ url_for('results', job_id=job.job_id) }}">← Back to match</a>
 </header>
 <main>
+  {% macro evidence_link(player, mode, key, value) -%}
+  <a class="stat-evidence" href="{{ url_for('statistics_evidence_page', job_id=job.job_id, player=player, kind=mode, metric=key) }}" title="Watch contacts counted by this metric; inspect author confirmation and unresolved outcomes">{{ value }}</a>
+  {%- endmacro %}
   <header class="hero">
     <p class="eyebrow">Match report</p>
     <h1>Player statistics</h1>
@@ -75,14 +101,77 @@
       <span>{{ summary.players | length }} tracked players</span>
     </p>
   </header>
+  <p class="reconciliation-note"><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}#point-reconciliation">Review statistics evidence and point winners</a>
+    · {{ summary.reconciliation.conflicts }} conflicts · {{ summary.reconciliation.point_summary.get('unresolved', 0) }} unresolved points.<br>
+    Click any statistic to watch its evidence. Human-confirmed authors and derived outcomes are counted separately.</p>
   {% if summary.players %}
   {% set requested = request.args.get('view') %}
   {% set kind = requested if requested in modes else 'attack' %}
   {% set title, columns = modes[kind] %}
+  <form method="get" action="{{ url_for('player_statistics', job_id=job.job_id) }}" id="player-filter-form">
+    <input type="hidden" name="view" value="{{ kind }}">
+    <label class="player-filter">Personal statistics
+      <select name="player" id="player-filter" onchange="this.form.submit()">
+        <option value="">All players</option>
+        {% for player in summary.players %}
+        <option value="{{ player }}" data-player-option="{{ player }}"{% if player == selected_player %} selected{% endif %}>{{ player }}</option>
+        {% endfor %}
+      </select>
+      <noscript><button type="submit">Show</button></noscript>
+    </label>
+  </form>
+  {% if selected_player %}
+  {% set prow = summary.players[selected_player] %}
+  {% set touches = contact_counts.get(selected_player, {}) %}
+  <section aria-labelledby="personal-title" id="personal">
+    <div class="personal-head">
+      <span class="portrait" aria-hidden="true">
+        {{ selected_player }}
+        {% if selected_player in portraits %}
+        <img data-player-photo="{{ selected_player }}" src="{{ url_for('player_portrait', job_id=job.job_id, player_id=selected_player) }}" alt="" onerror="this.hidden = true" onload="this.hidden = false">
+        {% endif %}
+      </span>
+      <div>
+        <p class="eyebrow">Personal statistics · {{ selected_player }}</p>
+        <h2 id="personal-title"><span data-player-label="{{ selected_player }}">{{ selected_player }}</span><span class="position" data-player-position="{{ selected_player }}"></span></h2>
+      </div>
+      <div class="stat-actions">
+        <a class="button-link" href="{{ url_for('player_highlights_page', job_id=job.job_id, player=selected_player) }}" target="_blank" rel="noopener">Player highlights ↗</a>
+      </div>
+    </div>
+    <div class="personal-grid">
+      <div class="personal-block">
+        <h3>All touches</h3>
+        <dl>
+          {% for key, label in [('attack', 'Attacks'), ('serve', 'Serves'), ('reception', 'Receptions'), ('dig_pass', 'Digs, passes and sets'), ('block', 'Blocks')] %}
+          <dt>{{ label }}</dt><dd{% if not touches.get(key) %} class="zero"{% endif %}>{{ evidence_link(selected_player, key, 'total', touches.get(key, 0)) }}</dd>
+          {% endfor %}
+        </dl>
+      </div>
+      {% for mode, mode_config in modes.items() %}
+      <div class="personal-block">
+        <h3>{{ mode_config[0] }}</h3>
+        <dl>
+          {% for key, label in mode_config[1] %}
+          {% set value = stat_value(mode, prow[mode], key) %}
+          <dt>{{ label }}</dt>
+          {% if key == 'rate' %}
+          <dd>{{ evidence_link(selected_player, mode, key, ('%.1f%%' | format(100 * value)) if value is not none else '—') }}</dd>
+          {% else %}
+          <dd{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ evidence_link(selected_player, mode, key, value) }}</dd>
+          {% endif %}
+          {% endfor %}
+        </dl>
+        {% if prow[mode]['total'] %}<a href="{{ url_for('player_highlights_page', job_id=job.job_id, player=selected_player, type=mode) }}" target="_blank" rel="noopener">Watch {{ mode_config[0] | lower }} ↗</a>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
   <section aria-labelledby="{{ kind }}">
   <nav class="stat-modes" aria-label="Statistics category">
     {% for mode, config in modes.items() %}
-    <a href="{{ url_for('player_statistics', job_id=job.job_id, view=mode) }}"{% if mode == kind %} aria-current="page"{% endif %}>{{ config[0] }}</a>
+    <a href="{{ url_for('player_statistics', job_id=job.job_id, view=mode, player=selected_player) }}"{% if mode == kind %} aria-current="page"{% endif %}>{{ config[0] }}</a>
     {% endfor %}
   </nav>
   <p id="mode-error" role="status" hidden>Could not load statistics. Try again.</p>
@@ -101,6 +190,7 @@
       <thead><tr>
         <th scope="col">Player</th>
         {% for key, label in columns %}<th scope="col">{{ label }}</th>{% endfor %}
+        <th scope="col">Evidence coverage</th>
       </tr></thead>
       <tbody>
         {% for player, row in summary.players.items() %}
@@ -112,7 +202,7 @@
               <img data-player-photo="{{ player }}" src="{{ url_for('player_portrait', job_id=job.job_id, player_id=player) }}" alt="" loading="lazy" onerror="this.hidden = true" onload="this.hidden = false">
               {% endif %}
             </span>
-            <span data-player-label="{{ player }}">{{ player }}</span>
+            <a class="player-link" href="{{ url_for('player_statistics', job_id=job.job_id, view=kind, player=player) }}" data-player-label="{{ player }}">{{ player }}</a><span class="position" data-player-position="{{ player }}"></span>
             {% if portraits.get(player, 0) > 1 %}
             <button type="button" class="change-photo" data-player="{{ player }}" data-count="{{ portraits[player] }}" aria-label="Change photo for {{ player }}">Change photo</button>
             {% endif %}
@@ -120,11 +210,14 @@
           {% for key, label in columns %}
           {% set value = stat_value(kind, row[kind], key) %}
           {% if key == 'rate' %}
-          <td>{{ ('%.1f%%' | format(100 * value)) if value is not none else '—' }}</td>
+          <td>{{ evidence_link(player, kind, key, ('%.1f%%' | format(100 * value)) if value is not none else '—') }}</td>
           {% else %}
-          <td{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ value }}</td>
+          <td{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ evidence_link(player, kind, key, value) }}</td>
           {% endif %}
           {% endfor %}
+          {% set coverage = summary.coverage[player][kind] %}
+          <td><span class="evidence-note">Authors: {{ coverage.human }} human · {{ coverage.automatic }} automatic</span>
+            <span class="evidence-note">Outcomes: {{ coverage.classified }} derived · {{ coverage.unknown }} unresolved</span></td>
         </tr>
         {% endfor %}
       </tbody>
@@ -133,7 +226,7 @@
   </section>
   <details class="notes">
     <summary>How these statistics are counted</summary>
-    <p>Without an assigned player: {{ summary.unassigned.get('attack', 0) }} attacks, {{ summary.unassigned.get('serve', 0) }} serves and {{ summary.unassigned.get('reception', 0) }} receptions. These contacts may include either side when the side is unknown.</p>
+    <p>Without an assigned player: {{ evidence_link('unassigned', 'attack', 'total', summary.unassigned.get('attack', 0)) }} attacks, {{ evidence_link('unassigned', 'serve', 'total', summary.unassigned.get('serve', 0)) }} serves and {{ evidence_link('unassigned', 'reception', 'total', summary.unassigned.get('reception', 0)) }} receptions. These contacts may include either side when the side is unknown.</p>
     <p>Author assignments include model proposals and saved human corrections. Point-winning attacks are inferred from the final recorded contact and the team point ledger. Attack errors require a recorded fault reason. Reception quality comes from the matched serve lifecycle. Controlled percentage uses classified receptions.</p>
     <p>Serve error percentage uses classified serves. Explicit faults can use proximity to estimate the server. Unresolved serves are excluded from the percentage.</p>
   </details>
@@ -141,11 +234,15 @@
     <h2 id="roster-title">Edit players</h2>
     <form method="dialog" id="roster-form">
       <div class="roster-editor">
-        <strong>ID</strong><strong>Name</strong><strong>Jersey</strong>
+        <strong>ID</strong><strong>Name</strong><strong>Jersey</strong><strong>Position</strong>
         {% for player in summary.players %}
         <span>{{ player }}</span>
         <input data-player-name="{{ player }}" aria-label="{{ player }} name" maxlength="64">
         <input data-player-number="{{ player }}" aria-label="{{ player }} jersey number" inputmode="numeric" maxlength="8">
+        <select data-player-pos="{{ player }}" aria-label="{{ player }} position">
+          <option value="">—</option>
+          {% for value, label in position_labels.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </select>
         {% endfor %}
       </div>
       <div class="photo-actions">
@@ -203,6 +300,8 @@ for (const link of modeLinks) {
       for (const item of modeLinks) item.removeAttribute('aria-current');
       link.setAttribute('aria-current', 'page');
       history.replaceState(null, '', link.href);
+      const viewInput = document.querySelector('#player-filter-form input[name="view"]');
+      if (viewInput) viewInput.value = new URL(link.href).searchParams.get('view');
       window.scrollTo(window.scrollX, scrollTop);
     } catch {
       if (requestId === modeRequest) modeError.hidden = false;
@@ -217,6 +316,8 @@ if (rosterPicker) {
   const labels = Array.from(document.querySelectorAll('[data-player-label]'));
   const names = Array.from(rosterPicker.querySelectorAll('[data-player-name]'));
   const numbers = Array.from(rosterPicker.querySelectorAll('[data-player-number]'));
+  const positions = Array.from(rosterPicker.querySelectorAll('[data-player-pos]'));
+  const positionLabels = {{ position_labels | tojson }};
   let profiles = {};
   try { profiles = JSON.parse(localStorage.getItem(rosterKey)) || {}; } catch {}
 
@@ -226,21 +327,30 @@ if (rosterPicker) {
       const {name, number} = profiles[id] || {};
       label.textContent = name || (number ? '#' + number : id);
     }
+    for (const badge of document.querySelectorAll('[data-player-position]')) {
+      badge.textContent = positionLabels[(profiles[badge.dataset.playerPosition] || {}).position] || '';
+    }
+    for (const option of document.querySelectorAll('[data-player-option]')) {
+      const id = option.dataset.playerOption;
+      const {name, number, position} = profiles[id] || {};
+      option.textContent = [name || (number ? '#' + number : id), positionLabels[position]].filter(Boolean).join(' · ');
+    }
     document.querySelector('#export-excel input[name="profiles"]').value = JSON.stringify(profiles);
   }
 
   document.getElementById('edit-players').onclick = () => {
     names.forEach((input, index) => {
-      const {name, number} = profiles[input.dataset.playerName] || {};
+      const {name, number, position} = profiles[input.dataset.playerName] || {};
       input.value = name || '';
       numbers[index].value = number || '';
+      positions[index].value = position in positionLabels ? position : '';
     });
     rosterPicker.showModal();
   };
   document.getElementById('roster-form').onsubmit = event => {
     if (event.submitter?.value !== 'save') return;
     profiles = Object.fromEntries(names.map((input, index) => [
-      input.dataset.playerName, {name: input.value.trim(), number: numbers[index].value.trim()},
+      input.dataset.playerName, {name: input.value.trim(), number: numbers[index].value.trim(), position: positions[index].value},
     ]));
     try { localStorage.setItem(rosterKey, JSON.stringify(profiles)); } catch {}
     showProfiles();
