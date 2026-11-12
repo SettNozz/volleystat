@@ -61,6 +61,7 @@
   <a class="back" href="{{ url_for('player_statistics', job_id=job.job_id, player=player) }}">← Player statistics</a>
 </header>
 <main>
+  {% set active_tab = 'players' %}{% include 'workspace_tabs.html' %}
   <div class="head">
     <span class="portrait" aria-hidden="true">{{ player }}
       {% if player in portraits %}<img id="portrait" src="{{ url_for('player_portrait', job_id=job.job_id, player_id=player) }}" alt="" onerror="this.hidden = true">{% endif %}

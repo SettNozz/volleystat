@@ -25,6 +25,8 @@ def _frame(value):
 def _attempts(stats, key):
     result = []
     for index, item in enumerate(stats.get(key) or []):
+        if item.get("excluded_from_match_stats"):
+            continue
         lc = item.get("lifecycle") or {}
         start = lc.get("serve_frame")
         if not _frame(start):
@@ -46,12 +48,18 @@ def reconcile_statistics(stats, report, point_reviews=()):
     current_key = "service_attempts" if stats.get("service_attempts") else "rallies"
     score_key = "service_attempts_fsm" if "service_attempts_fsm" in stats else current_key
     current, scored = _attempts(stats, current_key), _attempts(stats, score_key)
+    rejected_serves = set()
+    for event in events:
+        original = event.get("review_original") or event
+        if original.get("type") in {"serve", "serve_fault"} and (
+                event.get("review_excluded") or event.get("frame") != original.get("frame")):
+            rejected_serves.add(original.get("frame"))
     ledger = defaultdict(list)
     for point in (stats.get("match_analytics") or {}).get("points") or []:
         if point.get("rally_id") is not None:
             ledger[point["rally_id"]].append(point)
     id_counts = Counter(a["rally_id"] for a in scored if a["rally_id"] is not None)
-    refs = {a["ref"] for a in scored}
+    refs = {f"{score_key}:{index}" for index, _ in enumerate(stats.get(score_key) or [])}
     reviews = {}
     for review in point_reviews:
         ref = review.get("attempt_ref")
@@ -70,6 +78,10 @@ def reconcile_statistics(stats, report, point_reviews=()):
         if len(candidates) > 1 or id_counts[attempt["rally_id"]] > 1:
             issues.append("ambiguous_point_link")
         original = candidates[0] if len(candidates) == 1 else {}
+        if attempt["serve_frame"] in rejected_serves:
+            issues.append("serve_anchor_rejected")
+        if original.get("evidence") == "next_confirmed_serve" and original.get("evidence_frame") in rejected_serves:
+            issues.append("point_confirmation_rejected")
         winner = side(original.get("winner_court_side")) if original.get("status") == "confirmed" else None
         if original.get("status") == "confirmed" and not winner:
             issues.append("point_side_missing")
@@ -92,7 +104,8 @@ def reconcile_statistics(stats, report, point_reviews=()):
         })
     points_by_ref = {p["attempt_ref"]: p for p in points}
     indexed = [(i, e) for i, e in enumerate(events)
-               if e.get("type") in CONTACT_TYPES | {"serve_fault"} and _frame(e.get("frame"))]
+               if e.get("type") in CONTACT_TYPES | {"serve_fault"} and _frame(e.get("frame"))
+               and not e.get("review_excluded") and not e.get("excluded_from_match_stats")]
     ordered = sorted(indexed, key=lambda pair: pair[1]["frame"])
     frames = [event["frame"] for _, event in ordered]
 
@@ -241,6 +254,7 @@ def statistic_evidence(summary, player, kind, metric):
         if metric not in {"total", "errors", "rate"} and outcome != metric:
             continue
         selected.append(contact)
+    selected.sort(key=lambda contact: (contact["frame"], contact["event_index"]))
     numerator = "error" if kind == "serve" else "controlled"
     return {"contacts": selected, "total": len(selected),
             "human_authors": sum(c["author_source"] == "human" for c in selected),

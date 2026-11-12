@@ -1,12 +1,14 @@
 function buildServeScore(events, attempts, eventTeams) {
   const serves = new Map();
   events.forEach((event, index) => {
+    if (event.review_excluded || event.excluded_from_match_stats) return;
     if (event.type === 'serve' && Number.isInteger(event.frame) && event.frame >= 0) {
       serves.set(event.frame, eventTeams[index]);
     }
   });
   const attemptsByServe = new Map();
   for (const attempt of attempts) {
+    if (attempt.excluded_from_match_stats) continue;
     const start = attempt.lifecycle?.serve_frame ?? attempt.serve_reception?.serve?.frame ?? attempt.start_frame;
     if (!Number.isInteger(start) || start < 0) continue;
     if (!serves.has(start) && !attempt.lifecycle?.serve_confirmed && !attempt.serve_reception?.serve) continue;
@@ -47,4 +49,27 @@ function serveScoreAt(points, frame) {
     else high = mid;
   }
   return points[low - 1] || { near: 0, far: 0, unknown: 0 };
+}
+
+function renderWorkspaceScore(workspace, frame) {
+  const config = workspace.config;
+  const segment = config.segments.find(item => item.start_frame <= frame && frame <= item.end_frame) || {};
+  const mapping = {...config.team_identity_map, ...(segment.team_identity_map || {})};
+  const set = segment.set_id ?? workspace.first_set;
+  const score = Object.fromEntries(Object.keys(config.teams).map(team => [team,
+    set === workspace.first_set ? config.initial_score[team] || 0 : 0]));
+  let unknown = 0;
+  for (const point of workspace.points) {
+    if (point.set_id !== set || !Number.isFinite(point.frame) || point.frame > frame) continue;
+    if (point.status === 'confirmed' && point.winner_team_id in score) score[point.winner_team_id]++;
+    else unknown++;
+  }
+  document.getElementById('nearScore').value = score[mapping.team_b] || 0;
+  document.getElementById('farScore').value = score[mapping.team_a] || 0;
+  const missing = document.getElementById('unknownScore');
+  missing.hidden = !unknown; missing.textContent = unknown ? `+?${unknown}` : '';
+  for (const [side, team] of [['b', mapping.team_b], ['a', mapping.team_a]]) {
+    const input = document.querySelector(`.scoreboard input[data-team-side="${side}"]`);
+    if (input) { input.value = config.teams[team].name; input.readOnly = true; input.title = 'Edit team names in Match setup'; }
+  }
 }

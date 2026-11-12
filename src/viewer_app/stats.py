@@ -26,9 +26,11 @@ def _prepare_viewer_stats(stats: dict) -> dict:
     and total instead of guessing service outcomes from noisy contact events.
     """
     prepared = dict(stats)
-    prepared["rallies"] = list(stats.get("rallies") or [])
-    prepared["service_attempts"] = list(stats.get("service_attempts") or [])
+    prepared["rallies"] = [item for item in stats.get("rallies") or [] if not item.get("excluded_from_match_stats")]
+    prepared["service_attempts"] = [item for item in stats.get("service_attempts") or [] if not item.get("excluded_from_match_stats")]
     prepared.setdefault("all_events", [])
+    prepared["active_event_count"] = sum(not event.get("review_excluded") and not event.get("excluded_from_match_stats")
+                                         for event in prepared["all_events"])
 
     lifecycle = stats.get("rally_lifecycle")
     lifecycle_available = isinstance(lifecycle, dict)

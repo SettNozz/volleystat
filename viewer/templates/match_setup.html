@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Match setup · CourtSense</title>
+<link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
+<link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='workspace.css') }}" rel="stylesheet">
+<style>
+  .setup-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(19rem, 1fr); gap: 1rem; align-items: start; }
+  .setup-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.1rem; margin: 1rem 0; }
+  .setup-card h2 { margin-top: 0; }
+  #setup-video { width: 100%; max-height: 58vh; background: #101827; border-radius: 8px; }
+  .setup-controls, .setup-actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+  .setup-actions { margin: 1rem 0; }
+  .setup-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .8rem; }
+  .setup-fields label { display: grid; gap: .35rem; }
+  .setup-fields input, .setup-fields select { min-width: 0; width: 100%; }
+  .setup-card fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+  .setup-card legend { font-weight: 700; padding: 0 0 .8rem; }
+  .setup-timeline { position: relative; height: 2.8rem; border: 1px solid var(--border); border-radius: 7px; background: var(--head-bg); margin: 1rem 0; overflow: hidden; }
+  .setup-interval { position: absolute; top: .25rem; bottom: .25rem; min-width: 4px; border: 1px solid var(--primary); background: var(--primary-soft); padding: 0 .2rem; overflow: hidden; white-space: nowrap; font-size: .75rem; }
+  .setup-interval.non-game { background: #fff0dc; border-color: #bd761b; }
+  .setup-interval[aria-pressed="true"] { outline: 2px solid var(--ink); outline-offset: -3px; }
+  .setup-range { display: grid; grid-template-columns: 7rem minmax(0, 1fr) 5rem; align-items: center; gap: .6rem; margin: .7rem 0; }
+  .setup-range input { min-width: 0; width: 100%; }
+  .setup-range output { font-variant-numeric: tabular-nums; text-align: right; font-size: .82rem; }
+  .setup-list { max-height: 23rem; overflow: auto; padding-left: 1.2rem; }
+  .setup-list li { margin: .6rem 0; }
+  .setup-list button { width: 100%; text-align: left; }
+  .setup-list small { display: block; color: var(--muted2); }
+  .setup-list button[aria-pressed="true"] { border-color: var(--primary); background: var(--primary-soft); }
+  .setup-note { color: var(--muted2); line-height: 1.5; }
+  #setup-status[data-state="error"] { color: #ad3319; }
+  #setup-status[data-state="saved"] { color: #18753b; }
+  .setup-table-wrap { overflow: auto; }
+  .setup-table { border-collapse: collapse; width: 100%; }
+  .setup-table th, .setup-table td { padding: .65rem; text-align: left; border-bottom: 1px solid var(--border); }
+  .setup-table input[type="text"] { max-width: 22rem; width: 100%; }
+  .setup-table input[type="number"] { width: 6rem; }
+  .setup-table input[type="checkbox"] { width: 1.1rem; height: 1.1rem; }
+  @media (max-width: 850px) { .setup-layout { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+{% set active_tab = 'setup' %}
+{% include 'workspace_tabs.html' %}
+<main>
+  <h1>Set up this match</h1>
+  <p>Mark warm-up and breaks, define sets, confirm team sides and check the roster before reading match statistics.</p>
+  <div class="setup-actions">
+    <button type="button" id="setup-save" disabled>Save match setup</button>
+    <button type="button" id="setup-reload">Reload saved setup</button>
+    <button type="button" id="setup-download" disabled>Download match-config JSON</button>
+    <span id="setup-draft">Loading saved setup…</span>
+  </div>
+  <p id="setup-status" role="status" aria-live="polite"></p>
+  <div class="setup-layout">
+    <section class="setup-card" aria-labelledby="timeline-title">
+      <h2 id="timeline-title">Match timeline</h2>
+      <video id="setup-video" controls preload="metadata" src="{{ video_url }}"></video>
+      <p id="setup-time" class="setup-note">0:00 · frame 0</p>
+      <label class="setup-range">Video position <input id="setup-seek" type="range" min="0" max="{{ [total_frames - 1, 0] | max }}" value="0" step="1" aria-label="Video position"><output id="setup-position">0:00</output></label>
+      <div id="setup-timeline" class="setup-timeline" role="group" aria-label="Saved and draft match intervals"></div>
+      <fieldset id="interval-fields" disabled>
+        <legend>Choose interval boundaries</legend>
+        <label class="setup-range">Selection start <input id="interval-start-range" type="range" min="0" max="{{ [total_frames - 1, 0] | max }}" value="0" step="1"><output id="interval-start-time">0:00</output></label>
+        <label class="setup-range">Selection end <input id="interval-end-range" type="range" min="0" max="{{ [total_frames - 1, 0] | max }}" value="{{ [total_frames - 1, 0] | max }}" step="1"><output id="interval-end-time">0:00</output></label>
+        <div class="setup-controls">
+          <button type="button" id="mark-start">Use current as start</button>
+          <button type="button" id="mark-end">Use current as end</button>
+          <button type="button" id="preview-selection">Play selection</button>
+        </div>
+        <div class="setup-fields" style="margin-top:1rem">
+          <label>Interval type <select id="interval-type"><option value="set">Set / match play</option><option value="non_game">Warm-up / break / non-game</option></select></label>
+          <label id="set-name-label">Set ID <input id="interval-set" type="text" maxlength="64" value="set_1" placeholder="set_1"></label>
+          <label>Start frame <input id="interval-start" type="number" min="0" step="1" value="0"></label>
+          <label>End frame (included) <input id="interval-end" type="number" min="0" step="1" value="{{ [total_frames - 1, 0] | max }}"></label>
+          <label id="set-far-label">Far side during interval <select id="interval-far"></select></label>
+          <label id="set-near-label">Near side during interval <select id="interval-near"></select></label>
+        </div>
+        <div class="setup-actions">
+          <button type="button" id="swap-interval-sides">Swap interval sides</button>
+          <button type="button" id="apply-interval">Add interval to draft</button>
+          <button type="button" id="remove-interval" disabled>Remove selected interval</button>
+          <button type="button" id="new-interval">New selection</button>
+        </div>
+      </fieldset>
+      <p id="selection-status" class="setup-note">Selection changes enter the draft when you add or update the interval.</p>
+      <p class="setup-note">Intervals include both endpoints and must not overlap. Adjacent intervals use consecutive frames, for example 0–899 and 900–1799. Unmarked footage keeps its existing context. Non-game intervals are excluded from match statistics.</p>
+    </section>
+    <section class="setup-card" aria-labelledby="intervals-title">
+      <h2 id="intervals-title">Sets and excluded intervals</h2>
+      <p class="setup-note">Select an interval to adjust its boundaries or side mapping. Click Save match setup to persist the complete draft.</p>
+      <ol id="setup-intervals" class="setup-list"></ol>
+      <details><summary>Save history</summary><ol id="setup-history"></ol></details>
+    </section>
+  </div>
+  <section class="setup-card" aria-labelledby="teams-title">
+    <h2 id="teams-title">Teams and starting score</h2>
+    <fieldset id="team-fields" disabled>
+      <div class="setup-table-wrap"><table class="setup-table">
+        <thead><tr><th>Team</th><th>Display name</th><th>Starting points</th></tr></thead>
+        <tbody id="setup-teams"></tbody>
+      </table></div>
+      <div class="setup-fields" style="margin-top:1rem">
+        <label>Default far side <select id="match-far"></select></label>
+        <label>Default near side <select id="match-near"></select></label>
+      </div>
+      <div class="setup-actions"><button type="button" id="swap-match-sides">Swap default sides</button></div>
+    </fieldset>
+    <p class="setup-note">Team identities stay stable when sides switch. An interval mapping overrides these defaults for that part of the video.</p>
+  </section>
+  <section class="setup-card" aria-labelledby="roster-title">
+    <h2 id="roster-title">Confirm the roster</h2>
+    <fieldset id="roster-fields" disabled>
+      <div class="setup-table-wrap"><table class="setup-table">
+        <thead><tr><th>Player</th><th>Team</th><th>Roster confirmed</th></tr></thead>
+        <tbody id="setup-roster"></tbody>
+      </table></div>
+    </fieldset>
+    <p class="setup-note">Confirming a roster entry records your team assignment for this match. It does not verify automatic tracking or contact attribution.</p>
+  </section>
+</main>
+<script id="match-setup-data" type="application/json">{{ {'api_url': api_url, 'source': source, 'revision': revision, 'fps': fps, 'total_frames': total_frames} | tojson }}</script>
+<script src="{{ url_for('static', filename='match_setup.js') }}"></script>
+</body>
+</html>

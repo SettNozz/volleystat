@@ -514,6 +514,7 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   abstain. Point reviews append beside results, bound to both source hashes;
   confirming a winner never verifies a contact or attack outcome. See
   `docs/statistics_evidence.md`. Original FSM score/heatmap remain separate.
+- **Match workspaces**: `src/viewer_app/match_workspace.py` projects source-bound context/contact edits across viewer, statistics, highlights, Excel and tactics; revision checks cover workspace/author/point logs. Developer navigation is opt-in, not access control. Preserve per-axis review provenance, manual rotations and unknown evidence; see `docs/match_workspaces.md`.
 - **Pose input and net floor**: default `--pose-imgsz 2560`.
   `GameAnalyzer._validated_net_floor` falls back to the homography world-y=0
   line (`calibrated_court_midline_fallback`) when the detected divider fails the

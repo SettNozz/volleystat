@@ -90,6 +90,7 @@
   <a class="back" href="{{ url_for('results', job_id=job.job_id) }}">← Back to match</a>
 </header>
 <main>
+  {% set active_tab = 'players' %}{% include 'workspace_tabs.html' %}
   {% macro evidence_link(player, mode, key, value) -%}
   <a class="stat-evidence" href="{{ url_for('statistics_evidence_page', job_id=job.job_id, player=player, kind=mode, metric=key) }}" title="Watch contacts counted by this metric; inspect author confirmation and unresolved outcomes">{{ value }}</a>
   {%- endmacro %}
@@ -101,7 +102,7 @@
       <span>{{ summary.players | length }} tracked players</span>
     </p>
   </header>
-  <p class="reconciliation-note"><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}#point-reconciliation">Review statistics evidence and point winners</a>
+  <p class="reconciliation-note"><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}">Statistics evidence</a>
     · {{ summary.reconciliation.conflicts }} conflicts · {{ summary.reconciliation.point_summary.get('unresolved', 0) }} unresolved points.<br>
     Click any statistic to watch its evidence. Human-confirmed authors and derived outcomes are counted separately.</p>
   {% if summary.players %}

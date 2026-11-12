@@ -101,7 +101,7 @@ for (const form of document.querySelectorAll('.point-review')) {
     button.disabled = true; status.textContent = 'Saving point review…';
     try {
       const response = await fetch(evidenceData.api, {method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({source: evidenceData.source, attempt_ref: form.dataset.attempt,
+        body: JSON.stringify({source: evidenceData.source, revision: evidenceData.revision, attempt_ref: form.dataset.attempt,
           reset: value === 'reset', winner_side: value === 'a' || value === 'b' ? value : null})});
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not save point review');

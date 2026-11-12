@@ -516,7 +516,8 @@ function redraw() {
     const FADE_SEC = 2.5;
     const t = vid.currentTime;
     let recentEv = null;
-    for (let i = EVENTS.length - 1; i >= 0; i--) {
+    for (let order = orderedEventIndexes.length - 1; order >= 0; order--) {
+      const i = orderedEventIndexes[order];
       const dt = t - EVENTS[i].time;
       if (dt >= 0 && dt < FADE_SEC && evVisible(EVENTS[i], eventTeams[i])) {
         recentEv = { ...EVENTS[i], team: eventTeams[i] };

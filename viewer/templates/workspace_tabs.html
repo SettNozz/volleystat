@@ -1,0 +1,22 @@
+<link href="{{ url_for('static', filename='workspace_tabs.css') }}" rel="stylesheet">
+<nav class="workspace-tabs" aria-label="Match workspace">
+  <a href="{{ url_for('results', job_id=job.job_id) }}"{% if active_tab == 'match' %} aria-current="page"{% endif %}>Match viewer</a>
+  <a href="{{ url_for('player_statistics', job_id=job.job_id) }}"{% if active_tab == 'players' %} aria-current="page"{% endif %}>Player statistics</a>
+  <a href="{{ url_for('match_setup_page', job_id=job.job_id) }}"{% if active_tab == 'setup' %} aria-current="page"{% endif %}>Match setup</a>
+  <a href="{{ url_for('tactics_page', job_id=job.job_id) }}"{% if active_tab == 'tactics' %} aria-current="page"{% endif %}>Tactics</a>
+  <a class="developer-workspace-link" data-developer-tab href="{{ url_for('developer_review_page', job_id=job.job_id) }}"{% if active_tab == 'developer' %} aria-current="page"{% else %} hidden{% endif %}>Developer review</a>
+</nav>
+<script>
+(() => {
+  const enabled = new URLSearchParams(location.search).get('developer');
+  let developer = {{ (active_tab == 'developer') | tojson }};
+  try {
+    if (enabled === '1' || developer) localStorage.setItem('courtsense-developer', '1');
+    if (enabled === '0') localStorage.removeItem('courtsense-developer');
+    developer = enabled === '0' ? false : developer || localStorage.getItem('courtsense-developer') === '1';
+  } catch { developer = developer || enabled === '1'; }
+  const apply = () => document.querySelectorAll('[data-developer-tab], [data-developer-tool]').forEach(link => { link.hidden = !developer; });
+  apply();
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply, {once:true});
+})();
+</script>
