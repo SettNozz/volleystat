@@ -42,6 +42,7 @@ Configured checkpoint files must remain available for checksum validation.
 | Event overlay | Raw neural logits keyed by checkpoint, backend and exact input tensor | Replay phase gates, smoothing and display rules |
 | Contact spotter, when enabled | Per-frame probabilities before constrained decoding | Decode/segment again without neural forward passes when features are unchanged |
 | SAM-guided recovery, when enabled | Raw crop-pose outputs and recovered proposals with provenance | Reuse compatible crops/proposals; geometry-dependent filtering remains separate |
+| Pose fragments | `pose_fragment_crop_raw`: YOLO-pose output on a targeted native crop of a large half-body observation | Merge anatomically matching full-frame fragments without inference; recover missing joints from cached crops. Strict replay fails if a requested crop is missing. Original full-frame pose/tracker keys remain valid. |
 
 No cached model output is detector or human ground truth. Cached reconstructed
 ball coordinates are never relabelled as observed detector boxes. Human checks

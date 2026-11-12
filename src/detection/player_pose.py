@@ -187,6 +187,7 @@ class PlayerPose:
     team_id: Optional[str] = None  # stable real team, independent of court side
     team_source: Optional[str] = None
     team_geometry: Optional[str] = None  # instantaneous foot-side evidence
+    pose_repair: Optional[dict] = None  # observed same-frame YOLO donors, never interpolation
 
     @property
     def bbox_h(self) -> float:
