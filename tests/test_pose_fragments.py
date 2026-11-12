@@ -52,6 +52,38 @@ def test_reported_server_is_one_track_with_observed_arm_and_leg_chains(scale):
     np.testing.assert_array_equal(merged[0].keypoints, reversed_result[0].keypoints)
 
 
+@pytest.mark.parametrize('scale', [.25, 1., 2.])
+def test_f45_duplicate_with_narrow_hip_estimate_uses_matching_torso_scale(scale):
+    # Model observations of the foreground number-6 player at f45. The two
+    # hip widths differ by 1.88x despite near-identical torso bone lengths.
+    first = np.zeros((17, 3), dtype=np.float32)
+    second = first.copy()
+    first[5:] = [[1114.5,949.5,1],[1300.5,960,1],[1021.5,1039.5,1],
+                 [1378.5,1044,.98],[1041.8,1113.8,.94],[1419.8,1038,.84],
+                 [1131,1223.2,1],[1233,1232.2,1],[1181.2,1428,1],
+                 [1206,1437.8,1],[1210.5,1617,.87],[1171.5,1611,.81]]
+    second[5:] = [[1142.2,935.2,.97],[1255.5,955.5,.97],[1053,1055.2,.91],
+                  [1318.5,1122,.93],[1032.8,1120.5,.63],[1317,1222.5,.73],
+                  [1156.5,1221,1],[1210.5,1227.8,1],[1177.5,1455,1],
+                  [1167.8,1467,1],[1195.5,1674,.99],[1151.2,1674,.99]]
+    poses = []
+    for tid, box, points in ((9, (984.6,751.2,1460.7,1681.4), first),
+                             (18, (914.1,841.9,1449,1812), second)):
+        points[:, :2] *= scale
+        box = tuple(v*scale for v in box)
+        poses.append(PlayerPose('team_b', ((box[0]+box[2])/2,(box[1]+box[3])/2), box, points, tid))
+    assert same_person(*poses)
+    merged = merge_fragments(poses)
+    assert len(merged) == 1
+    assert {p['id'] for p in merged[0].pose_repair['observations']} == {9,18}
+    # The partly overlapping teammate is smaller and must remain distinct.
+    teammate = deepcopy(poses[0])
+    teammate.track_id = 4
+    teammate.bbox = tuple(v*scale for v in (1280.1,845.4,1428.3,1370.5))
+    teammate.keypoints[:, :2] = (teammate.keypoints[:, :2] - np.array([1200,1200])*scale) * .45 + np.array([1350,1100])*scale
+    assert len(merge_fragments([*poses,teammate])) == 2
+
+
 def test_overlapping_people_need_joint_and_scale_agreement_not_box_iou():
     lower, upper = server_pair()
     upper.keypoints[:, 0] += 100

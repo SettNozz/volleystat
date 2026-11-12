@@ -38,14 +38,21 @@ def same_person(a: PlayerPose, b: PlayerPose) -> bool:
         shared = [i for i in CORE if min(p[i, 2], q[i, 2]) >= CONF]
     if len(shared) < 3 or not all(i in shared for i in (11, 12)):
         return False
-    # Hip width is local body scale, so distant players inside a foreground
-    # player's large box cannot borrow its generous pixel-distance threshold.
-    widths = [np.linalg.norm(k[11, :2] - k[12, :2]) for k in (p, q)]
-    if min(widths) <= 1e-6 or max(widths) / min(widths) > 1.5:
+    # Hip width collapses in profile and duplicate detections can disagree
+    # about it even when the torso joints coincide. Use confident torso bones
+    # as a second local scale cue. Box height would let a distant teammate
+    # borrow the foreground player's large pixel-distance tolerance.
+    scales = []
+    for points in (p, q):
+        hip_width = np.linalg.norm(points[11, :2] - points[12, :2])
+        torso = [np.linalg.norm(points[s, :2] - points[h, :2])
+                 for s, h in ((5, 11), (6, 12)) if min(points[s, 2], points[h, 2]) >= CONF]
+        scales.append(max(hip_width, .40 * float(np.median(torso)) if torso else 0.))
+    if min(scales) <= 1e-6 or max(scales) / min(scales) > 1.5:
         return False
     distances = np.linalg.norm(p[shared, :2] - q[shared, :2], axis=1)
-    return bool(np.median(distances) <= .40 * min(widths)
-                and np.max(distances) <= .65 * min(widths))
+    return bool(np.median(distances) <= .40 * min(scales)
+                and np.max(distances) <= .65 * min(scales))
 
 
 def combine(anchor: PlayerPose, donors: list[PlayerPose]) -> PlayerPose:

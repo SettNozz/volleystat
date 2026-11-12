@@ -57,7 +57,10 @@ before court membership, identity, player caps and feature extraction. It
 addresses duplicate upper/lower-body detections of the same person during
 near-camera serves. Box overlap alone is insufficient: merging requires
 matching hips, at least three confident named torso/body anchors, comparable
-hip widths and small joint displacement relative to that width. Every member
+local body scales and small joint displacement relative to that scale. The
+scale is the larger of hip width and 40% of the median confident
+shoulder-to-hip bone length. This retains a torso-based reference when the
+hip estimate narrows in profile or under occlusion. Every member
 of a merged group must agree with every other member. Distinct known roster
 IDs never merge. Court-side predictions do not decide whether two observations
 describe the same person.
@@ -96,6 +99,15 @@ contains only the lower-body detection; a targeted same-frame crop supplies
 the shoulders/arms. Hidden or low-confidence face joints remain missing.
 These are development-video checks, not a held-out pose-accuracy score.
 
+The follow-up f45 report exposes another duplicate, IDs 9 and 18 on the
+foreground number-6 player. Their hip widths differ by 1.88x while the torso
+bones have matching lengths and corresponding torso joints differ by only
+23–45 native pixels. Hip width alone incorrectly rejected this pair. The
+combined local scale accepts it while retaining the three-anchor, overlap,
+scale-ratio and pairwise-group constraints. A regression covers this case at
+native, quarter and double resolution, including a smaller overlapping
+teammate that must remain separate.
+
 Validation on this 4,496-frame source produced a fresh paired result in
 `results/viewer/job_pose_fragments_20261112_v1`. After explicitly capturing
 136 missing pose crops, 236 new OSNet crop embeddings and one contact
@@ -105,3 +117,15 @@ per frame and each side respects the six-player cap. The earlier P6
 f520–560 and P2 f3001 team fixes remain intact. Exported ball coordinates
 match the previous result on every frame. Both the result page and annotation
 endpoint return HTTP 200. Targeted subsystem validation: 117 passing tests.
+
+The f45 follow-up is exported separately to
+`results/viewer/job_pose_fragments_20261112_v2`. Its foreground player has one
+skeleton, retained track 9 and roster ID P2; the overlapping P6 observation
+remains separate. F3366/f3376 and earlier team fixes still pass. After
+capturing seven newly requested crops, 47 new OSNet embeddings and one contact
+probability output, strict replay again completes all 4,496 frames with zero
+new model outputs/cache writes. Sequential feature extraction, roster
+uniqueness, side caps and unchanged exported ball coordinates all pass;
+targeted tests now total 120. The result and annotation endpoints return
+HTTP 200. Visual review covers all 18 additional groups found in the previous
+saved export by the refined scale rule.
