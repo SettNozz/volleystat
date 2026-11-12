@@ -113,6 +113,7 @@ class TestNetFloorLine(unittest.TestCase):
         self.assertGreater(pose.back_facing_score, 0.45)
         self.assertEqual(kept[0].team, "team_b")
         self.assertEqual(kept[0].team_prior, "serve_back_facing_net_override")
+        self.assertEqual(kept[0].team_geometry, "team_a")
 
     def test_back_facing_prior_does_not_move_clear_far_player(self):
         homography = np.array([

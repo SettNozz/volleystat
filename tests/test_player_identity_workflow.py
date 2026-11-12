@@ -87,6 +87,31 @@ def test_incomplete_roster_does_not_fabricate_six_ids():
     assert all(p['player_id'] is None for f in frames for p in f['poses'])
 
 
+def test_tentative_sixth_candidate_cannot_bootstrap_an_automatic_roster():
+    frames,image=fixture()
+    for frame in frames:
+        frame['poses'][5].update(team_source='frame_geometry',team_prior='serve_back_facing_net_override',
+                                 team_geometry='team_a')
+    observations=observations_from_annotations(frames)
+    assert all(row['players'][5]['side_prior_only'] for row in observations)
+    report=run_identity_pass(frames,[],30.,ColourEncoder())
+    assert report['status']=='no_complete_roster'
+    assert all(p['player_id'] is None for frame in frames for p in frame['poses'])
+
+
+def test_confirmed_continuous_member_with_net_prior_is_not_tentative():
+    frames,_=fixture()
+    frames[0]['poses'][0].update(team_source='continuous_track_membership',team_prior='back_facing_net_occlusion')
+    assert not observations_from_annotations(frames)[0]['players'][0]['side_prior_only']
+
+
+def test_back_facing_player_without_side_override_remains_eligible():
+    frames,_=fixture()
+    frames[0]['poses'][0].update(team_source='frame_geometry',team_prior='back_facing_net_occlusion',
+                                team_geometry='team_b')
+    assert not observations_from_annotations(frames)[0]['players'][0]['side_prior_only']
+
+
 def test_manual_seed_matches_boxes_not_previous_pose_index_or_raw_id(tmp_path):
     frames,_=fixture()
     video=tmp_path/'video.mp4'

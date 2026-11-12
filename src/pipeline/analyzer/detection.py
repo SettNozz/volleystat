@@ -293,6 +293,10 @@ class DetectionMixin:
             projector=projector,
         )
 
+        # Reconcile detector fragments before court membership, roster IDs,
+        # player caps and feature extraction. Raw/tracked caches stay unchanged.
+        poses = self._repair_pose_fragments(poses, frame, frame_index, projector)
+
         recovery = getattr(self, "_person_pose_recovery", None)
         if recovery is not None:
             if cache:
@@ -340,3 +344,30 @@ class DetectionMixin:
         if recovery is not None:
             recovery.accepted_person_frames += sum(p.source == "sam_guided_yolo_pose" for p in poses)
         return poses_to_teams(poses), poses
+
+    def _repair_pose_fragments(self, poses, frame, frame_index, projector):
+        from src.detection.pose_fragments import merge_fragments, PoseFragmentRecovery
+        poses = merge_fragments(poses)
+        resolved = getattr(self, 'model_provenance', {}).get('pose_estimator')
+        if resolved is None or projector is None:
+            return poses
+        cache = getattr(self, '_model_cache', None)
+        recovery = getattr(self, '_pose_fragment_recovery', None)
+        if recovery is None or recovery.cache is not cache:
+            size = getattr(self, '_cache_frame_size', None) or (frame.shape[1], frame.shape[0])
+            recovery = self._pose_fragment_recovery = PoseFragmentRecovery(
+                resolved['path'], self._pose_spec, size, cache)
+
+        pixels = frame if frame.size else None
+        def load_frame():
+            nonlocal pixels
+            if pixels is None:
+                pixels = self._pose_fragment_frame_loader(frame_index)
+            return pixels
+
+        # Bench observations cannot request additional inference merely because
+        # their legs are hidden. Established court tracks may roam off court.
+        members = getattr(getattr(self, '_court_gate', None), '_member_team', {})
+        selected = [p for p in poses if projector.entry_score(p.foot_point()) >= 0 or p.track_id in members]
+        fixed = recovery.repair(selected, frame_index, load_frame)
+        return merge_fragments(fixed + [p for p in poses if p not in selected])

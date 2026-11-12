@@ -96,3 +96,51 @@ support at least .60. It requires three observations within .33 seconds;
 equally plausible boxes abstain. These are engineering thresholds, not
 calibrated confidence or a held-out accuracy estimate. Ordinary observations
 already belonging to the target team are not new handoff candidates.
+
+## Missing servers and prior-only opponents
+
+Six is an upper bound on players per side, not a required visible count. A
+server may stand outside the court or camera between rallies. Missing poses
+and missing roster IDs remain absent until observation evidence supports them.
+The same rule applies during play; it does not depend on an FSM phase guess.
+
+At f140 of `XNCS5BLBwig_00-00-00_00-02-30`, five near-side players are visible
+while the sixth prepares to serve off camera. Opponent raw track 49 briefly
+entered the near-side candidate pool through the back-facing net prior. Weak
+P3 matches were then propagated along that opponent's continuous track.
+The frozen f512 P3 anchor itself depicts the correct near-side player.
+
+`team_geometry` now retains the existing foot-side decision before the soft
+prior changes it. `side_prior_only` marks unconfirmed prior-based candidates
+for automatic seed selection and whole-video roster chunks; they cannot
+bootstrap a roster. Explicit roster-photo anchors and confirmed continuous
+members retain their precedence through jumps and occlusion.
+
+Before membership propagation, prior-only identity votes on each continuous
+tracklet need independent team/anchor evidence or at least three distinct
+strong frozen-gallery observations. Strength uses the existing recovery
+distance limit (default 0.35), and the confirmation count uses the existing
+recovery setting (default 3). Ordinary association, its motion history and
+the frozen galleries are preserved. Weak matches cannot become their own
+confirmation through subsequent tracklet filling or handoff recovery.
+Rejected observations export `identity.reason: uncorroborated_side_prior`;
+unassigned soft priors fall back to their pre-prior geometry. No minimum
+player count enters these decisions.
+
+Regression coverage includes five visible roster members plus a look-alike
+opponent, the real sixth player's later return, genuine net players with
+three strong observations, incomplete automatic rosters, confirmed anchors,
+jumps, recycled raw IDs and preservation of pose/centre alignment. This is
+model-derived validation, not a held-out attribution score.
+
+The fresh result `results/viewer/job_missing_server_20261112_v1` completes a
+strict 4,496-frame cache replay with zero new model outputs or cache writes.
+F140 has five near-side poses; track 49 remains an opponent without P3 across
+its exported observations. P3 still names the correct f512 anchor. F45,
+F3366/F3376, the P6 jump, the P2 f3001 handoff and the established net-player
+IDs remain covered. Final pose features match fresh sequential extraction;
+exported ball coordinates match the previous result on every frame. Only one
+changed contact-probability output needed capture; detector and OSNet outputs
+were reused. Targeted tests: 177 passing. Result and annotation endpoints
+return HTTP 200. Human labels, roster source files and prior results remain
+preserved.

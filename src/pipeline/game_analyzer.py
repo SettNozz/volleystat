@@ -682,6 +682,7 @@ class GameAnalyzer(
                         "team_id": p.team_id,
                         "team_source": p.team_source,
                         "team_geometry": p.team_geometry,
+                        **({"pose_repair": p.pose_repair} if p.pose_repair else {}),
                     }
                     for p in player_poses
                 ],
@@ -1006,6 +1007,21 @@ class GameAnalyzer(
                 yield idx, frame
                 idx += 1
 
+        fragment_capture = None
+        def fragment_frame(index):
+            # A warm full-frame cache needs pixels only for a missing crop.
+            # Keep the main decoder's position and cached inference untouched.
+            nonlocal fragment_capture
+            if fragment_capture is None:
+                fragment_capture = cv2.VideoCapture(str(vp))
+            if int(fragment_capture.get(cv2.CAP_PROP_POS_FRAMES)) != index:
+                if not fragment_capture.set(cv2.CAP_PROP_POS_FRAMES, index):
+                    raise ValueError(f"Cannot seek pose recovery frame {index}")
+            ok, image = fragment_capture.read()
+            return image if ok else None
+        self._pose_fragment_frame_loader = fragment_frame
+        self._pose_fragment_recovery = None
+
         stats = GameStats(video_name=vp.name, fps=fps)
         scaled_calib = self.calibration  # already scaled — needed for _save_and_print
         try:
@@ -1040,6 +1056,8 @@ class GameAnalyzer(
         finally:
             self._close_prefetch()
             self._finish_embedding_prefetch(store_results=False)
+            if fragment_capture is not None:
+                fragment_capture.release()
             cap.release()
             if out_writer:
                 out_writer.release()
@@ -1117,6 +1135,9 @@ class GameAnalyzer(
                 if frame is None:
                     continue
                 yield idx, frame
+
+        self._pose_fragment_frame_loader = lambda index: cv2.imread(str(frame_files[index]))
+        self._pose_fragment_recovery = None
 
         stats = GameStats(video_name=fd.name, fps=fps)
         stats.models = dict(self.model_provenance)

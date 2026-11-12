@@ -187,6 +187,7 @@ class PlayerPose:
     team_id: Optional[str] = None  # stable real team, independent of court side
     team_source: Optional[str] = None
     team_geometry: Optional[str] = None  # instantaneous foot-side evidence
+    pose_repair: Optional[dict] = None  # observed same-frame YOLO donors, never interpolation
 
     @property
     def bbox_h(self) -> float:
@@ -495,6 +496,7 @@ class CourtPlayerGate:
                 # Use this only inside a narrow geometric ambiguity band; it
                 # can recover a near player whose ankles were pulled upward by
                 # net/teammate occlusion, but never move a clear far-side pose.
+                pose.team_geometry = pose.team
                 back_score = pose.back_facing_score
                 if (
                     back_score is not None
@@ -520,7 +522,6 @@ class CourtPlayerGate:
                             if serve_setup else "back_facing_net_override"
                         )
 
-                pose.team_geometry = pose.team
                 tid = pose.track_id
                 ankles = pose.ankles()
                 if tid is not None and tid not in self._member_team and len(ankles) == 2:

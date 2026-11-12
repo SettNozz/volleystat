@@ -101,6 +101,7 @@ def recover_recent_roster_handoffs(annotations, report, features, galleries, fps
         for i, pose in enumerate(poses):
             value, token = vectors[i], tokens.get((frame, i))
             if (i in continued or pose.get('player_id') or pose.get('team_id') == target
+                    or (pose.get('identity') or {}).get('reason') == 'uncorroborated_side_prior'
                     or value is None or token is None):
                 continue
             scores = {}

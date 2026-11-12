@@ -109,6 +109,35 @@ def test_jump_appearance_change_keeps_recent_identity_on_continuous_track():
     assert all(a['poses'][0]['player_id'] == 'P6' for a in anns)
 
 
+def test_tentative_net_opponent_cannot_acquire_absent_roster_id_by_membership_recovery():
+    anns = [{'f':f,'poses':[saved(3,pid='P6')]} for f in range(3)]
+    for f in range(3,8):
+        anns.append({'f':f,'poses':[{**saved(49), 'team_prior':'serve_back_facing_net_override',
+                                   'team_source':'frame_geometry','team_geometry':'team_a'}]})
+    vectors = {**features(), **{f'{f}:0':np.array([1.,0.]) for f in range(3,8)}}
+    preserve_roster_membership(anns,report(),vectors,30)
+    assert all(not a['poses'][0].get('player_id') and a['poses'][0]['team']=='a' for a in anns[3:])
+    assert all(a['poses'][0]['team_id']=='opponent_team' for a in anns[3:])
+
+
+def test_tentative_matches_cannot_seed_a_self_supporting_tracklet_membership():
+    anns = [{'f':f,'poses':[{**saved(49,pid='P6' if f<3 else None),
+                           'team_prior':'serve_back_facing_net_override','team_source':'frame_geometry',
+                           'team_geometry':'team_a'}]} for f in range(6)]
+    vectors = {**features(), **{f'{f}:0':np.array([.6,.8]) for f in range(1,6)}}
+    preserve_roster_membership(anns,report(),vectors,30)
+    assert all(not a['poses'][0].get('player_id') for a in anns[3:])
+
+
+def test_three_strong_prior_only_matches_preserve_real_net_player_through_missing_id():
+    anns = [{'f':f,'poses':[{**saved(49,pid='P6' if f<4 else None),
+                           'team_prior':'serve_back_facing_net_override','team_source':'frame_geometry',
+                           'team_geometry':'team_a'}]} for f in range(1,6)]
+    vectors = {**features(), **{f'{f}:0':np.array([1.,0.]) for f in range(1,6)}}
+    preserve_roster_membership(anns,report(),vectors,30)
+    assert all(a['poses'][0].get('player_id')=='P6' and a['poses'][0]['team']=='b' for a in anns)
+
+
 def test_roster_photo_corrects_its_continuous_track_before_side_filtering():
     anns = [{'f': 0, 'poses': [saved(3, side='a')]},
             {'f': 1, 'poses': [saved(3, side='a')]},

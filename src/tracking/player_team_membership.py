@@ -8,6 +8,61 @@ from src.tracking.court_pose_consistency import pose_tracklets
 from src.tracking.match_analytics import DEFAULT_TEAM_IDENTITY_MAP
 
 
+def tentative_roster_side(pose):
+    """A side changed only by a net-facing prior has no team confirmation."""
+    return (pose.get('team_source') == 'frame_geometry'
+            and pose.get('team_prior') in ('serve_back_facing_net_override', 'back_facing_net_override'))
+
+
+def _reject_uncorroborated_side_priors(annotations, report, features, galleries, fps):
+    """Do not let a few weak near-net matches manufacture a missing owner.
+
+    Keep ordinary association and its motion history intact. Before roster
+    membership can propagate an ID, prior-only tracklets need three distinct
+    strong frozen-gallery observations or independent team/anchor evidence.
+    """
+    blocked = set()
+    maximum = (report.get('parameters') or {}).get('recovery_appearance_max', .35)
+    minimum = (report.get('parameters') or {}).get('recovery_confirmations', 3)
+    rejected = 0
+    for tracklet in pose_tracklets(annotations, fps):
+        rows = [(frame, i, annotations[index]['poses'][i]) for frame, index, i in tracklet]
+        votes = defaultdict(list)
+        for frame, i, pose in rows:
+            if pose.get('player_id') in galleries:
+                votes[pose['player_id']].append((frame, i, pose))
+        unsupported = set()
+        for pid, matches in votes.items():
+            if any(not tentative_roster_side(pose) for _, _, pose in matches):
+                continue
+            strong = set()
+            for frame, i, pose in matches:
+                value = features.get(f'{frame}:{i}')
+                if value is None:
+                    continue
+                value = np.asarray(value, dtype=np.float32)
+                norm = np.linalg.norm(value)
+                if norm > 1e-8 and np.isfinite(value).all():
+                    distance = float(1 - np.max(galleries[pid] @ (value / norm)))
+                    if distance <= maximum:
+                        strong.add(frame)
+            if len(strong) < minimum:
+                unsupported.add(pid)
+        if not unsupported:
+            continue
+        for frame, i, pose in rows:
+            pid = pose.get('player_id')
+            if pid and pid not in unsupported:
+                continue
+            blocked.add((frame, i))
+            if pid:
+                rejected += 1
+            pose['player_id'] = None
+            pose['identity'] = {'method': report.get('method'), 'reason': 'uncorroborated_side_prior',
+                                'label_source': 'model', 'verified': False}
+    return blocked, rejected
+
+
 def team_map_at_frame(frame, identity_map=None, segments=()):
     result = {**DEFAULT_TEAM_IDENTITY_MAP, **(identity_map or {})}
     for segment in segments:
@@ -76,6 +131,7 @@ def preserve_roster_membership(annotations, report, features, fps, *, identity_m
             matrix = np.asarray(vectors, dtype=np.float32)
             gallery[pid] = matrix / np.maximum(np.linalg.norm(matrix, axis=1, keepdims=True), 1e-8)
     ids = list(gallery)
+    blocked, rejected = _reject_uncorroborated_side_priors(annotations, report, features, gallery, fps)
     points = [_centres(ann) for ann in annotations]
     rows = {(ann['f'], i): p for ann in annotations for i, p in enumerate(ann.get('poses') or [])}
     scores = {}
@@ -100,7 +156,7 @@ def preserve_roster_membership(annotations, report, features, fps, *, identity_m
         times = [frame for frame, _ in trusted]
         for frame, _, i in tracklet:
             key = (frame, i)
-            if rows[key].get('player_id'):
+            if rows[key].get('player_id') or key in blocked:
                 continue
             lo, hi = bisect_left(times, frame - fps), bisect_right(times, frame + fps)
             nearby = Counter(pid for _, pid in trusted[lo:hi])
@@ -123,7 +179,7 @@ def preserve_roster_membership(annotations, report, features, fps, *, identity_m
             continue
         for frame, _, i in tracklet:
             key, pose = (frame, i), rows[(frame, i)]
-            if pose.get('player_id') or key in proposed:
+            if pose.get('player_id') or key in proposed or key in blocked:
                 continue
             value = scores.get(key)
             if value is not None:
@@ -138,7 +194,7 @@ def preserve_roster_membership(annotations, report, features, fps, *, identity_m
         if pid in gallery:
             anchors[pid].append((frame, pose['bb']))
     for key, value in scores.items():
-        if key in proposed or not len(value):
+        if key in proposed or not len(value) or key in blocked or tentative_roster_side(rows[key]):
             continue
         best = int(value.argmax())
         pid, similarity = ids[best], float(value[best])
@@ -180,6 +236,8 @@ def preserve_roster_membership(annotations, report, features, fps, *, identity_m
         frame = ann['f']
         mapping = team_map_at_frame(frame, identity_map, segments)
         for pose in ann.get('poses') or []:
+            if not pose.get('player_id') and tentative_roster_side(pose):
+                pose['team'] = pose.get('team_geometry', pose['team'])[-1]
             side = 'team_' + pose['team'][-1]
             handoff = pose.get('team_source') == 'recent_roster_track_handoff'
             if pose.get('player_id') in gallery or handoff:
@@ -198,6 +256,7 @@ def preserve_roster_membership(annotations, report, features, fps, *, identity_m
     report['team_membership'] = {'method': 'continuous_roster_appearance_motion_v2',
                                'recovered_ids': recovered, 'corrected_sides': changed,
                                'recent_handoffs': handoffs,
+                               'side_prior_rejected_observations': rejected,
                                'label_source': 'model', 'verified': False}
     report['person_observations'] = dict(Counter(p['player_id'] for p in rows.values() if p.get('player_id')))
     report['assigned'] = sum(report['person_observations'].values())
