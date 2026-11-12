@@ -161,7 +161,7 @@ def preserve_roster_membership(annotations, report, features, fps, *, identity_m
     for (frame, index), value in proposed.items():
         by_frame[frame].append((index, value))
     recovered = changed = 0
-    for ann, old_points in zip(annotations, points):
+    for ann in annotations:
         frame = ann['f']
         occupied = {p.get('player_id') for p in ann.get('poses') or [] if p.get('player_id')}
         for i, (pid, reason, score) in sorted(by_frame[frame], key=lambda row: -row[1][2]):
@@ -173,24 +173,31 @@ def preserve_roster_membership(annotations, report, features, fps, *, identity_m
                                 'label_source': 'model', 'verified': False}
             occupied.add(pid)
             recovered += 1
+    from src.tracking.player_roster_handoff import recover_recent_roster_handoffs
+    handoffs = recover_recent_roster_handoffs(annotations, report, features, gallery, fps, target)
+    recovered += handoffs.get('recovered_ids', 0)
+    for ann, old_points in zip(annotations, points):
+        frame = ann['f']
         mapping = team_map_at_frame(frame, identity_map, segments)
         for pose in ann.get('poses') or []:
             side = 'team_' + pose['team'][-1]
-            if pose.get('player_id') in gallery:
+            handoff = pose.get('team_source') == 'recent_roster_track_handoff'
+            if pose.get('player_id') in gallery or handoff:
                 new_side = next(s for s, team in mapping.items() if team == target)
                 if side != new_side:
                     pose.setdefault('team_geometry', pose['team'])
                     pose['team'] = new_side[-1]
                     changed += 1
                 pose['team_id'] = target
-                pose['team_source'] = 'roster_membership'
+                pose['team_source'] = 'recent_roster_track_handoff' if handoff else 'roster_membership'
             else:
                 pose['team_id'] = mapping[side]
                 pose.setdefault('team_source', 'frame_geometry')
         sync_centres(ann, old_points)
     report['team_id'] = target
-    report['team_membership'] = {'method': 'continuous_roster_appearance_motion_v1',
+    report['team_membership'] = {'method': 'continuous_roster_appearance_motion_v2',
                                'recovered_ids': recovered, 'corrected_sides': changed,
+                               'recent_handoffs': handoffs,
                                'label_source': 'model', 'verified': False}
     report['person_observations'] = dict(Counter(p['player_id'] for p in rows.values() if p.get('player_id')))
     report['assigned'] = sum(report['person_observations'].values())
@@ -212,8 +219,9 @@ def cap_saved_players(annotations, projector, maximum, identity_report=None):
             members = [p for p in poses if p['team'][-1] == side]
             def rank(pose):
                 score = projector.inside_score(((pose['bb'][0] + pose['bb'][2]) / 2, pose['bb'][3])) if projector else 0
+                handoff = pose.get('team_source') == 'recent_roster_track_handoff'
                 member = pose.get('team_source') in ('continuous_track_membership', 'roster_anchor_tracklet', 'roster_membership')
-                return (bool(pose.get('player_id')), member, score)
+                return (handoff, bool(pose.get('player_id')), member, score)
             selected.update(id(p) for p in sorted(members, key=rank, reverse=True)[:maximum])
         ann['poses'] = [p for p in poses if id(p) in selected]
         indices = {id(p): i for i, p in enumerate(ann['poses'])}
