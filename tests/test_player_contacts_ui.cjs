@@ -17,6 +17,7 @@ function fixture() {
     'playerContactList', 'togPlayers', 'playerContactMethodBar', 'playerContactMethod', 'playerContactMethodQuality'].map(id => [id, new Element()]));
   const calls = [];
   const context = vm.createContext({
+    getComputedStyle: () => ({getPropertyValue: () => ''}),
     document: {getElementById: id => nodes[id], createElement: () => new Element(), addEventListener() {}},
     formatTime: t => `${t}s`, seekAndPlay: f => calls.push(['seek', f]),
     redraw: () => calls.push(['redraw']), JOB_ID: 'demo',
@@ -51,7 +52,7 @@ test('selection filters list, highlights only selected skeleton, preserves P7', 
   assert.equal(nodes.playerContactList.children.length, 1);
   assert.match(nodes.playerContactSummary.textContent, /Reception 1/);
   const style = value => vm.runInContext(`playerPoseStyle(${JSON.stringify(value)})`, context);
-  assert.equal(style({team: 'b', player_id: 'P1'}).width, 3);
+  assert.equal(style({team: 'b', player_id: 'P1'}).width, 3.5);
   assert.equal(style({team: 'b', player_id: 'P7'}).width, 1.5);
   assert.equal(style({team: 'a', player_id: 'P1'}).width, 1.5);
   assert.equal(style({team: 'b', player_id: null}).width, 1.5);
@@ -73,12 +74,29 @@ test('correction posts source-bound event index and refreshes rows', async () =>
   assert.match(nodes.playerContactStatus.textContent, /Attribution saved/);
 });
 
+test('selected roster member remains highlighted after a court-side switch', () => {
+  const {context} = fixture();
+  vm.runInContext("playerContactReport.team_id = 'observed_team'; selectedPlayerId = 'P1'", context);
+  const style = vm.runInContext("playerPoseStyle({team:'a',team_id:'observed_team',player_id:'P1'})", context);
+  assert.equal(style.width, 3.5);
+});
+
+test('team colour remains stable when the same roster crosses court sides', () => {
+  const {context} = fixture();
+  vm.runInContext("playerContactReport.team_id = 'observed_team'", context);
+  const style = value => vm.runInContext(`playerPoseStyle(${JSON.stringify(value)})`, context);
+  const before = style({team: 'b', team_id: 'observed_team', player_id: 'P1'});
+  const after = style({team: 'a', team_id: 'observed_team', player_id: 'P1'});
+  assert.equal(before.color, after.color);
+  assert.notEqual(after.color, style({team: 'b', team_id: 'opponent_team'}).color);
+});
+
 test('model evidence highlights one observed pose despite a conflicting old roster ID or side', () => {
   const {context} = fixture();
   vm.runInContext(`selectedPlayerId = 'P1'; activePlayerContact = {
     player_id: 'P1', label_source: 'derived', candidates: [{frame: 30, pose_index: 1, raw_track_id: 99}]
   }`, context);
-  assert.equal(vm.runInContext(`playerPoseStyle({id: 99, team: 'a', player_id: 'P7'}, 1, 30).width`, context), 3);
+  assert.equal(vm.runInContext(`playerPoseStyle({id: 99, team: 'a', player_id: 'P7'}, 1, 30).width`, context), 3.5);
   assert.equal(vm.runInContext(`playerPoseStyle({id: 7, team: 'b', player_id: 'P1'}, 0, 30).width`, context), 1.5);
 });
 

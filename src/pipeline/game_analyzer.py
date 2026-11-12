@@ -348,8 +348,10 @@ class GameAnalyzer(
         stats: GameStats,
         out_writer=None,
         out_frames_dir: Optional[Path] = None,
+        finalize: bool = True,
     ) -> GameStats:
         """Shared processing loop used by both process_video and process_frames."""
+        self._current_fps = float(fps)
         fsm = self._make_fsm(fps)
         pose_fx = PoseFeatureExtractor()  # fresh per video — track IDs restart
         if self._court_gate is not None:
@@ -677,6 +679,9 @@ class GameAnalyzer(
                         "team_prior": p.team_prior,
                         "source": p.source,
                         "mask_instance_id": p.mask_instance_id,
+                        "team_id": p.team_id,
+                        "team_source": p.team_source,
+                        "team_geometry": p.team_geometry,
                     }
                     for p in player_poses
                 ],
@@ -729,7 +734,15 @@ class GameAnalyzer(
             message="Optimizing the complete ball trajectory...",
         )
 
-        return self._run_offline_passes(stats, fps)
+        return self._run_offline_passes(stats, fps) if finalize else stats
+
+    def _validate_final_poses(self, stats, fps):
+        projector = self._get_projector()
+        if projector is not None:
+            rejected = reject_unsupported_sideline_poses(
+                stats.frame_annotations, projector, fps, sample_step=getattr(self, 'skip_frames', 0) + 1)
+            if rejected:
+                log.info(f"Sideline pose check: rejected {rejected} unsupported observations")
 
     def _run_offline_passes(self, stats: GameStats, fps: float) -> GameStats:
         """Whole-video passes after the frame loop.
@@ -740,13 +753,10 @@ class GameAnalyzer(
         """
         self._current_fps = float(fps or 30.0)
         projector = self._get_projector()
-        if projector is not None:
-            rejected_poses = reject_unsupported_sideline_poses(
-                stats.frame_annotations, projector, self._current_fps,
-                sample_step=getattr(self, 'skip_frames', 0) + 1,
-            )
-            if rejected_poses:
-                log.info(f"Sideline pose check: rejected {rejected_poses} unsupported observations")
+        self._validate_final_poses(stats, self._current_fps)
+        from src.tracking.player_team_membership import cap_saved_players
+        cap_saved_players(stats.frame_annotations, projector, getattr(self, 'max_players_per_team', None),
+                          stats.player_identity)
 
         # Post-process: re-pick the whole trajectory from the candidate cloud.
         # The gate above had to choose with only the past in hand; now the
@@ -1003,10 +1013,11 @@ class GameAnalyzer(
             self._process_frames_iter(
                 self._cached_frame_iterator() if cached_pass and not recovery and out_writer is None
                 else frame_iter(pinned=self._decode_into_pinned_memory()), fps, max_frames, stats,
-                out_writer=out_writer,
+                out_writer=out_writer, finalize=False,
             )
             self._close_prefetch()
             self._finish_embedding_prefetch()
+            self._validate_final_poses(stats, fps)
             if getattr(self, "enable_player_identity", False):
                 def identity_images():
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -1020,6 +1031,7 @@ class GameAnalyzer(
                     images.close()
             else:
                 stats.player_identity = {"enabled": False, "status": "disabled"}
+            self._run_offline_passes(stats, fps)
             self._apply_contact_authors(stats, str(vp.resolve()), w, h)
             if defer_final_render:
                 self._render_final_video(
@@ -1111,9 +1123,12 @@ class GameAnalyzer(
         self._process_frames_iter(
             self._cached_frame_iterator() if cached_pass and not self.output_video else frame_iter(), fps, total, stats,
             out_frames_dir=None if getattr(self, "enable_player_identity", False) else out_frames_dir,
+            finalize=False,
         )
 
+        self._validate_final_poses(stats, fps)
         self._apply_player_identity(stats, frame_iter(), fps)
+        self._run_offline_passes(stats, fps)
         self._apply_contact_authors(stats, "", w if frame_files else 1280, h if frame_files else 720,
             images=lambda wanted: ((f, image) for f, image in frame_iter() if f in wanted))
         if out_frames_dir is not None and getattr(self, "enable_player_identity", False):

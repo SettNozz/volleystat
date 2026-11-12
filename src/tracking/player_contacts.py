@@ -101,10 +101,12 @@ def build_player_contacts(events, frames, fps, identity=None):
         raise ValueError("fps must be finite and positive")
     identity = identity or {}
     target = side(identity.get("side")) or "b"
+    target_team = identity.get('team_id')
     roster = set((identity.get("gallery_keys") or {}).keys())
     roster.update((identity.get("seed") or {}).get("assignments", {}).values())
     roster.update(p.get("player_id") for a in frames for p in a.get("poses") or []
-                  if side(p.get("team")) == target and p.get("player_id"))
+                  if (p.get('team_id') == target_team if target_team else side(p.get("team")) == target)
+                  and p.get("player_id"))
     roster.discard(None)
     roster = sorted(roster, key=lambda p: (int(p[1:]) if p[1:].isdigit() else math.inf, p))
     by_frame = {int(a["f"]): a for a in frames}
@@ -142,6 +144,8 @@ def build_player_contacts(events, frames, fps, identity=None):
                     evidence = _evidence(ann, pose, frame, pose_index, fps)
                     if evidence is None:
                         continue
+                    if pose.get('team_id') is not None:
+                        evidence['team_id'] = pose['team_id']
                     # Unidentified and opposite-side detections still compete.
                     person = evidence["player_id"] or (
                         ("track", evidence["raw_track_id"]) if evidence["raw_track_id"] is not None
@@ -161,7 +165,8 @@ def build_player_contacts(events, frames, fps, identity=None):
                 contact["reason"] = "ambiguous_players"
             elif best["side"] is None:
                 contact["reason"] = "unknown_side"
-            elif best["side"] != target:
+            elif (best.get('team_id') != target_team if target_team and best.get('team_id')
+                  else best["side"] != target):
                 contact.update(status="other_side", reason="other_side_candidate")
             elif not best["player_id"]:
                 contact["reason"] = "unknown_identity"
@@ -170,6 +175,7 @@ def build_player_contacts(events, frames, fps, identity=None):
         contacts.append(contact)
     return summarize({
         "schema": SCHEMA, "method": "saved_ball_skeleton_proximity_v1", "side": target,
+        **({'team_id': target_team} if target_team else {}),
         "label_source": "derived", "verified": False, "roster_ids": roster,
         "parameters": {"window_seconds": .10, "max_body_distance": .35, "min_margin": .10,
                        "keypoint_confidence": .3},
