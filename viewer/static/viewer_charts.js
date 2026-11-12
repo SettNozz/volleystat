@@ -61,6 +61,7 @@ function rallyIndexOf(ev) {
 }
 
 function chartEvVisible(ev) {
+  if (ev.review_excluded || ev.excluded_from_match_stats) return false;
   if (chartState.team !== 'all' && ev.team !== chartState.team) return false;
   if (chartState.rally !== 'all' && rallyIndexOf(ev) !== Number(chartState.rally)) return false;
   return true;

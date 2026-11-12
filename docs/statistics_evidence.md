@@ -20,6 +20,13 @@ author assignments, contact-rally windows, score-rally windows and the saved
 coverage and evidence from these same records. HTML, the JSON API and Excel
 consume that view. This requires no inference, video analysis or result rewrite.
 
+The shared [match workspace](match_workspaces.md) first projects saved context
+and contact edits over the original predictions. Non-game exclusions, set/team
+mappings and current contact timing/type/side/author then feed the same
+reconciliation used by statistics, highlights, Excel and tactics. Human
+confirmation stays specific to each review axis; roster confirmation does not
+verify contact authors or tracking.
+
 - Source-local IDs are namespaced. Spotter rally 1 never inherits FSM rally 1's
   point by ordinal. When `service_attempts_fsm` exists, even an empty list
   remains the score-attempt namespace.
@@ -49,15 +56,25 @@ Sides refer to that rally's camera geometry, not stable teams across sets.
 Reviews append to `<stem>_point_reviews.jsonl`, with schema `point_review_v1`,
 timestamp, source-scoped attempt reference and SHA256 of both original analysis
 files. Invalid targets/winners are rejected before writing. Changed source
-files reject stale requests or saved reviews with HTTP 409. Reset appends a
-record; it does not erase history. Saves from viewer tabs are serialized.
+files reject stale requests or saved reviews with HTTP 409. Workspace-aware
+saves also check a revision covering workspace, author and point review logs,
+so an intervening review requires a reload. Reset appends a record; it does not
+erase history. Saves from viewer tabs are serialized.
 
 A winner review changes the reviewed statistics projection and Excel export.
 Original analysis JSON, human annotations, model outputs, FSM score timeline
 and attack heatmap retain their provenance. A point review does not resolve an
 ambiguous contact/rally join or confirm an attack kill, attack fault, author,
-event detection or event type. Human author corrections remain in their own
-existing review log.
+event detection or event type. Existing human author corrections are still
+read from their review log. After workspace history exists, further contact
+corrections append to `<stem>_workspace_reviews.jsonl`; timing, detection, type,
+side and author confirmation retain independent provenance.
+
+Saving **Match setup** supplies a separate reviewed score display using the
+current point evidence, set/team context and starting points. It preserves the
+original FSM score/heatmap evidence. Rotational side-out and break-point rates
+in **Tactics** use the same point reconciliation and show unknown winners and
+unknown service roles separately from classified denominators.
 
 ## Coverage and export
 
@@ -72,8 +89,9 @@ review provenance. It is not a training dataset or a promotion of predictions
 to human labels.
 
 `GET /api/statistics/<job_id>` returns totals, coverage, reconciled contacts,
-points, conflicts and the source fingerprint. `POST` accepts the fingerprint,
-`attempt_ref` and `winner_side` (`a`, `b`, or null), or `reset: true`.
+points, conflicts, the source fingerprint and the current workspace revision.
+`POST` accepts `source`, `revision`, `attempt_ref` and `winner_side` (`a`, `b`,
+or null), or `reset: true` in place of a winner.
 `/statistics-evidence/<job_id>?player=P1&kind=attack&metric=point` opens a metric;
 `player=all` selects assigned roster contacts and `player=unassigned` selects
 contacts eligible for the unassigned counter.

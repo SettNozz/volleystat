@@ -11,6 +11,7 @@
   <a href="{{ url_for('results', job_id=job.job_id) }}">Match viewer</a>
 </header>
 <main>
+  {% set active_tab = 'evidence' %}{% include 'workspace_tabs.html' %}
   <h1>Behind the numbers</h1>
   <p>Inspect the contacts behind a metric, watch its rally and confirm point winners.</p>
   <form class="filters" method="get">
@@ -81,7 +82,7 @@
         <td>{{ 'Human-confirmed winner' if point.verified else ('Human left unresolved' if point.reviewed else 'Automatic · ' + point.status) }}
           {% if point.issues %}<br><span class="warning">{{ point.issues | join(', ') | replace('_', ' ') }}</span>{% endif %}
         </td>
-        <td><form class="point-review" data-attempt="{{ point.attempt_ref }}">
+        <td><form class="point-review" data-developer-tool hidden data-attempt="{{ point.attempt_ref }}">
           <select aria-label="Winner for score rally {{ loop.index }}">
             <option value="b"{% if point.winner_side == 'b' %} selected{% endif %}>B · near</option>
             <option value="a"{% if point.winner_side == 'a' %} selected{% endif %}>A · far</option>
@@ -95,6 +96,6 @@
     </table></div>
   </details>
 </main>
-<script id="evidence-data" type="application/json">{{ {'contacts': evidence.contacts, 'source': source, 'fps': fps, 'job': job.job_id, 'metric': metric, 'kind': kind, 'modes': modes, 'api': url_for('statistics_data', job_id=job.job_id), 'viewer': url_for('results', job_id=job.job_id)} | tojson }}</script>
+<script id="evidence-data" type="application/json">{{ {'contacts': evidence.contacts, 'source': source, 'revision': revision, 'fps': fps, 'job': job.job_id, 'metric': metric, 'kind': kind, 'modes': modes, 'api': url_for('statistics_data', job_id=job.job_id), 'viewer': url_for('results', job_id=job.job_id)} | tojson }}</script>
 <script src="{{ url_for('static', filename='statistics_evidence.js') }}"></script>
 </html>

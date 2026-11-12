@@ -36,6 +36,8 @@ def player_highlights(report, events, fps, player_id, *, extra_contacts=(), incl
             continue
         seen.add(contact["event_index"])
         event = events[contact["event_index"]] if 0 <= contact["event_index"] < len(events) else {}
+        if event.get("review_excluded") or event.get("excluded_from_match_stats"):
+            continue
         kind = event.get("type") or contact.get("type")
         group = "serve" if kind == "serve_fault" else category(kind)
         if group == "other":

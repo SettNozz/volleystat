@@ -76,6 +76,18 @@ def test_empty_fsm_namespace_cannot_borrow_a_same_number_spotter_point():
     assert summary["reconciliation"]["points"] == []
 
 
+def test_rejected_confirming_serve_cannot_still_award_an_automatic_point():
+    stats, report = analysis()
+    stats["all_events"].append({"frame": 30, "type": "serve", "review_excluded": True})
+    stats["match_analytics"]["points"][0].update(evidence="next_confirmed_serve", evidence_frame=30)
+    summary = build_player_match_statistics(stats, report)
+    point = summary["reconciliation"]["points"][0]
+    assert point["status"] == "conflict" and point["issues"] == ["point_confirmation_rejected"]
+    assert summary["players"]["P1"]["attack"]["unknown"] == 1
+    confirmed = build_player_match_statistics(stats, report, [{"attempt_ref": "service_attempts_fsm:0", "winner_side": "b"}])
+    assert confirmed["players"]["P1"]["attack"]["point"] == 1
+
+
 def test_legacy_rallies_remain_available_when_service_attempts_are_empty():
     stats, report = analysis()
     stats["rallies"] = stats.pop("service_attempts_fsm")

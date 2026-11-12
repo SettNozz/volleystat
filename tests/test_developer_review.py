@@ -58,14 +58,21 @@ def test_human_source_detection_is_not_lost_when_its_type_is_corrected():
 
 def test_timing_change_drops_old_author_evidence_unless_explicitly_assigned():
     stats, report = sample()
+    report["contacts"][0].update(contact_time=1.0, contact_frame=30, proposed_player_id="P1")
     shifted = edit(stats, report, {"action": "update", "event_index": 0, "changes": {"frame": 33}})
     effective, authors = apply_contact_edits(stats, report, [shifted])
     assert effective["all_events"][0]["frame"] == 33
     assert authors["contacts"][0]["status"] == "unresolved" and authors["contacts"][0]["candidates"] == []
     assert "contact_frame" not in authors["contacts"][0]
+    assert "contact_time" not in authors["contacts"][0]
     shifted["changes"]["player_id"] = "P2"
     _, assigned = apply_contact_edits(stats, report, [shifted])
     assert assigned["contacts"][0]["player_id"] == "P2" and assigned["contacts"][0]["label_source"] == "human"
+    assert assigned["contacts"][0]["candidates"] == []
+    assert "contact_time" not in assigned["contacts"][0] and "contact_frame" not in assigned["contacts"][0]
+    reset = {"action": "reset", "event_index": 0, "axes": ["author"]}
+    _, reset_authors = apply_contact_edits(stats, report, [shifted, reset])
+    assert "contact_time" not in reset_authors["contacts"][0]
 
 
 def test_added_contacts_are_idempotent_and_reset_never_recycles_their_index():

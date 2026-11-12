@@ -77,14 +77,16 @@ def summarize(report):
     """Recount after proposals or human corrections; never count unknowns as touches."""
     roster = []
     for player_id in report["roster_ids"]:
-        contacts = [c for c in report["contacts"] if c.get("player_id") == player_id]
+        contacts = [c for c in report["contacts"] if c.get("player_id") == player_id
+                    and not c.get("excluded_from_match_stats") and not c.get("review_excluded")]
         counts = Counter(category(c["type"]) for c in contacts)
         roster.append({"player_id": player_id, "total": len(contacts),
                        "counts": {k: counts[k] for k in ("reception", "dig_pass", "attack", "block", "serve", "other")},
                        "raw_counts": dict(Counter(c["type"] for c in contacts)),
                        "reviewed": sum(c.get("verified") is True for c in contacts)})
     report["players"] = roster
-    report["totals"] = dict(Counter(c["status"] for c in report["contacts"]))
+    report["totals"] = dict(Counter(c["status"] for c in report["contacts"]
+                                    if not c.get("excluded_from_match_stats") and not c.get("review_excluded")))
     return report
 
 

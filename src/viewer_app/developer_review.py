@@ -33,6 +33,12 @@ def _core(kind):
             "set": "pass", "pass": "pass", "setting_pass": "pass", "dig": "pass"}.get(kind)
 
 
+def _clear_frame_evidence(contact):
+    contact["candidates"] = []
+    for key in ("contact_frame", "contact_time", "proposed_player_id", "near_side_score", "actor_share", "margin"):
+        contact.pop(key, None)
+
+
 def validate_contact_edit(body, stats, report, total_frames):
     """Validate one edit against the current projected view before persistence.
 
@@ -119,12 +125,13 @@ are independent: author-only corrections cannot verify event detection/type.
     return result
 
 
-def apply_contact_edits(stats, report, edits):
+def apply_contact_edits(stats, report, edits, *, author_proposals=None):
     """Project append-only edits; original arrays, geometry and labels survive."""
     effective, authors = deepcopy(stats), deepcopy(report)
     events = effective.setdefault("all_events", [])
     source_events = deepcopy(events)
     source_contacts = {c["event_index"]: deepcopy(c) for c in authors.get("contacts") or []}
+    proposal_contacts = {c["event_index"]: deepcopy(c) for c in (author_proposals or report).get("contacts") or []}
     by_index = {c["event_index"]: c for c in authors.get("contacts") or []}
     dismissed = set((effective.get("developer_review") or {}).get("dismissed_refs") or [])
     fps = stats.get("fps") if _finite(stats.get("fps")) and stats["fps"] > 0 else 30
@@ -147,7 +154,7 @@ def apply_contact_edits(stats, report, edits):
         event = events[index]
         if action == "reset":
             if edit.get("axes") == ["author"]:
-                baseline = deepcopy(source_contacts.get(index) or {})
+                baseline = deepcopy(proposal_contacts.get(index) or {})
                 baseline.update(event_index=index, frame=event["frame"], time=event["frame"] / fps,
                                 type=event["type"], core_type=event.get("core_type"))
                 baseline.setdefault("player_id", None)
@@ -157,7 +164,7 @@ def apply_contact_edits(stats, report, edits):
                 if index >= len(source_events) or event["frame"] != source_events[index].get("frame"):
                     baseline.update(player_id=None, status="unresolved", label_source="derived", verified=False,
                                     candidates=[], reason="timing_changed_author_unverified")
-                    baseline.pop("contact_frame", None)
+                    _clear_frame_evidence(baseline)
                 event.setdefault("review_axes", {}).pop("author", None)
                 baseline["review_axes"] = deepcopy(event["review_axes"])
                 by_index[index] = baseline
@@ -221,10 +228,11 @@ def apply_contact_edits(stats, report, edits):
         contact.update(frame=event["frame"], time=event["frame"] / fps,
                        type=event["type"], core_type=event.get("core_type"))
         # Previous frame-specific automatic author evidence cannot support a moved contact.
-        if "frame" in changes and "player_id" not in changes and "other_side" not in changes:
-            contact.update(player_id=None, status="unresolved", label_source="derived", verified=False,
-                           candidates=[], reason="timing_changed_author_unverified")
-            contact.pop("contact_frame", None)
+        if "frame" in changes:
+            _clear_frame_evidence(contact)
+            if "player_id" not in changes and "other_side" not in changes:
+                contact.update(player_id=None, status="unresolved", label_source="derived", verified=False,
+                               reason="timing_changed_author_unverified")
         if "player_id" in changes or "other_side" in changes:
             player = changes.get("player_id")
             opposite = changes.get("other_side", False)

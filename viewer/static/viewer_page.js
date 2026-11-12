@@ -30,6 +30,7 @@ function isFailedOutcome(outcome) {
 // Canonical results are metadata-gated. Legacy results retain their original
 // behaviour because they have no lifecycle classification to consume.
 const RALLIES = RAW_RALLIES.filter(isPlayableRally);
+const orderedEventIndexes = EVENTS.map((_, index) => index).sort((a, b) => EVENTS[a].frame - EVENTS[b].frame || a - b);
 let eventTeams = EVENTS.map(event => event.team);
 const scoreAttempts = SERVICE_ATTEMPTS.length ? SERVICE_ATTEMPTS : RALLIES;
 let scorePoints = buildServeScore(EVENTS, scoreAttempts, eventTeams);
@@ -77,7 +78,7 @@ function showPage(name) {
 }
 
 /* ── Filters (video page) ────────────────────────────── */
-const allTypes = [...new Set(EVENTS.map(e => e.type))];
+const allTypes = [...new Set(EVENTS.filter(e => !e.review_excluded && !e.excluded_from_match_stats).map(e => e.type))];
 const filterState = { types: new Set(allTypes), teams: new Set(['team_a', 'team_b']) };
 
 function buildChips(containerId, items, activeSet, labelFn, onToggle, colorFn = null) {
@@ -117,6 +118,7 @@ function initVideoFilters() {
 
 function toggleSet(set, v) { set.has(v) ? set.delete(v) : set.add(v); }
 function evVisible(ev, team) {
+  if (ev.review_excluded || ev.excluded_from_match_stats) return false;
   const allTeams = filterState.teams.has('team_a') && filterState.teams.has('team_b');
   const unattributed = team !== 'team_a' && team !== 'team_b';
   return filterState.types.has(ev.type) &&
@@ -151,6 +153,10 @@ function updateContactTeams(report) {
 }
 
 function renderServeScore() {
+  if (typeof WORKSPACE_CONTEXT !== 'undefined' && WORKSPACE_CONTEXT) {
+    renderWorkspaceScore(WORKSPACE_CONTEXT, currentFrameIdx);
+    return;
+  }
   const score = serveScoreAt(scorePoints, currentFrameIdx);
   const near = document.getElementById('nearScore');
   const far = document.getElementById('farScore');
@@ -168,7 +174,8 @@ function renderEventList() {
   box.innerHTML = '';
   const rallyFirst = new Map();
   RALLIES.forEach((r, i) => { if (r.events && r.events.length) rallyFirst.set(r.events[0].frame, i + 1); });
-  EVENTS.forEach((ev, i) => {
+  orderedEventIndexes.forEach(i => {
+    const ev = EVENTS[i];
     const team = eventTeams[i];
     if (!evVisible(ev, team)) return;
     if (rallyFirst.has(ev.frame)) {

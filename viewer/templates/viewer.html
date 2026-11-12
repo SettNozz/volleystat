@@ -31,6 +31,7 @@
 </div>
 
 <!-- ── Page 1: Video Analysis ──────────────────────────── -->
+{% set active_tab = 'match' %}{% include 'workspace_tabs.html' %}
 <div class="page active" id="page-video">
   <div class="video-col">
     <div class="video-shell">
@@ -44,7 +45,7 @@
       <canvas id="overlay"></canvas>
       <div class="video-badge" id="videoBadge">{{ job.video_stem }}</div>
       <output id="attackHeightBadge" class="attack-height-badge" aria-label="Estimated attack contact height" hidden></output>
-      <div class="scoreboard" aria-label="Points inferred from serves" title="Points inferred from the next serve.">
+      <div class="scoreboard" aria-label="{{ 'Reviewed match score' if workspace_context else 'Points inferred from serves' }}" title="{{ 'Reviewed point evidence and match context.' if workspace_context else 'Points inferred from the next serve.' }}">
         <label><input aria-label="Near team name" value="Near team" maxlength="32" data-team-job="{{ job.job_id }}" data-team-side="b"><output id="nearScore">0</output></label>
         <label><input aria-label="Far team name" value="Far team" maxlength="32" data-team-job="{{ job.job_id }}" data-team-side="a"><output id="farScore">0</output></label>
         <small id="unknownScore" title="Points with an unidentified next server" hidden></small>
@@ -178,7 +179,7 @@
       <div class="stat-grid">
         <div class="stat-box"><div class="val">{{ stats.viewer_lifecycle.playable_rallies }}</div><div class="lbl">{% if stats.viewer_lifecycle.available %}Playable rallies{% else %}Rallies (legacy){% endif %}</div></div>
         <div class="stat-box"><div class="val">{{ (stats.ball_detection_rate * 100) | round(0) | int }}%</div><div class="lbl">Ball detected</div></div>
-        <div class="stat-box"><div class="val">{{ stats.all_events | length }}</div><div class="lbl">Contact events</div></div>
+        <div class="stat-box"><div class="val">{{ stats.active_event_count }}</div><div class="lbl">Contact events</div></div>
         <div class="stat-box"><div class="val">{{ stats.processing_time_sec | round(0) | int }}s</div><div class="lbl">Proc. time</div></div>
       </div>
       {% if stats.viewer_lifecycle.available %}
@@ -261,7 +262,7 @@
 
 <!-- ── Page 3: Match Stats ─────────────────────────────── -->
 <div class="page" id="page-table">
-  <p><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}#point-reconciliation">Review point winners and statistics evidence ↗</a></p>
+  <p><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}">Statistics evidence ↗</a></p>
   <div class="presets-row" id="rallyPresets"></div>
 
   <div class="card table-filterbar">
@@ -351,6 +352,7 @@ const RAW_RALLIES = {{ stats.rallies | tojson }};
 const SERVICE_ATTEMPTS = {{ stats.service_attempts | tojson }};
 const LIFECYCLE = {{ stats.viewer_lifecycle | tojson }};
 const VIDEO_STEM = "{{ job.video_stem }}";
+const WORKSPACE_CONTEXT = {{ workspace_context | default(none) | tojson }};
 </script>
 <script src="{{ url_for('static', filename='viewer_charts.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_tables.js') }}"></script>

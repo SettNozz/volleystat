@@ -18,7 +18,7 @@ const setTrajectoryOverlay = {
 
 function setAttackPairs(events, teams, rallies) {
   const contacts = events.map((event, index) => ({event, index, team: teams[index]}))
-    .filter(({event}) => Number.isInteger(event.frame))
+    .filter(({event}) => Number.isInteger(event.frame) && !event.review_excluded && !event.excluded_from_match_stats)
     .sort((a, b) => a.event.frame - b.event.frame);
   const ranges = rallies.map(rally => [
     rallyStartFrame(rally), lifecycleFrame(rally, 'end_frame', rally.end_frame),

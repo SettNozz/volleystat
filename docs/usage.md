@@ -44,6 +44,7 @@ Start `python viewer.py` and open [localhost:5050](http://localhost:5050). A sec
 2. Open **Preview and edit court & net**. Start from a saved camera setup or the default calibration. Drag court lines/corners and net tape handles. The handle magnifier shows a native-resolution crop; use the mouse wheel to change its zoom.
 3. Choose a clearer preview time if needed, then start **Analyze Video**. Edited geometry is saved for that job. Manual mode uses the drawn court centre line as the floor divider and bypasses automatic net detection. **Use automatic settings** restores the automatic workflow.
 4. Open the result and inspect overlays and events. The original recording remains the video source; saved annotations supply the overlays.
+5. Open **Match setup** to mark non-game footage and sets, record stable team names/side switches and starting points, and confirm saved roster members. Add intervals to the draft, then **Save match setup** to apply it.
 
 The preview and result share three net references: upper tape, lower mesh edge and player divider. **Calibration & sync** saves a manual correction for all three together. Named camera setups live in `configs/court_setups.json`; job-local calibration does not change shared setups.
 
@@ -56,6 +57,9 @@ The preview and result share three net references: upper tape, lower mesh edge a
 - **Match Stats:** rallies, service attempts and a contact log, with team/outcome filters.
 - **Player statistics:** attack attempts, inferred point-winning attacks and reception outcomes from saved contacts, reviews and point evidence. Missing evidence leaves outcomes unresolved. **Edit players** sets name, jersey and position (outside hitter, middle blocker, setter, opposite hitter) in this browser; Excel export includes them. Pick a player (or click a name) for a personal panel with all categories; **Player highlights** opens a separate page that plays that player's attributed attacks, receptions, serves and other contacts with adjustable lead-in and follow-through.
 - **Statistics evidence:** click any player statistic to watch exactly its counted contacts, or its classified denominator for a percentage. Inspect author confirmation and unresolved outcomes, play matched rally context, and review point winners. Source conflicts remain explicit. Excel uses the same reviewed totals and adds contact/point evidence sheets. See [counting rules and review persistence](statistics_evidence.md).
+- **Tactics:** inspect setter-to-attack distributions with set, team, setter, approximate camera-width lane, reception-quality and rotation filters. Play supporting pairs or full rallies. Confirm R1–R6 over explicit time intervals; side-out and break-point rates show classified denominators and unknown evidence separately.
+
+**Developer review** is a separate workspace, hidden from navigation by default. Add `?developer=1` to reveal it in this browser, or open `/developer-review/<job_id>` directly; `?developer=0` hides it again. This preference is not authentication. The workspace supports missed/false contact review, timing/type/side/author corrections and point-winner review, with independent provenance. Match context and edits append beside the result and feed the viewer, statistics, highlights, Excel and tactics without rewriting source predictions or running inference. See [match workspaces](match_workspaces.md) for saving, stale revisions and evidence limits.
 
 Near-side attack height is an approximate projection from saved ball, pose and net geometry. Without usable evidence, the badge reports that height is unavailable.
 
@@ -106,7 +110,9 @@ python analyze_video.py `
   --contact-spotter models/contact_spotter/spotter_20261028_v1.pt
 ```
 
-The spotter replaces `all_events`, per-frame `ev`, rallies and service attempts. FSM versions remain in `*_fsm` fields. Match score and attack heatmap remain FSM-derived. Spotter contacts have no team assignment from the spotter itself; later side/author stages add their own evidence. See [production contact spotting](production_contact_spotter.md) and [contact-side proposals](team_attribution.md).
+The spotter replaces `all_events`, per-frame `ev`, rallies and service attempts. FSM versions remain in `*_fsm` fields. Original match score and attack heatmap remain FSM-derived. Saved **Match setup** supplies a separate reviewed score projection in the viewer. Spotter contacts have no team assignment from the spotter itself; later side/author stages add their own evidence. See [production contact spotting](production_contact_spotter.md) and [contact-side proposals](team_attribution.md).
+
+**Download match-config JSON** in Match setup exports the current draft. The CLI consumes its `team_identity_map` and `segments`; viewer-only starting-score, display-name, roster-confirmation and rotation metadata does not automatically change CLI analysis. Downloading does not save the draft in the viewer.
 
 ### Cached replay and export
 

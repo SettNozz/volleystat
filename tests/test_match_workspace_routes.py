@@ -269,3 +269,28 @@ def test_author_and_point_reviews_invalidate_other_workspace_revisions(workspace
 def test_unknown_workspace_job_is_not_ready(workspace_client, route):
     client, _, _, _ = workspace_client
     assert client.get(f"/{route}/absent-workspace-job").status_code == 404
+
+
+def test_automatic_heatmap_refresh_preserves_review_bound_sources(workspace_client, monkeypatch):
+    import viewer
+    client, stats_path, ann_path, before = workspace_client
+    state = get_state(client)
+    saved = save_context(client, state)
+    assert saved.status_code == 200
+    revised = save_edit(client, {"action": "remove", "event_index": 3}, saved.json)
+    assert revised.status_code == 200
+    seen = []
+
+    def heatmap(_job, _payload, *, events):
+        seen.extend(events)
+        return {"version": "test", "hits": []}
+
+    monkeypatch.setattr(viewer, "_recompute_attack_heatmap", heatmap)
+    refreshed = client.post(f"/api/court/{JOB}/recompute")
+    assert refreshed.status_code == 200, refreshed.data
+    assert refreshed.json["persisted"] is False
+    assert not any(event["type"] == "attack" for event in seen)
+    assert (stats_path.read_bytes(), ann_path.read_bytes()) == before
+    current = get_state(client)
+    assert current["revision"] == revised.json["revision"]
+    assert client.get(f"/api/tactics/{JOB}").status_code == 200

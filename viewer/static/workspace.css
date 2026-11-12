@@ -9,6 +9,7 @@ header.workspace-header { display: flex; flex-wrap: wrap; justify-content: space
 .workspace-tabs [aria-current="page"] { background: var(--primary-soft); color: var(--primary); }
 .workspace-tabs .developer-workspace-link { margin-left: auto; border: 1px dashed var(--border); }
 .workspace-main, main.workspace { max-width: 96rem; margin: auto; padding: clamp(1rem, 3vw, 2.5rem); }
+main { max-width: 96rem; margin: auto; padding: clamp(1rem, 3vw, 2.5rem); }
 h1 { margin: 0 0 .5rem; font-size: clamp(1.6rem, 3vw, 2.2rem); letter-spacing: -.025em; }
 h2 { font-size: 1.15rem; } h3 { font-size: 1rem; }
 button, input, select, textarea { font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--border); border-radius: 7px; padding: .5rem .65rem; max-width: 100%; }

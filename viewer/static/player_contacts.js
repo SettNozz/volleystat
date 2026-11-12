@@ -143,12 +143,13 @@ function renderPlayerContacts() {
       (candidateCount ? ` · ${candidateCount} uncertain suggestions` : '') + '. ' +
       `Reception ${player.counts.reception} · Dig/pass/set ${player.counts.dig_pass} · ` +
       `Attack ${player.counts.attack} · Block ${player.counts.block} · Serve ${player.counts.serve}`
-    : `${report.contacts.length} contact events · ${totals.assigned || 0} assigned · ` +
+    : `${report.contacts.filter(c => !c.excluded_from_match_stats && !c.review_excluded).length} contact events · ${totals.assigned || 0} assigned · ` +
       `${totals.unresolved || 0} unresolved · ${totals.other_side || 0} other side`;
   const list = document.getElementById('playerContactList');
   list.replaceChildren();
-  const contacts = report.contacts.filter(c => !selectedPlayerId || c.player_id === selectedPlayerId ||
-    (includeCandidates && includeCandidates.checked && isSuggestion(c)));
+  const contacts = report.contacts.filter(c => !c.excluded_from_match_stats && !c.review_excluded &&
+    (!selectedPlayerId || c.player_id === selectedPlayerId ||
+    (includeCandidates && includeCandidates.checked && isSuggestion(c))));
   if (!contacts.length) {
     list.textContent = 'No attributed contacts. All includes unresolved events for review.';
     return;
@@ -200,7 +201,7 @@ function renderPlayerContacts() {
       try {
         const response = await fetch('/api/player_contacts/' + JOB_ID, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({source: report.source, method: report.method_id, event_index: contact.event_index,
+          body: JSON.stringify({source: report.source, revision: report.revision, method: report.method_id, event_index: contact.event_index,
             player_id: report.roster_ids.includes(value) ? value : null,
             other_side: value === 'other', reset: value === 'reset'}),
         });

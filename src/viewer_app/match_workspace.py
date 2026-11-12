@@ -200,7 +200,16 @@ def project_context(stats, config):
                 copy["_workspace_source_index"] = index
                 active.append(copy)
     analytics = enrich_match_analytics(active, config["team_identity_map"], config.get("segments", []))
-    for attempt in active:
+    for attempt, point in zip(active, analytics["points"]):
+        # The confirming serve may occur after an in-set side switch. Its side
+        # belongs to that later serve; stable winner identity belongs to this rally.
+        if point.get("status") == "confirmed" and point.get("winner_team_id"):
+            winners = [court_side for court_side, team in attempt["team_identity_map"].items()
+                       if team == point["winner_team_id"]]
+            if len(winners) == 1:
+                point["winner_court_side"] = winners[0]
+                point["winner_side_source"] = "attempt_start_team_map"
+        attempt["point"] = deepcopy(point)
         index = attempt.pop("_workspace_source_index")
         result[score_key][index] = attempt
     scores = config.get("initial_score") or {}
@@ -209,6 +218,8 @@ def project_context(stats, config):
         point["score_after"] = {team: point.get("score_after", {}).get(team, 0) + scores.get(team, 0) for team in config["teams"]}
         if point.get("set_id") == first_set:
             point["set_score_after"] = {team: point.get("set_score_after", {}).get(team, 0) + scores.get(team, 0) for team in config["teams"]}
+    for attempt, point in zip(active, analytics["points"]):
+        attempt["point"] = deepcopy(point)
     analytics["score"] = {team: analytics["score"].get(team, 0) + scores.get(team, 0) for team in config["teams"]}
     set_key = str(first_set or "unassigned")
     existing = analytics["score_by_set"].get(set_key, {})
@@ -220,6 +231,8 @@ def project_context(stats, config):
     if isinstance(lifecycle, dict):
         lifecycle["service_attempts"] = sum(not a.get("excluded_from_match_stats") for a in result.get("service_attempts", []))
         lifecycle["playable_rallies"] = sum(not a.get("excluded_from_match_stats") for a in result.get("rallies", []))
+    if "rallies" in result:
+        result["total_rallies"] = sum(not a.get("excluded_from_match_stats") for a in result["rallies"])
     result["match_context"] = config
     return result
 
@@ -271,11 +284,13 @@ def read_workspace(job, *, method=None, include_annotations=False):
     effective = deepcopy(raw)
     if edits:
         from src.viewer_app.developer_review import apply_contact_edits
-        effective, effective_report = apply_contact_edits(effective, legacy_report, edits)
+        effective, effective_report = apply_contact_edits(effective, legacy_report, edits, author_proposals=report)
     else:
         effective_report = summarize(legacy_report)
     if context_saved:
         effective = project_context(effective, config)
+    for event in effective.get("all_events") or []:
+        event.setdefault("time", event["frame"] / float(raw.get("fps", 30)))
     if edits or context_saved:
         active_events = [event for event in effective.get("all_events") or []
                          if not event.get("review_excluded") and not event.get("excluded_from_match_stats")]
@@ -302,7 +317,7 @@ def read_workspace(job, *, method=None, include_annotations=False):
 
 def score_projection(state):
     """Reviewed score for display, keyed by stable team and original score slot."""
-    if not state["context_saved"]:
+    if not state["context_saved"] and not state.get("edits"):
         return None
     from src.tracking.player_match_statistics import build_player_match_statistics
     summary = build_player_match_statistics(state["stats"], state["report"], state["point_reviews"])

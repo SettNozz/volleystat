@@ -19,6 +19,8 @@ Analysis runs locally and prioritizes accuracy over real-time speed. The pipelin
 - **Navigate rallies.** Browse playable rallies, service attempts and typed contact events. Inspect set-to-attack trajectories with zone and setter filters.
 - **Explore match statistics.** View serve, reception and attack maps, contact logs, team summaries and per-player attack/reception outcomes where evidence is available.
 - **Inspect the evidence.** Click player statistics to watch their counted contacts and matched rallies. Review source conflicts and point winners; author confirmation and derived outcomes remain separate. Excel includes the same reviewed totals and evidence.
+- **Set up the match.** Mark non-game footage and sets, record team-side switches and starting points, and confirm saved roster members. Context is saved separately from predictions.
+- **Explore tactics.** Filter setter-to-attack evidence by team, lane and reception quality; label rotations manually and inspect side-out/break-point rates with their classified and unknown counts.
 - **Calibrate and correct.** Preview a source frame, edit court and net geometry, and save contact-author corrections separately from model predictions.
 - **Reuse analysis.** Open saved results from the library, replay processing from cached model outputs and export JSON or an annotated video.
 
@@ -74,7 +76,7 @@ python viewer.py
 
 Open [localhost:5050](http://localhost:5050). Choose **Upload**, provide a local video path or drop a file, then open **Preview and edit court & net**. Adjust geometry for the camera and start analysis. Dropped files are copied into local `data/uploads/`.
 
-Saved analyses appear in the [results library](http://localhost:5050/library). Each result offers **Video Analysis**, **Visual Stats**, **Match Stats** and **Player statistics**.
+Saved analyses appear in the [results library](http://localhost:5050/library). Each result offers a match viewer, **Player statistics**, **Match setup** and **Tactics**. Developer review is a separate workspace, hidden from navigation by default; see [match workspaces](docs/match_workspaces.md).
 
 ### 3. Or analyze from the CLI
 
@@ -108,8 +110,8 @@ Default output is JSON plus interactive overlays on the original video. Keep the
 
 - **Camera setup matters.** Calibration is required per placement. Current geometry is 2D image/court geometry; displayed attack height is an approximation, not a measured 3D trajectory.
 - **Predictions need review.** Full-match identity and contact-author accuracy with automatic rosters have not been established. Unknown players and unresolved outcomes remain explicit.
-- **Event paths differ.** Viewer analyses enable the configured contact spotter when its checkpoint is available. CLI analyses enable it with `--contact-spotter`; otherwise contacts/rallies use the FSM. With spotting enabled, score and attack heatmap remain FSM-derived.
-- **Match context needs input.** Configure warm-up/non-game intervals, set boundaries and team-side switches for the recording. The contact spotter does not distinguish warm-up from match play.
+- **Event paths differ.** Viewer analyses enable the configured contact spotter when its checkpoint is available. CLI analyses enable it with `--contact-spotter`; otherwise contacts/rallies use the FSM. Original score and attack heatmap remain FSM-derived; saved match setup supplies the viewer's reviewed score projection.
+- **Match context needs input.** Use **Match setup** for warm-up/non-game intervals, set boundaries and team-side switches. The contact spotter does not distinguish warm-up from match play. Tactical lanes are approximate camera-width thirds; rotations require manual labels.
 - **Estimates retain provenance.** Ball-gap reconstruction is off by default. Missing off-camera ball positions remain missing; reconstructed positions are derived data, never detector ground truth or human labels.
 
 ## Documentation
@@ -123,6 +125,7 @@ Default output is JSON plus interactive overlays on the original video. Keep the
 | [Contact spotting](docs/production_contact_spotter.md) · [Contact review](docs/contact_review_workflow.md) | Typed contacts, rally segmentation and human verification. |
 | [Match analytics](docs/match_analytics_v2.md) | Point confirmation, reception outcomes, sets and team mappings. |
 | [Statistics evidence](docs/statistics_evidence.md) | Reconciled contacts/rallies/points, metric video evidence and source-bound point reviews. |
+| [Match workspaces](docs/match_workspaces.md) | Match setup, setter/rotation tactics, developer review and shared source-bound projections. |
 | [Human annotation](docs/contact_author_annotation.md) | Shared photo roster, author labels and movement review. |
 | [Performance notes](docs/performance.md) | Dated throughput measurements and optimization tradeoffs. |
 

@@ -20,6 +20,7 @@ import threading
 import time
 import urllib.parse
 import uuid
+from datetime import datetime, timezone
 from collections import OrderedDict
 from pathlib import Path
 
@@ -49,6 +50,10 @@ from src.tracking.player_statistics_excel import (
 from src.viewer_app.player_highlights import HIGHLIGHT_CATEGORIES, player_highlights
 from src.viewer_app.statistics_reviews import (
     StatisticsSourceChanged, load_point_reviews, validate_point_review, append_point_review,
+)
+from src.viewer_app.match_workspace import (
+    read_workspace, workspace_path, author_review_path, guard_source, append_record,
+    validate_context, project_context, score_projection, context_at,
 )
 from src.tracking.contact_author_experiments import ExperimentSourceChanged
 from src.tracking.volleyball_contact_lab import load_lab
@@ -521,9 +526,22 @@ def results(job_id):
     if not job or job["status"] != "done":
         return jsonify({"error": "Results not ready"}), 404
 
-    with open(job["stats_path"]) as f:
-        stats = _prepare_viewer_stats(json.load(f))
-    return render_template("viewer.html", job=job, stats=stats)
+    try:
+        workspace_context = None
+        if workspace_path(Path(job["stats_path"])).exists():
+            with _player_contact_lock:
+                state = read_workspace(job)
+                stats = _prepare_viewer_stats(state["stats"])
+                stats.setdefault("total_frames", state["total_frames"])
+                workspace_context = score_projection(state)
+        else:
+            with open(job["stats_path"], encoding="utf-8") as f:
+                stats = _prepare_viewer_stats(json.load(f))
+        return render_template("viewer.html", job=job, stats=stats, workspace_context=workspace_context)
+    except (StatisticsSourceChanged, OSError) as error:
+        return jsonify(error=str(error)), 409
+    except (ValueError, KeyError, TypeError) as error:
+        return jsonify(error=str(error)), 400
 
 
 @app.route("/api/annotations/<job_id>")
@@ -531,7 +549,26 @@ def annotations(job_id):
     job = _get_job(job_id)
     if not job or job["status"] != "done":
         return jsonify({"error": "Not ready"}), 404
-    return send_file(job["annotations_path"], mimetype="application/json")
+    if not workspace_path(Path(job["stats_path"])).exists():
+        return send_file(job["annotations_path"], mimetype="application/json")
+    try:
+        with _player_contact_lock:
+            state = read_workspace(job, include_annotations=True)
+            payload = state["annotations"]
+            payload["player_contacts"] = state["report"]
+            payload["workspace_revision"] = state["revision"]
+            if state["context_saved"]:
+                payload["match_context"] = state["config"]
+                for row in payload.get("frames") or []:
+                    segment, _ = context_at(state["config"], row["f"])
+                    row["excluded_from_match_stats"] = segment.get("match_phase") == "non_game"
+                    if segment.get("match_phase"):
+                        row["match_phase"] = segment["match_phase"]
+            return jsonify(payload)
+    except (StatisticsSourceChanged, OSError) as error:
+        return jsonify(error=str(error)), 409
+    except (ValueError, KeyError, TypeError) as error:
+        return jsonify(error=str(error)), 400
 
 
 @app.route("/contact-lab/<job_id>")
@@ -591,108 +628,173 @@ def statistics_data(job_id):
     return _player_contact_response(job_id, statistics_page=True, statistics_api=True)
 
 
+def _workspace_video_url(job):
+    return (f"/api/original_video?path={job['original_video_path_url']}"
+            if job.get("original_video_path_url") else url_for("video", job_id=job.get("job_id") or request.view_args["job_id"]))
+
+
+@app.route("/match-setup/<job_id>")
+def match_setup_page(job_id):
+    return _match_workspace_response(job_id, "setup", page=True)
+
+
+@app.route("/tactics/<job_id>")
+def tactics_page(job_id):
+    return _match_workspace_response(job_id, "tactics", page=True)
+
+
+@app.route("/developer-review/<job_id>")
+def developer_review_page(job_id):
+    return _match_workspace_response(job_id, "developer", page=True)
+
+
+@app.route("/api/match_context/<job_id>", methods=["GET", "POST"])
+def match_context_data(job_id):
+    return _match_workspace_response(job_id, "setup")
+
+
+@app.route("/api/developer_review/<job_id>", methods=["GET", "POST"])
+def developer_review_data(job_id):
+    return _match_workspace_response(job_id, "developer")
+
+
+@app.route("/api/tactics/<job_id>")
+def tactics_data(job_id):
+    return _match_workspace_response(job_id, "tactics")
+
+
+def _match_workspace_response(job_id, tab, *, page=False):
+    job = _get_job(job_id)
+    if not job or job.get("status") != "done":
+        return jsonify(error="Results not ready"), 404
+    try:
+        with _player_contact_lock:
+            state = read_workspace(job, include_annotations=tab in {"developer", "tactics"})
+            if request.method == "POST":
+                body = request.get_json(silent=True)
+                if not isinstance(body, dict):
+                    raise ValueError("Expected a JSON object")
+                if body.get("source") != state["source"] or body.get("revision") != state["revision"]:
+                    raise StatisticsSourceChanged("Workspace changed; reload before saving")
+                if tab == "setup":
+                    payload = validate_context(body.get("config"), state["total_frames"], state["report"]["roster_ids"])
+                    project_context(state["stats"], payload)
+                    kind = "context"
+                else:
+                    from src.viewer_app.developer_review import validate_contact_edit, apply_contact_edits
+                    payload = validate_contact_edit(body.get("edit"), state["stats"], state["report"], state["total_frames"])
+                    projected, projected_report = apply_contact_edits(state["raw_stats"], state["legacy_report"], state["edits"] + [payload], author_proposals=state["raw_report"])
+                    if state["context_saved"]:
+                        projected = project_context(projected, state["config"])
+                    build_player_match_statistics(projected, projected_report, state["point_reviews"])
+                    kind = "contact"
+                append_record(job, state["source"], state["revision"], kind, payload)
+                state = read_workspace(job, include_annotations=tab in {"developer", "tactics"})
+            metadata = {"source": state["source"], "revision": state["revision"], "config": state["config"],
+                        "fps": state["fps"], "total_frames": state["total_frames"],
+                        "roster_ids": state["report"]["roster_ids"], "history": state["history"],
+                        "context_saved": state["context_saved"],
+                        "context_source": "human_workspace" if state["context_saved"] else "saved_analysis_defaults"}
+            api = {"setup": "match_context_data", "developer": "developer_review_data", "tactics": "tactics_data"}[tab]
+            if page:
+                template = {"setup": "match_setup.html", "developer": "developer_review.html", "tactics": "tactics.html"}[tab]
+                return render_template(template, job=job, video_url=_workspace_video_url(job),
+                    api_url=url_for(api, job_id=job_id), context_api_url=url_for("match_context_data", job_id=job_id),
+                    point_api_url=url_for("statistics_data", job_id=job_id), active_tab=tab, **metadata)
+            if tab == "developer":
+                from src.viewer_app.developer_review import build_review_queue
+                summary = build_player_match_statistics(state["stats"], state["report"], state["point_reviews"])
+                queue = build_review_queue(state["stats"], state["report"], summary["reconciliation"], state["annotations"])
+                return jsonify(dict(queue=queue, report=state["report"], reconciliation=summary["reconciliation"], **metadata))
+            if tab == "tactics":
+                from src.viewer_app.tactics import build_tactics
+                tactics = build_tactics(state["stats"], state["report"], state["annotations"], state["config"], state["point_reviews"])
+                return jsonify(dict(tactics, **metadata))
+            return jsonify(metadata)
+    except (StatisticsSourceChanged, ExperimentSourceChanged) as error:
+        return jsonify(error=str(error)), 409
+    except (ValueError, KeyError, TypeError, OverflowError) as error:
+        return jsonify(error=str(error)), 400
+    except OSError as error:
+        return jsonify(error=str(error)), 409
+
+
 def _player_contact_response(job_id, *, statistics_page=False, highlights_page=False,
                              evidence_page=False, statistics_api=False):
     job = _get_job(job_id)
     if not job or job["status"] != "done":
         return jsonify({"error": "Results not ready"}), 404
     try:
-        # Serialize read-modify-append to preserve corrections from two tabs.
         with _player_contact_lock:
-            stats_path = Path(job["stats_path"])
-            report, source, bundle, references, fault_contacts = _load_player_contact_inputs(job)
-            body = request.get_json(silent=True) or {} if request.method == "POST" else {}
+            body = request.get_json(silent=True) if request.is_json else {}
             if not isinstance(body, dict):
                 raise ValueError("Expected a JSON object")
-            default_method = report["method"] if report.get("attribution", {}).get("status") == "completed" else "body_baseline"
-            selected_method = bundle["selected_method"] if bundle else default_method
-            method = selected_method if statistics_page else (
-                body.get("method") or request.args.get("method") or selected_method
-            )
-            if bundle:
-                if method not in bundle["reports"]:
-                    raise ValueError("Unknown experimental contact method")
-                report = bundle["reports"][method]
-            elif method != default_method:
-                raise ValueError("This result has no contact-method experiment")
-            reviews_path = stats_path.with_name(stats_path.name.removesuffix("_stats.json")
-                                               + "_player_contact_reviews.jsonl")
-            reviews = []
-            if reviews_path.exists():
-                for line in reviews_path.read_text(encoding="utf-8").splitlines():
-                    record = json.loads(line)
-                    if record.get("source") != source:
-                        return jsonify({"error": "Analysis changed; saved contact reviews belong to another source"}), 409
-                    reviews.append(record["review"])
+            method = None if statistics_page else body.get("method") or request.args.get("method")
+            state = read_workspace(job, method=method)
+            source, report = state["source"], state["report"]
+            stats_path = Path(job["stats_path"])
             if request.method == "POST" and not statistics_page:
-                if body.get("source") != source:
-                    return jsonify({"error": "Analysis changed; reload contacts before reviewing"}), 409
+                if body.get("source") != source or ((state["history"] or body.get("revision")) and body.get("revision") != state["revision"]):
+                    raise StatisticsSourceChanged("Analysis or workspace changed; reload contacts before reviewing")
                 if type(body.get("event_index")) is not int:
                     raise ValueError("event_index must be an integer")
                 if type(body.get("other_side", False)) is not bool or type(body.get("reset", False)) is not bool:
                     raise ValueError("other_side and reset must be booleans")
                 if body.get("player_id") is not None and not isinstance(body["player_id"], str):
                     raise ValueError("player_id must be a roster ID or null")
-                review = {k: body[k] for k in ("event_index", "player_id", "other_side", "reset") if k in body}
-                # Validate before writing; original JSON/human labels stay intact.
-                apply_reviews(report, reviews + [review])
-                from datetime import datetime, timezone
-                record = {"schema": "player_contact_review_v1", "source": source,
-                          "saved_at": datetime.now(timezone.utc).isoformat(), "review": review}
-                with reviews_path.open("a", encoding="utf-8") as stream:
-                    stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
-                reviews.append(review)
-            result = apply_reviews(report, reviews)
+                review = {key: body[key] for key in ("event_index", "player_id", "other_side", "reset") if key in body}
+                if state["history"]:
+                    from src.viewer_app.developer_review import validate_contact_edit, apply_contact_edits
+                    edit = ({"action": "reset", "event_index": body["event_index"], "axes": ["author"]}
+                            if body.get("reset") else {"action": "update", "event_index": body["event_index"],
+                            "changes": {"player_id": body.get("player_id"), "other_side": body.get("other_side", False)}})
+                    edit = validate_contact_edit(edit, state["stats"], report, state["total_frames"])
+                    apply_contact_edits(state["raw_stats"], state["legacy_report"], state["edits"] + [edit], author_proposals=state["raw_report"])
+                    append_record(job, source, state["revision"], "contact", edit)
+                else:
+                    apply_reviews(state["raw_report"], state["author_reviews"] + [review])
+                    guard_source(job, source)
+                    record = {"schema": "player_contact_review_v1", "source": source,
+                              "saved_at": datetime.now(timezone.utc).isoformat(), "review": review}
+                    with author_review_path(stats_path).open("a", encoding="utf-8") as stream:
+                        stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
+                state = read_workspace(job, method=method)
+                report = state["report"]
+            stats = state["stats"]
             if highlights_page:
-                stats = json.loads(Path(job["stats_path"]).read_bytes())
-                player = request.args.get("player") or (result["roster_ids"] or [None])[0]
-                if player not in result["roster_ids"]:
+                player = request.args.get("player") or (report["roster_ids"] or [None])[0]
+                if player not in report["roster_ids"]:
                     return "Unknown roster player", 404
-                moments = player_highlights(
-                    result, stats.get("all_events") or [], stats["fps"], player,
-                    extra_contacts=fault_contacts, include_suggestions=request.args.get("suggestions") == "1",
-                )
-                video_url = (f"/api/original_video?path={job['original_video_path_url']}"
-                             if job.get("original_video_path_url") else url_for("video", job_id=job_id))
+                moments = player_highlights(report, stats.get("all_events") or [], stats["fps"], player,
+                                           include_suggestions=request.args.get("suggestions") == "1")
                 return render_template("player_highlights.html", job=job, player=player, moments=moments,
-                                       roster=result["roster_ids"], categories=HIGHLIGHT_CATEGORIES,
-                                       fps=float(stats["fps"]), video_url=video_url,
-                                       include_suggestions=request.args.get("suggestions") == "1",
-                                       position_labels=PLAYER_POSITIONS,
-                                       portraits={p: len(c) for p, c in references.items()})
+                    roster=report["roster_ids"], categories=HIGHLIGHT_CATEGORIES, fps=float(stats["fps"]),
+                    video_url=_workspace_video_url(job), include_suggestions=request.args.get("suggestions") == "1",
+                    position_labels=PLAYER_POSITIONS, portraits={p: len(c) for p, c in state["references"].items()})
             if statistics_page:
-                stats_raw = stats_path.read_bytes()
-                with Path(job["annotations_path"]).open("rb") as stream:
-                    ann_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
-                if {"stats_sha256": hashlib.sha256(stats_raw).hexdigest(), "annotations_sha256": ann_sha256} != source:
-                    return jsonify({"error": "Analysis changed; reload statistics"}), 409
-                point_reviews = load_point_reviews(stats_path, source)
-                contact_report = dict(result, contacts=result["contacts"] + fault_contacts)
-                stats = json.loads(stats_raw)
                 if statistics_api and request.method == "POST":
-                    if body.get("source") != source:
-                        return jsonify({"error": "Analysis changed; reload statistics before reviewing"}), 409
+                    if body.get("source") != source or ((state["history"] or body.get("revision")) and body.get("revision") != state["revision"]):
+                        raise StatisticsSourceChanged("Analysis or workspace changed; reload statistics before reviewing")
                     review = validate_point_review(body)
-                    # Validate the target and winner before appending anything.
-                    build_player_match_statistics(stats, contact_report, point_reviews + [review])
+                    current = build_player_match_statistics(stats, report, state["point_reviews"])
+                    if review["attempt_ref"] not in {p["attempt_ref"] for p in current["reconciliation"]["points"]}:
+                        raise ValueError("Point review refers to an unknown attempt")
+                    build_player_match_statistics(stats, report, state["point_reviews"] + [review])
+                    guard_source(job, source)
                     append_point_review(stats_path, source, review)
-                    point_reviews.append(review)
-                summary = build_player_match_statistics(
-                    stats, contact_report, point_reviews,
-                )
+                    state = read_workspace(job)
+                    stats, report = state["stats"], state["report"]
+                summary = build_player_match_statistics(stats, report, state["point_reviews"])
                 if statistics_api:
-                    return jsonify(dict(summary, source=source, point_review_count=len(point_reviews)))
+                    return jsonify(dict(summary, source=source, revision=state["revision"],
+                                        point_review_count=len(state["point_reviews"])))
                 if evidence_page:
                     player = request.args.get("player") or "all"
-                    kind = request.args.get("kind") or "attack"
-                    metric = request.args.get("metric") or "total"
+                    kind, metric = request.args.get("kind") or "attack", request.args.get("metric") or "total"
                     evidence = statistic_evidence(summary, player, kind, metric)
-                    video_url = (f"/api/original_video?path={job['original_video_path_url']}"
-                                 if job.get("original_video_path_url") else url_for("video", job_id=job_id))
                     return render_template("statistics_evidence.html", job=job, summary=summary,
-                                           source=source, evidence=evidence, player=player, kind=kind,
-                                           metric=metric, modes=STATISTICS_VIEWS, fps=float(stats["fps"]),
-                                           video_url=video_url)
+                        source=source, revision=state["revision"], evidence=evidence, player=player, kind=kind,
+                        metric=metric, modes=STATISTICS_VIEWS, fps=float(stats["fps"]), video_url=_workspace_video_url(job))
                 if request.endpoint == "player_statistics_excel":
                     submitted = json.loads(request.form.get("profiles", "{}"))
                     if not isinstance(submitted, dict):
@@ -702,33 +804,26 @@ def _player_contact_response(job_id, *, statistics_page=False, highlights_page=F
                         profile = submitted.get(player, {})
                         if not isinstance(profile, dict):
                             raise ValueError("Invalid player profile")
-                        name, number = profile.get("name", ""), profile.get("number", "")
-                        position = profile.get("position", "")
-                        if not all(isinstance(v, str) for v in (name, number, position)):
+                        name, number, position = (profile.get(key, "") for key in ("name", "number", "position"))
+                        if not all(isinstance(value, str) for value in (name, number, position)):
                             raise ValueError("Player name, jersey and position must be text")
                         if position and position not in PLAYER_POSITIONS:
                             raise ValueError("Unknown player position")
-                        profiles[player] = {"name": name.strip()[:64], "number": number.strip()[:8],
-                                            "position": position}
-                    return send_file(
-                        export_player_statistics(summary, profiles), as_attachment=True,
+                        profiles[player] = {"name": name.strip()[:64], "number": number.strip()[:8], "position": position}
+                    return send_file(export_player_statistics(summary, profiles), as_attachment=True,
                         download_name=f"{job['video_stem']}-player-statistics.xlsx",
-                        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
+                        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
                 selected = request.args.get("player")
                 return render_template("player_statistics.html", job=job, summary=summary,
-                                       selected_player=selected if selected in summary["players"] else None,
-                                       contact_counts=summary["touch_counts"],
-                                       position_labels=PLAYER_POSITIONS,
-                                       modes=STATISTICS_VIEWS, stat_value=player_statistic_value,
-                                       portraits={player: len(choices) for player, choices in references.items()},
-                                       portrait_version=source["annotations_sha256"])
-            result["source"] = source
-            result["review_count"] = len(reviews)
-            result["method_id"] = method
-            result["methods"] = bundle["methods"] if bundle else {}
-            result["experiment_selection"] = bundle.get("selection") if bundle else None
-            return jsonify(result)
+                    selected_player=selected if selected in summary["players"] else None,
+                    contact_counts=summary["touch_counts"], position_labels=PLAYER_POSITIONS,
+                    modes=STATISTICS_VIEWS, stat_value=player_statistic_value,
+                    portraits={player: len(choices) for player, choices in state["references"].items()},
+                    portrait_version=source["annotations_sha256"])
+            report.update(source=source, revision=state["revision"], review_count=len(state["author_reviews"]),
+                          method_id=state["method_id"], methods=state["bundle"]["methods"] if state["bundle"] else {},
+                          experiment_selection=state["bundle"].get("selection") if state["bundle"] else None)
+            return jsonify(report)
     except (ExperimentSourceChanged, StatisticsSourceChanged) as error:
         return jsonify({"error": str(error)}), 409
     except (ValueError, KeyError, TypeError) as error:
@@ -766,7 +861,7 @@ def _annotation_corners(payload: dict) -> list | None:
     ]
 
 
-def _recompute_attack_heatmap(job: dict, payload: dict) -> dict:
+def _recompute_attack_heatmap(job: dict, payload: dict, *, events=None) -> dict:
     """Rebuild the attack map from stored annotations and the current court.
 
     Re-running the analyzer takes tens of minutes; every input the heatmap
@@ -780,12 +875,12 @@ def _recompute_attack_heatmap(job: dict, payload: dict) -> dict:
         raise ValueError("no court corners available — draw the court first")
     projector, _ = _projector_for(payload, corners)
 
-    events = None
-    try:
-        with open(job["stats_path"], encoding="utf-8") as handle:
-            events = (json.load(handle) or {}).get("all_events")
-    except (OSError, json.JSONDecodeError, KeyError):
-        events = None
+    if events is None:
+        try:
+            with open(job["stats_path"], encoding="utf-8") as handle:
+                events = (json.load(handle) or {}).get("all_events")
+        except (OSError, json.JSONDecodeError, KeyError):
+            events = None
 
     # The post bases mark the physical ends of the net; net_x_left/right are
     # calibration clicks that can sit well inside them.
@@ -910,6 +1005,20 @@ def recompute_court_stats(job_id):
     job = _get_job(job_id)
     if not job or job["status"] != "done":
         return jsonify({"error": "Not ready"}), 404
+    stats_path = Path(job["stats_path"])
+    if any(path.exists() for path in (workspace_path(stats_path), author_review_path(stats_path),
+                                       stats_path.with_name(stats_path.name.removesuffix("_stats.json") + "_point_reviews.jsonl"))):
+        try:
+            with _player_contact_lock:
+                state = read_workspace(job, include_annotations=True)
+                events = [event for event in state["stats"].get("all_events") or []
+                          if not event.get("review_excluded") and not event.get("excluded_from_match_stats")]
+                heatmap = _recompute_attack_heatmap(job, state["annotations"], events=events)
+                return jsonify(attack_heatmap=heatmap, persisted=False, source="reviewed_workspace")
+        except (StatisticsSourceChanged, OSError) as error:
+            return jsonify(error=str(error)), 409
+        except (CourtSetupError, ValueError, KeyError, TypeError) as error:
+            return jsonify(error=str(error)), 400
     payload = _read_annotations(job["annotations_path"])
     try:
         payload["attack_heatmap"] = _recompute_attack_heatmap(job, payload)

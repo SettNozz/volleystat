@@ -106,6 +106,7 @@ function renderTables() {
   const log = document.getElementById('scoringTableBody');
   log.innerHTML = '';
   EVENTS.forEach(ev => {
+    if (ev.review_excluded || ev.excluded_from_match_stats) return;
     if (tableState.team !== 'all' && ev.team !== tableState.team) return;
     const ri = rallyIndexOf(ev);
     if (tableState.rally !== 'all' && ri !== Number(tableState.rally)) return;

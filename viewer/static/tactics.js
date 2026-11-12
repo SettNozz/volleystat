@@ -32,6 +32,7 @@ async function initTactics() {
   const filterIds = ['set', 'team', 'setter', 'zone', 'quality', 'rotation'];
   const fmt = frame => (frame / boot.fps).toFixed(2) + 's';
   const unknown = value => value ?? 'Unknown';
+  const teamName = id => data?.config?.teams?.[id]?.name || unknown(id);
   function element(tag, text) { const node = document.createElement(tag); node.textContent = text; return node; }
   function row(cells) { const tr = document.createElement('tr'); cells.forEach(text => tr.append(element('td', text))); return tr; }
   function filters() { return Object.fromEntries(filterIds.map(id => [id, byId('tactics-' + id).value])); }
@@ -57,7 +58,7 @@ async function initTactics() {
     shown = data.pairs.filter(pair => tacticsMatches(pair, current)); selected = -1;
     const list = byId('tactics-pairs'); list.replaceChildren();
     shown.forEach((pair, index) => {
-      const button = element('button', `${fmt(pair.start_frame)} → ${fmt(pair.end_frame)} · ${pair.setter || 'P?'} · ${unknown(pair.team_id)} · ${pair.zone}`);
+      const button = element('button', `${fmt(pair.start_frame)} → ${fmt(pair.end_frame)} · ${pair.setter || 'P?'} · ${teamName(pair.team_id)} · ${pair.zone}`);
       button.type = 'button'; button.className = 'tactics-pair';
       button.append(element('small', `Reception: ${pair.reception_quality} · ${pair.rotation ? 'R' + pair.rotation : 'Unlabelled rotation'} · ${pair.setter_source} author · ${pair.ball_provenance} ball`));
       button.onclick = () => select(index); list.append(button);
@@ -78,7 +79,7 @@ async function initTactics() {
       groups.get(key).count++; totals.set(setterKey, (totals.get(setterKey) || 0) + 1);
     }
     for (const {pair, count} of groups.values()) {
-      const tr = row([unknown(pair.team_id), pair.setter || 'P?', pair.zone, pair.reception_quality, count,
+      const tr = row([teamName(pair.team_id), pair.setter || 'P?', pair.zone, pair.reception_quality, count,
         (100 * count / totals.get(JSON.stringify([pair.team_id, pair.setter]))).toFixed(1) + '%']);
       const button = element('button', String(count)); button.type = 'button';
       button.setAttribute('aria-label', `Watch ${count} matching pairs for ${pair.setter || 'unknown setter'}, ${pair.zone}, ${pair.reception_quality}`);
@@ -93,12 +94,12 @@ async function initTactics() {
     const rallies = data.rotation_rallies.filter(rally => tacticsMatches(rally, current, false));
     const rotationTable = byId('tactics-rotations'); rotationTable.replaceChildren();
     const rate = metric => metric.classified ? `${metric.wins}/${metric.classified} · ${(100 * metric.wins / metric.classified).toFixed(1)}%` : '— · 0 classified';
-    for (const group of tacticsRotationSummary(rallies)) rotationTable.append(row([group.team_id, unknown(group.set_id), group.rotation ? 'R' + group.rotation : 'Unlabelled',
+    for (const group of tacticsRotationSummary(rallies)) rotationTable.append(row([teamName(group.team_id), unknown(group.set_id), group.rotation ? 'R' + group.rotation : 'Unlabelled',
       rate(group.side_out), group.side_out.unknown, rate(group.break_point), group.break_point.unknown, group.unknown_roles]));
     const rallyList = byId('rotation-rallies'); rallyList.replaceChildren();
     for (const rally of rallies) {
       const result = rally.evidence_issue ? 'Excluded from rate: ' + rally.evidence_issue.replace(/_/g, ' ') : rally.won === null ? 'Point unresolved' : rally.won ? 'Point won' : 'Point lost';
-      const button = element('button', `${fmt(rally.start_frame)} · ${rally.team_id} · ${rally.rotation ? 'R' + rally.rotation : 'Unlabelled'} · ${rally.role} · ${result} · ${rally.point_verified ? 'Human-confirmed winner' : 'Automatic point evidence'}`);
+      const button = element('button', `${fmt(rally.start_frame)} · ${teamName(rally.team_id)} · ${rally.rotation ? 'R' + rally.rotation : 'Unlabelled'} · ${rally.role} · ${result} · ${rally.point_verified ? 'Human-confirmed winner' : 'Automatic point evidence'}`);
       button.type = 'button'; button.className = 'tactics-pair'; button.onclick = () => play(rally.start_frame, rally.end_frame); rallyList.append(button);
     }
     if (!rallies.length) { rotationTable.append(row(['No point evidence', '—', '—', '—', 0, '—', 0, 0])); rallyList.textContent = 'No source-linked point evidence matches these filters.'; }
@@ -106,7 +107,7 @@ async function initTactics() {
   function options(id, values, label, includeUnknown = true) {
     const select = byId(id), previous = select.value;
     select.replaceChildren();
-    for (const [value, text] of [['all', label], ...values.map(value => [value, value]), ...(includeUnknown ? [['unknown', 'Unknown']] : [])]) {
+    for (const [value, text] of [['all', label], ...values.map(value => [value, id === 'tactics-team' ? teamName(value) : value]), ...(includeUnknown ? [['unknown', 'Unknown']] : [])]) {
       const option = element('option', text); option.value = value; select.append(option);
     }
     if (Array.from(select.options).some(option => option.value === previous)) select.value = previous;
@@ -114,7 +115,7 @@ async function initTactics() {
   function renderLabels() {
     const list = byId('rotation-labels'); list.replaceChildren();
     (data.config.rotations || []).forEach((label, index) => {
-      const item = element('li', `${label.team_id} · R${label.rotation} · ${fmt(label.start_frame)}–${fmt(label.end_frame)}`);
+      const item = element('li', `${teamName(label.team_id)} · R${label.rotation} · ${fmt(label.start_frame)}–${fmt(label.end_frame)}`);
       const remove = element('button', 'Remove label'); remove.type = 'button';
       remove.onclick = async () => { const config = structuredClone(data.config); config.rotations.splice(index, 1); await saveConfig(config); };
       item.append(remove); list.append(item);
@@ -123,7 +124,7 @@ async function initTactics() {
     const ids = new Set(data.options.teams);
     for (const value of Object.values(data.config.team_identity_map || {})) if (value) ids.add(value);
     for (const segment of data.config.segments || []) for (const value of Object.values(segment.team_identity_map || {})) if (value) ids.add(value);
-    for (const id of ids) { const option = element('option', id); option.value = id; select.append(option); }
+    for (const id of ids) { const option = element('option', teamName(id)); option.value = id; select.append(option); }
     byId('rotation-save').disabled = !ids.size;
     if (!ids.size) byId('rotation-status').textContent = 'Confirm stable team identities in Match setup before labelling rotations.';
   }
