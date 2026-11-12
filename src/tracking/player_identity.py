@@ -61,7 +61,9 @@ def centre(obs: dict) -> np.ndarray:
 
 
 def choose_seed(frames: list[dict], roster_size: int) -> dict:
-    complete = [f for f in frames if len(f["players"]) == roster_size]
+    confident = [{**f, 'players': [p for p in f['players'] if not (p.get('tentative_side') or p.get('side_prior_only'))]}
+                 for f in frames]
+    complete = [f for f in confident if len(f["players"]) == roster_size]
     if not complete:
         raise ValueError("No complete roster frame; choose another analysis/window")
     # Prefer an early frame, then minimise contamination among the first 5 s.

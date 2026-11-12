@@ -27,7 +27,7 @@ PRODUCTION_PARAMETERS=ReIDParameters(motion_model='kalman',tracklet_consistency=
 def observations_from_annotations(annotations:list[dict],side:str | None='b', *, identity_map=None, segments=()) -> list[dict]:
     frames=[]
     for ann in annotations:
-        from src.tracking.player_team_membership import roster_side_at_frame
+        from src.tracking.player_team_membership import roster_side_at_frame, tentative_roster_side
         local_side = roster_side_at_frame(ann['f'], side, identity_map, segments) if side is not None else None
         players=[]
         poses=ann.get('poses') or []
@@ -38,6 +38,7 @@ def observations_from_annotations(annotations:list[dict],side:str | None='b', *,
             if len(box)!=4 or not np.isfinite(box).all() or box[2]<=box[0] or box[3]<=box[1]:
                 raise ValueError(f'Invalid player box at frame {ann["f"]}')
             players.append({'key':f'{ann["f"]}:{index}','pose_index':index,'bb':box,'raw_id':pose.get('id'),
+                            'side_prior_only':tentative_roster_side(pose),
                             'occlusion':max((overlap(box,p['bb']) for j,p in enumerate(poses) if j!=index),default=0.)})
         frames.append({'f':int(ann['f']),'players':players})
     if len({f['f'] for f in frames})!=len(frames) or [f['f'] for f in frames]!=sorted(f['f'] for f in frames):
@@ -188,6 +189,8 @@ def discovery_possible(frames,fps,roster_size=6,parameters=DISCOVERY_PARAMETERS)
     runs={}
     for frame in frames:
         for obs in frame['players']:
+            if obs.get('tentative_side') or obs.get('side_prior_only'):
+                continue
             raw=obs.get('raw_id')
             if raw is None or obs['occlusion']>=parameters.clean_overlap_max:
                 continue

@@ -82,7 +82,7 @@ def tracklet_chunks(frames: list[dict], features: dict, fps: float,
     tracks = defaultdict(list)
     for frame in frames:
         for obs in frame['players']:
-            if obs.get('raw_id') is not None and not obs.get('tentative_side'):
+            if obs.get('raw_id') is not None and not (obs.get('tentative_side') or obs.get('side_prior_only')):
                 tracks[obs['raw_id']].append((frame['f'], obs))
     chunks = []
 

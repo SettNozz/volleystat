@@ -59,6 +59,19 @@ def test_two_observations_cannot_establish_a_handoff():
     assert all(a['poses'][0]['team_id'] == 'opponent_team' for a in annotations[3:])
 
 
+@pytest.mark.parametrize('recent_owner', [True,False])
+def test_rejected_side_prior_cannot_be_revived_from_roster_vacancy(recent_owner):
+    annotations, features = fixture()
+    if not recent_owner:
+        for row in annotations[:3]:
+            row['poses'][0].pop('player_id')
+    for row in annotations[3:]:
+        row['poses'][0].update(identity={'reason':'uncorroborated_side_prior'})
+    result = recover(annotations,features)
+    assert not result.get('confirmed_handoffs')
+    assert all(not row['poses'][0].get('player_id') for row in annotations[3:])
+
+
 @pytest.mark.parametrize('reason', ['stale', 'distant', 'occupied', 'ambiguous_person', 'ambiguous_box', 'wrong_gallery'])
 def test_handoff_abstains_without_distinct_recent_person_and_motion(reason):
     annotations, features = fixture()

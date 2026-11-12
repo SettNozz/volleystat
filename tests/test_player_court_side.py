@@ -65,3 +65,55 @@ def test_tentative_id_requires_distinct_appearance_and_cannot_extend_local_state
     assert result['predictions']['15:0']['reason'] == 'tentative_side_corroborated'
     assert result['predictions']['29:0']['player_id'] is None
     assert result['predictions']['31:0']['player_id'] is None
+
+
+def test_five_visible_roster_members_do_not_lend_absent_server_id_to_opponent():
+    seed_players = [{'key':f'0:{i}', 'raw_id':i, 'bb':[i*100,0,i*100+30,100],
+                     'occlusion':0.} for i in range(6)]
+    frames = [{'f':0,'players':seed_players}]
+    vectors = np.eye(7)
+    features = {p['key']:vectors[i] for i,p in enumerate(seed_players)}
+    for f in (1,2,3):
+        # P3 has left the camera to serve. A similar-looking opponent at the
+        # net is only a tentative side candidate. Its weak appearance would
+        # pass the ordinary .55 gate, but not the stricter side-prior gate.
+        visible = [p for i,p in enumerate(seed_players) if i!=2]
+        players = [{**p,'key':f'{f}:{i}'} for i,p in enumerate(visible)]
+        opponent = {**seed_players[2],'key':f'{f}:5','raw_id':49,'side_prior_only':True}
+        players.append(opponent)
+        frames.append({'f':f,'players':players})
+        for p in players:features[p['key']] = .62*vectors[2]+.7846*vectors[6] if p is opponent else vectors[p['raw_id']]
+    returned = [{**p,'key':f'4:{i}'} for i,p in enumerate(seed_players)]
+    returned.append({**seed_players[2],'key':'4:6','raw_id':49,'side_prior_only':True})
+    frames.append({'f':4,'players':returned})
+    for p in returned:features[p['key']] = .62*vectors[2]+.7846*vectors[6] if p['raw_id']==49 else vectors[p['raw_id']]
+    seed = {'frame':0,'assignments':{p['key']:f'P{i+1}' for i,p in enumerate(seed_players)}}
+    result = associate(frames,seed,features,30,True,ReIDParameters(motion_model='kalman'))
+    # Reproduce the weak ordinary match, then exercise the production veto
+    # before these predictions can turn into self-supporting membership.
+    assert result['predictions']['1:5']['player_id']=='P3'
+    annotations=[]
+    for row in frames:
+        poses=[]
+        for p in row['players']:
+            prior=p.get('side_prior_only',False)
+            prediction=result['predictions'][p['key']]
+            poses.append({'id':p['raw_id'],'bb':p['bb'],'team':'b',
+                          'team_geometry':'team_a' if prior else 'team_b',
+                          'team_source':'frame_geometry' if prior else 'continuous_track_membership',
+                          'team_prior':'serve_back_facing_net_override' if prior else None,
+                          'player_id':prediction['player_id'],'identity':prediction})
+        annotations.append({'f':row['f'],'poses':poses})
+    from src.tracking.player_team_membership import preserve_roster_membership
+    report={'side':'b','method':'test','gallery_keys':result['gallery_keys'],'parameters':result['parameters']}
+    preserve_roster_membership(annotations,report,features,30)
+    for f in (1,2,3):
+        assigned = [p.get('player_id') for p in annotations[f]['poses']]
+        assert annotations[f]['poses'][5]['player_id'] is None
+        assert annotations[f]['poses'][5]['team']=='a'
+        assert len(annotations[f]['poses'])==6
+        assert len([pid for pid in assigned if pid]) == 5
+        assert 'P3' not in assigned
+    assert annotations[4]['poses'][2]['player_id']=='P3'
+    assert annotations[4]['poses'][6]['player_id'] is None
+    assert len([p for p in annotations[4]['poses'] if p.get('player_id')])==6
