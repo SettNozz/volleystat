@@ -203,6 +203,7 @@ python scripts/reconstruct_ball_gaps.py `
 
 - Pose model: YOLO11m-pose + ByteTrack, 17 COCO keypoints.
 - `CourtPlayerGate` filters spectators/benches and keeps court-member tracks with hysteresis.
+- Before membership and the per-team cap, reject tiny full-body pose outliers using local court perspective and at least three on-court references; partial poses abstain. See `docs/player_pose_filtering.md`.
 - Continuous confirmed tracks retain real-team membership through jumps; raw ID gaps/teleports reset it. Roster resolution precedes player caps and final features/FSM; `team` stays court side, `team_id` stays real team. See `docs/player_team_membership.md`.
 - Opponent raw IDs can be hijacked after occlusion: recover team membership from recent accepted appearance, motion, frozen-gallery support and three distinct observations (`player_roster_handoff.py`); never backfill the previous owner or duplicate an occupied roster ID.
 - Before clean FSM replay, poses beyond the sideline tolerance need a nearby court observation on the same continuous tracklet, from past or future frames.

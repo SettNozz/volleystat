@@ -290,6 +290,49 @@ def extract_player_poses(
     return poses
 
 
+def filter_perspective_pose_outliers(
+    poses: List[PlayerPose], projector: CourtProjector,
+) -> List[PlayerPose]:
+    """Reject tiny full-body detections relative to players at the same depth.
+
+    Floor markings can produce confident, anatomically complete YOLO poses.
+    Their feet pass the court test, but their apparent size is implausible.
+    Normalize the longest box dimension by a projected one-metre court span
+    at the ankles, then compare with the median of at least three on-court
+    full-body observations. This is a relative scale check, not a metric
+    estimate of human height. Missing legs/torso abstain; wide diving poses
+    retain their full extent instead of being judged by box height alone.
+    """
+    body = (L_SHOULDER, R_SHOULDER, L_HIP, R_HIP,
+            L_KNEE, R_KNEE, L_ANKLE, R_ANKLE)
+    scales = {}
+    references = []
+    for index, pose in enumerate(poses):
+        if any(pose.kp(i) is None for i in body):
+            continue
+        foot = pose.foot_point()
+        with np.errstate(divide="ignore", invalid="ignore"):
+            wx, wy = projector.image_to_world(foot)
+            left = projector.world_to_image((wx - 0.5, wy))
+            right = projector.world_to_image((wx + 0.5, wy))
+            pixels_per_metre = float(np.hypot(right[0] - left[0], right[1] - left[1]))
+        if not np.isfinite(pixels_per_metre) or pixels_per_metre <= 1e-6:
+            continue
+        x1, y1, x2, y2 = pose.bbox
+        extent = max(x2 - x1, y2 - y1) / pixels_per_metre
+        if not np.isfinite(extent) or extent <= 0:
+            continue
+        scales[index] = extent
+        if projector.entry_score(foot) >= 0:
+            references.append(extent)
+
+    if len(references) < 3:
+        return poses
+    minimum_extent = 0.30 * float(np.median(references))
+    return [pose for index, pose in enumerate(poses)
+            if index not in scales or scales[index] >= minimum_extent]
+
+
 class CourtPlayerGate:
     """
     Stateful on-court filter with track hysteresis.
@@ -363,6 +406,9 @@ class CourtPlayerGate:
     ) -> List[PlayerPose]:
         self._frame = self._frame + 1 if frame_index is None else frame_index
         proj = self.projector
+        # Reject floor hallucinations before they can refresh track memory,
+        # earn membership grace, or displace a player at the per-team cap.
+        poses = filter_perspective_pose_outliers(poses, proj)
         identity_map = team_identity_map or {"team_a": "opponent_team", "team_b": "observed_team"}
         # ByteTrack IDs are reusable. Membership belongs to a continuous
         # observation, not to an integer forever. Use source time, including
