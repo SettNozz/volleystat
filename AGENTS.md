@@ -130,10 +130,11 @@ Video / frame directory
      -> contact-preserving trajectory smoothing
      -> YOLO11m-pose + ByteTrack + CourtPlayerGate
      -> calibrated net/court team divider
+     -> offline OSNet roster identity and stable real-team membership
+     -> per-side player cap (known roster members first)
      -> clean IntegratedVolleyballFSM replay
      -> event model + match analytics
      -> contact side proposals (ball box size + possession order)
-     -> offline OSNet whole-video roster identity (default near side, raw IDs preserved)
      -> final annotation-based video/frame rendering
   -> *_stats.json
   -> *_annotations.json
@@ -202,6 +203,7 @@ python scripts/reconstruct_ball_gaps.py `
 
 - Pose model: YOLO11m-pose + ByteTrack, 17 COCO keypoints.
 - `CourtPlayerGate` filters spectators/benches and keeps court-member tracks with hysteresis.
+- Continuous confirmed tracks retain real-team membership through jumps; raw ID gaps/teleports reset it. Roster resolution precedes player caps and final features/FSM; `team` stays court side, `team_id` stays real team. See `docs/player_team_membership.md`.
 - Before clean FSM replay, poses beyond the sideline tolerance need a nearby court observation on the same continuous tracklet, from past or future frames.
 - Team split uses foot projection and calibrated net-floor line. Do not revert to raw `y < net_y` logic.
 - `team_a`/`team_b` are court sides. Stable real-team identities come from `team_identity_map` and can change across set-side switches.

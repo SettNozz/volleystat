@@ -15,7 +15,7 @@ Analysis runs locally and prioritizes accuracy over real-time speed. The pipelin
 ## What you can do
 
 - **Follow the ball.** Detect candidates, select the active match ball, remove static false positives and smooth its trajectory. Optional gap reconstruction preserves the distinction between observed and estimated positions.
-- **Review players and contacts.** Track 17-keypoint poses, assign court sides, discover a player roster and inspect proposed contact authors. Select a player to highlight their skeleton and seek to their contacts.
+- **Review players and contacts.** Track 17-keypoint poses and a stable team roster through jumps and brief occlusion. Roster membership is resolved before player limits and final statistics; court sides can change between sets. Select a player to highlight their skeleton and seek to their contacts. See [team membership](docs/player_team_membership.md).
 - **Navigate rallies.** Browse playable rallies, service attempts and typed contact events. Inspect set-to-attack trajectories with zone and setter filters.
 - **Explore match statistics.** View serve, reception and attack maps, contact logs, team summaries and per-player attack/reception outcomes where evidence is available.
 - **Inspect the evidence.** Click player statistics to watch their counted contacts and matched rallies. Review source conflicts and point winners; author confirmation and derived outcomes remain separate. Excel includes the same reviewed totals and evidence.
@@ -38,8 +38,9 @@ Analysis runs locally and prioritizes accuracy over real-time speed. The pipelin
 ```text
 Video + court calibration
   → ball detection and player poses
-  → trajectory cleanup, court filtering and game logic
-  → events, roster identity and contact attribution
+  → court filtering, roster identity and stable team membership
+  → player limits, trajectory cleanup and final game logic
+  → events and contact attribution
   → JSON results → CourtSense viewer / optional video export
 ```
 

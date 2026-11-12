@@ -125,7 +125,7 @@ class IdentityMixin:
 
     def _apply_player_identity(self, stats: "GameStats", images, fps: float,
                                video_path: Optional[Path] = None) -> None:
-        """Separate offline pass: stable IDs never replace tracker/FSM inputs."""
+        """Resolve roster membership before final features, FSM and statistics."""
         if not getattr(self, "enable_player_identity", False):
             stats.player_identity = {"enabled": False, "status": "disabled"}
             return
@@ -168,6 +168,8 @@ class IdentityMixin:
                 feature_cache=feature_cache,
                 jersey_reads=getattr(self, "player_jersey_reads", None),
                 method=getattr(self, "player_identity_method", "roster-discovery"),
+                preserve_membership=True, identity_map=getattr(self, 'team_identity_map', None),
+                segments=getattr(self, 'match_segments', ()),
             )
             stats.player_identity["model_resolution"] = resolved.as_dict()
             self.model_provenance["player_reid"].update(encoder.provenance)
@@ -193,6 +195,8 @@ class IdentityMixin:
             cache=getattr(self, "_model_cache", None), cache_dir=getattr(self, "model_cache_dir", None),
             assets=getattr(self, "player_reid_assets", None), device=getattr(self, "player_reid_device", "auto"),
             require_cache=getattr(self, "require_model_cache", False), use_registry=getattr(self, "use_model_registry", True), images=images)
+        if stats.player_identity.get('team_id'):
+            stats.player_contacts['team_id'] = stats.player_identity['team_id']
         provenance = stats.player_contacts.get("attribution", {}).get("model_resolution")
         if provenance:
             self.model_provenance["contact_author"] = provenance

@@ -172,8 +172,15 @@ def test_video_identity_precedes_final_render_and_both_json_exports(monkeypatch,
         stats.total_frames=stats.processed_frames=2
         return stats
     a._process_frames_iter=process
+    phases=[]
+    def offline(stats, fps):
+        assert stats.frame_annotations[1]['poses'][0]['player_id']=='P1'
+        phases.append('offline')
+        return stats
+    a._run_offline_passes=offline
     rendered=[]
     def render(source,path,annotations,*args):
+        assert phases==['offline']
         assert annotations[1]['poses'][0]['id']==101
         assert annotations[1]['poses'][0]['player_id']=='P1'
         rendered.append(path)

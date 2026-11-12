@@ -325,10 +325,16 @@ class DetectionMixin:
         # in; players chasing a ball outside the lines don't drop out.
         if projector is not None:
             if self._court_gate is None or self._court_gate.projector is not projector:
-                self._court_gate = CourtPlayerGate(projector, self.max_players_per_team)
+                # Roster identity must see candidates before the team cap.
+                maximum = None if getattr(self, 'enable_player_identity', False) else self.max_players_per_team
+                self._court_gate = CourtPlayerGate(projector, maximum)
+            from src.tracking.player_team_membership import team_map_at_frame
+            mapping = team_map_at_frame(frame_index, getattr(self, 'team_identity_map', None),
+                                        getattr(self, 'match_segments', ()))
             poses = self._court_gate.filter(
                 poses,
                 serve_setup=fsm_state in {"serve_prep", "serve_ready"},
+                frame_index=frame_index, fps=getattr(self, '_current_fps', 30.), team_identity_map=mapping,
             )
 
         if recovery is not None:

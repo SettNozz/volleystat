@@ -39,6 +39,14 @@ def test_assigns_roster_not_raw_id_preserves_inputs_and_type():
     assert result["players"][0]["raw_counts"]["dig"] == 1
 
 
+def test_stable_team_contact_survives_court_side_switch():
+    member = {**pose(100, 'P6', team='a'), 'team_id': 'observed_team'}
+    result = report([frame(poses=[member])], identity={'side': 'b', 'team_id': 'observed_team'})
+    assert result['contacts'][0]['player_id'] == 'P6'
+    assert result['players'][0]['total'] == 1
+    assert result['team_id'] == 'observed_team'
+
+
 @pytest.mark.parametrize("competitor", [pose(100, "P2", raw_id=2), pose(100, None, "a", 2), pose(100, None, "b", 2)])
 def test_ambiguous_opponent_or_unknown_is_not_ignored(competitor):
     result = report([frame(poses=[pose(105), competitor])])

@@ -184,6 +184,9 @@ class PlayerPose:
     mask_instance_id: Optional[int] = None
     player_id: Optional[str] = None  # offline roster identity, never a ByteTrack ID
     player_identity_processed: bool = False
+    team_id: Optional[str] = None  # stable real team, independent of court side
+    team_source: Optional[str] = None
+    team_geometry: Optional[str] = None  # instantaneous foot-side evidence
 
     @property
     def bbox_h(self) -> float:
@@ -336,6 +339,8 @@ class CourtPlayerGate:
         self._team_of: Dict[int, str] = {}       # track_id -> sticky team
         self._wy_ema: Dict[int, float] = {}      # track_id -> smoothed foot world-y
         self._team_votes: Dict[int, int] = {}    # track_id -> signed, trusted half votes
+        self._observed = {}  # track_id -> (source frame, centre, height)
+        self._member_team = {}  # track_id -> stable real-team identity
         self._frame = -1
 
     def reset(self) -> None:
@@ -343,6 +348,8 @@ class CourtPlayerGate:
         self._team_of.clear()
         self._wy_ema.clear()
         self._team_votes.clear()
+        self._observed.clear()
+        self._member_team.clear()
         self._frame = -1
 
     OCCLUSION_OVERLAP = 0.25  # bbox intersection / smaller-bbox area to count as occluded-by
@@ -351,9 +358,29 @@ class CourtPlayerGate:
         self,
         poses: List[PlayerPose],
         serve_setup: bool = False,
+        *, frame_index: Optional[int] = None, fps: float = 30.0,
+        team_identity_map: Optional[Dict[str, str]] = None,
     ) -> List[PlayerPose]:
-        self._frame += 1
+        self._frame = self._frame + 1 if frame_index is None else frame_index
         proj = self.projector
+        identity_map = team_identity_map or {"team_a": "opponent_team", "team_b": "observed_team"}
+        # ByteTrack IDs are reusable. Membership belongs to a continuous
+        # observation, not to an integer forever. Use source time, including
+        # skipped frames, and reject implausible transfers between people.
+        for pose in poses:
+            tid = pose.track_id
+            if tid is None:
+                continue
+            previous = self._observed.get(tid)
+            if previous is not None:
+                frame, center, height = previous
+                gap = self._frame - frame
+                motion = np.hypot(pose.center[0] - center[0], pose.center[1] - center[1])
+                if gap > fps or gap <= 0 or motion > (0.5 + 3 * gap / fps) * min(height, pose.bbox_h):
+                    for state in (self._last_inside, self._team_of, self._wy_ema,
+                                  self._team_votes, self._member_team):
+                        state.pop(tid, None)
+            self._observed[tid] = (self._frame, pose.center, pose.bbox_h)
 
         # Precompute foot/scores once per pose. ``entry_score`` is strict and
         # prevents sideline spectators from ever earning membership; the broad
@@ -382,7 +409,9 @@ class CourtPlayerGate:
                     tid is not None
                     and tid in self._last_inside
                     and self._frame - self._last_inside[tid] <= self.GRACE_FRAMES
-                    and score >= -self.EXTRA_MARGIN
+                    # An airborne ankle is not a ground-plane point. A
+                    # confirmed continuous member survives its bad projection.
+                    and (score >= -self.EXTRA_MARGIN or tid in self._member_team)
                 )
             if keep:
                 kept.append(pose)
@@ -445,6 +474,34 @@ class CourtPlayerGate:
                             if serve_setup else "back_facing_net_override"
                         )
 
+                pose.team_geometry = pose.team
+                tid = pose.track_id
+                ankles = pose.ankles()
+                if tid is not None and tid not in self._member_team and len(ankles) == 2:
+                    # Near-net/airborne feet cannot establish membership.
+                    # Three clear ankle observations prevent an initial bad
+                    # sample from becoming a permanent team assignment.
+                    residuals = [y - proj.net_floor_y(x) for x, y in ankles]
+                    band = float(np.clip(pose.bbox_h * 0.10, 10.0, 48.0))
+                    far_clear = (max(residuals) < -max(band, pose.bbox_h * .35)
+                                 and not pose.team_prior)
+                    vote = 1 if min(residuals) > band else (-1 if far_clear else 0)
+                    if vote and all(pose.keypoints[i, 2] >= 0.5 for i in (L_ANKLE, R_ANKLE)):
+                        old = self._team_votes.get(tid, 0)
+                        self._team_votes[tid] = old + vote if old * vote > 0 else vote
+                        if abs(self._team_votes[tid]) >= 3:
+                            side = "team_b" if vote > 0 else "team_a"
+                            self._member_team[tid] = identity_map[side]
+                member = self._member_team.get(tid)
+                side = next((s for s, team in identity_map.items() if team == member), None)
+                if side is not None:
+                    pose.team = side
+                    pose.team_id = member
+                    pose.team_source = "continuous_track_membership"
+                else:
+                    pose.team_id = identity_map[pose.team]
+                    pose.team_source = "frame_geometry"
+
         # Sticky team: require repeated, trusted ankle measurements before
         # locking.  A player may enter the video while occluded; their first
         # recovered ankle position is not enough evidence to decide a team.
@@ -490,13 +547,17 @@ class CourtPlayerGate:
             self._team_of.pop(t, None)
             self._team_votes.pop(t, None)
             self._wy_ema.pop(t, None)
+            self._member_team.pop(t, None)
+        for tid, (frame, _, _) in list(self._observed.items()):
+            if self._frame - frame > max(fps, self.GRACE_FRAMES):
+                self._observed.pop(tid, None)
 
         # Cap per team, keeping the most-inside players
         if self.max_per_team is not None:
             kept_idx: List[int] = []
             for team in ("team_a", "team_b"):
                 members = [(scores[i], i) for i, p in enumerate(kept) if p.team == team]
-                members.sort(key=lambda t: -t[0])
+                members.sort(key=lambda t: (kept[t[1]].track_id not in self._member_team, -t[0]))
                 kept_idx.extend(i for _, i in members[:self.max_per_team])
             kept = [kept[i] for i in sorted(kept_idx)]
 

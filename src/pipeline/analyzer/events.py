@@ -249,6 +249,8 @@ class EventsMixin:
                 team_prior=saved.get("team_prior"),
                 player_id=saved.get("player_id"),
                 player_identity_processed="player_id" in saved,
+                team_id=saved.get('team_id'), team_source=saved.get('team_source'),
+                team_geometry=saved.get('team_geometry'),
             ))
         return poses
 

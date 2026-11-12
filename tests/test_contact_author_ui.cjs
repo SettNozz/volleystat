@@ -24,7 +24,8 @@ function fixture() {
       {event_index: 0, frame: 30, time: 1, contact_frame: 32, contact_time: 32/30, type: 'reception', player_id: 'P1', status: 'assigned', label_source: 'derived', reason: 'learned'},
       {event_index: 1, frame: 60, time: 2, type: 'pass', player_id: null, proposed_player_id: 'P1', status: 'unresolved', label_source: 'derived', reason: 'ambiguous_players'},
     ]};
-  const context = vm.createContext({document: {getElementById: id => nodes[id], createElement: () => new Element(), addEventListener() {}},
+  const context = vm.createContext({getComputedStyle: () => ({getPropertyValue: () => ''}),
+    document: {getElementById: id => nodes[id], createElement: () => new Element(), addEventListener() {}},
     formatTime: t => `${t.toFixed(2)}s`, seekAndPlay: f => calls.push(['seek', f]), redraw() {}, JOB_ID: 'clip',
     fetch: async (url, request) => {
       calls.push(['fetch', url, request]);
@@ -70,7 +71,7 @@ test('proposed actor focus is bound to exact source frame and respects human ove
   data.contacts[0].candidates = [{frame:32, pose_index:0, raw_track_id:7, player_id:'P1', side:'b', bbox:[1,2,3,4]}];
   nodes.playerContactList.children[0].children[0].onclick();
   const style = (frame, index=0) => vm.runInContext(`playerPoseStyle({team:'b',id:7,player_id:null},${index},${frame})`, context);
-  assert.equal(style(32).width, 3);
+  assert.equal(style(32).width, 3.5);
   assert.equal(style(31).width, 1.5);
   assert.equal(style(32, 1).width, 1.5);
   data.contacts[0].label_source = 'human';
@@ -82,7 +83,7 @@ test('report replacement clears stale candidate focus after method or human chan
   data.contacts[0].candidates = [{frame:32, pose_index:0, raw_track_id:7, side:'b'}];
   nodes.playerContactList.children[0].children[0].onclick();
   const style = () => vm.runInContext("playerPoseStyle({team:'b',id:7,player_id:null},0,32)", context);
-  assert.equal(style().width, 3);
+  assert.equal(style().width, 3.5);
   vm.runInContext("playerContactReport={...data, contacts:data.contacts.map(c => ({...c,label_source:'human'}))}; renderPlayerContacts()", context);
   assert.equal(style().width, 1.5);
   vm.runInContext("playerContactReport={...data, contacts:data.contacts.map(c => ({...c,candidates:[]}))}; renderPlayerContacts()", context);

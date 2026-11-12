@@ -92,7 +92,8 @@ function poseSide(team) {
 
 function playerPoseStyle(pose, poseIndex, frameIndex) {
   const targetSide = playerContactReport ? playerContactReport.side : 'b';
-  const onSide = poseSide(pose.team) === targetSide;
+  const onSide = playerContactReport && playerContactReport.team_id && pose.team_id
+    ? pose.team_id === playerContactReport.team_id : poseSide(pose.team) === targetSide;
   const candidate = playerContactCandidate(frameIndex);
   const focused = candidate && candidate.pose_index === poseIndex && candidate.raw_track_id === pose.id;
   // A contact candidate or a chosen roster player stays yellow; everyone else

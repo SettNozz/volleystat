@@ -6,9 +6,12 @@ render the full video. The default analysis exports JSON for the original-video
 viewer; `--render-video` is explicit. See [cache protocol](model_output_cache.md).
 
 OSNet identity is enabled by default in `GameAnalyzer`, `analyze_video.py` and
-viewer upload jobs. The offline pass runs after ball/FSM/event processing over
-the final saved player boxes. It does not feed identities into ByteTrack, court
-membership or pose features. A separate derived
+viewer upload jobs. The offline pass runs over court-filtered boxes before
+the final player cap, pose features, FSM and event processing. Stable roster
+membership corrects transient foot-side errors without replacing raw ByteTrack
+IDs or creating missing detections. Explicit match segments map the same real
+team onto its current court side. See [team membership](player_team_membership.md).
+A separate derived
 [per-player contact report](player_contacts.md) proposes attribution after
 identity; its ambiguous cases remain unknown and can be reviewed in the viewer.
 
