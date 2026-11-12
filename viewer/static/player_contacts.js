@@ -101,8 +101,11 @@ function playerPoseStyle(pose, poseIndex, frameIndex) {
   const spotlight = candidate ? focused : Boolean(selectedPlayerId && onSide && pose.player_id === selectedPlayerId);
   const dimmed = !spotlight && Boolean(candidate || selectedPlayerId);
   const known = poseSide(pose.team) !== null;
+  // Scoreboard colours belong to real teams, including after a side switch.
+  const colourSide = playerContactReport && playerContactReport.team_id && pose.team_id
+    ? (onSide ? targetSide : (targetSide === 'b' ? 'a' : 'b')) : pose.team;
   return {
-    color: spotlight ? 'rgba(255, 220, 0, 0.98)' : teamPoseColor(pose.team, dimmed ? 0.45 : (known ? 0.95 : 0.58)),
+    color: spotlight ? 'rgba(255, 220, 0, 0.98)' : teamPoseColor(colourSide, dimmed ? 0.45 : (known ? 0.95 : 0.58)),
     width: spotlight ? 3.5 : (dimmed || !known ? 1.5 : (onSide ? 3 : 2.5)),
     radius: spotlight ? 4 : (dimmed || !known ? 2 : 3),
   };

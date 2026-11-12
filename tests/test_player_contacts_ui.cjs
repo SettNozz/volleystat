@@ -81,6 +81,16 @@ test('selected roster member remains highlighted after a court-side switch', () 
   assert.equal(style.width, 3.5);
 });
 
+test('team colour remains stable when the same roster crosses court sides', () => {
+  const {context} = fixture();
+  vm.runInContext("playerContactReport.team_id = 'observed_team'", context);
+  const style = value => vm.runInContext(`playerPoseStyle(${JSON.stringify(value)})`, context);
+  const before = style({team: 'b', team_id: 'observed_team', player_id: 'P1'});
+  const after = style({team: 'a', team_id: 'observed_team', player_id: 'P1'});
+  assert.equal(before.color, after.color);
+  assert.notEqual(after.color, style({team: 'b', team_id: 'opponent_team'}).color);
+});
+
 test('model evidence highlights one observed pose despite a conflicting old roster ID or side', () => {
   const {context} = fixture();
   vm.runInContext(`selectedPlayerId = 'P1'; activePlayerContact = {
