@@ -38,6 +38,7 @@ function substitutionLabel(ev) {
 }
 
 function setupSubstitutionMarkers(bar) {
+  if (!bar) return;
   bar.querySelectorAll('.substitution-marker').forEach(m => m.remove());
   if (!substitutionsVisible()) return;
   for (const ev of substitutionEvents()) {

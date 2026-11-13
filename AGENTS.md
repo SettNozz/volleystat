@@ -171,7 +171,9 @@ Main code:
   last), `viewer_charts.js`, `viewer_tables.js`, `viewer_overlay.js` (redraw),
   `viewer_set_trajectories.js` (set-to-attack pairs, zone/setter filters,
   clickable overlay lines),
-  `viewer_attack_height.js` (approximate near-side contact height), and
+  `viewer_attack_height.js` (approximate near-side contact height),
+  `viewer_events.js` (causal animated contact feed and on-video event card),
+  `viewer_substitutions.js` (optional overlay and list in Player contacts), and
   `viewer_page.css`. The feature scripts only declare functions and state.
 
 ## Ball trajectory invariants
@@ -335,6 +337,7 @@ results/game/game_analyzed.mp4
 ```
 
 Viewer reads actual annotations, not redrawn guesses. It supports ball/trail, reconstruction provenance, players, net/court, FSM/events, attack heatmap, match analytics, upload jobs, persisted result restore, and court editing.
+Overlays start off in the transparent video gear menu; Attack origins sits below the contact feed in the right column.
 
 Viewer uploads select the ball batch automatically. Prefer compatible cached detections before sizing from available GPU memory. Reduce the batch on CUDA memory exhaustion. Explicit CLI batches remain supported.
 

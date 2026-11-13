@@ -210,10 +210,11 @@ intervals, `stints`, `rejected` pairs and parameters, all
 `gallery_keys`, so contact authors, player contacts and statistics list it.
 The contact-author model chooses only among players on court at the contact.
 
-Viewer: the **Substitutions** overlay toggle (on by default) draws a banner
+Viewer: the **Substitutions** toggle under the video gear's **Advanced overlays**
+(off by default) draws a banner
 "⇄ SUBSTITUTION · P7 IN · P1 OUT" from 2 s before to 4 s after the crossing,
-dashed IN/OUT boxes on both players and green timeline markers. The
-**Substitutions** side panel lists every event and seeks to it. **Player
+dashed IN/OUT boxes on both players. The **Substitutions** section in the
+**Player contacts** tab lists every event and seeks to it. **Player
 statistics** lists every roster ID including substitutes (marked `SUB`); the
 personal panel shows role, time on court and each substitution.
 

@@ -38,18 +38,10 @@ function ballView(annotation) {
   };
 }
 
-function ballStyle(source) {
-  if (source === 'detected') return {color: '#00ff44', rgb: '0,255,68'};
-  if (source === 'interpolated_short') return {color: '#ffc800', rgb: '255,200,0'};
-  if (source === 'reconstructed_conservative') return {color: '#00d4ff', rgb: '0,212,255'};
-  if (source === 'reconstructed_contact_aware') return {color: '#ff4fd8', rgb: '255,79,216'};
-  if (source === 'reconstructed_occlusion') return {color: '#a78bfa', rgb: '167,139,250'};
-  return {color: BALL_COLOR, rgb: '0,255,68'};
-}
-
 function redraw() {
   renderServeScore();
   renderAttackHeight();
+  updateActiveEvent();
   if (!canvas.width) return;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (!annotations) return;
@@ -73,7 +65,6 @@ function redraw() {
   const showPlayers = document.getElementById('togPlayers').checked;
   const showState   = document.getElementById('togState').checked;
   const showModel   = document.getElementById('togModel').checked;
-  const showEvents  = document.getElementById('togEvents').checked;
   const showAttackHeatmap = document.getElementById('togAttackHeatmap').checked;
   const showCourt   = document.getElementById('togCourt').checked;
   const currentBall = ballView(ann);
@@ -261,7 +252,7 @@ function redraw() {
       const viewed = ballView(a);
       if (a && viewed.point) {
         trailPos.push({ x: viewed.point[0], y: viewed.point[1], age: currentFrameIdx - fi,
-                        newTrack: !!a.ball_new, source: viewed.source });
+                        newTrack: !!a.ball_new });
         // The tracker re-acquired the ball here; anything older belongs to a
         // different hypothesis and must not be joined to this one.
         if (a.ball_new) break;
@@ -279,7 +270,7 @@ function redraw() {
     if (showTrail && trailPos.length > 0 && currentBall.point) {
       const pts = [...trailPos].reverse();
       pts.push({ x: currentBall.point[0], y: currentBall.point[1], age: 0,
-                 newTrack: !!ann.ball_new, source: currentBall.source });
+                 newTrack: !!ann.ball_new });
 
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -292,8 +283,7 @@ function redraw() {
         if (frameGap > GAP_BREAK || p1.newTrack || step > MAX_TRAIL_STEP) continue;
         const frac  = 1 - p1.age / TRAIL_FRAMES;
         const alpha = Math.pow(frac, 1.1) * 0.9;
-        const trailStyle = ballStyle(p1.source);
-        ctx.strokeStyle = `rgba(${trailStyle.rgb}, ${alpha})`;
+        ctx.strokeStyle = `rgba(0,255,68, ${alpha})`;
         ctx.lineWidth   = 1 + frac * 2.5;
         ctx.beginPath();
         ctx.moveTo(px(p0.x), py(p0.y));
@@ -304,32 +294,14 @@ function redraw() {
 
     if (currentBall.point) {
       const [bx, by] = currentBall.point;
-      const style = ballStyle(currentBall.source);
-      if (currentBall.source !== 'detected') {
-        ctx.strokeStyle = style.color;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.arc(px(bx), py(by), 5, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      } else {
-        ctx.shadowColor = style.color;
-        ctx.shadowBlur  = 5;
-        ctx.fillStyle   = style.color;
-        ctx.beginPath();
-        ctx.arc(px(bx), py(by), 2.5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.shadowBlur  = 0;
-      }
-      if (currentBall.source !== 'detected') {
-        ctx.fillStyle = style.color;
-        ctx.font = `bold ${Math.max(10, Math.round(11 * sx))}px system-ui`;
-        ctx.fillText(
-          `${currentBall.source.replace(/^reconstructed_/, '')} ${currentBall.confidence.toFixed(2)}`,
-          px(bx) + 8, py(by) - 8,
-        );
-      }
+      // Keep the display uniform; annotations retain coordinate provenance.
+      ctx.shadowColor = BALL_COLOR;
+      ctx.shadowBlur  = 5;
+      ctx.fillStyle   = BALL_COLOR;
+      ctx.beginPath();
+      ctx.arc(px(bx), py(by), 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur  = 0;
     } else if (ann.ball_out_of_frame && currentBall.mode === 'active') {
       ctx.fillStyle = '#f59e0b';
       ctx.font = `bold ${Math.max(12, Math.round(15 * sx))}px system-ui`;
@@ -510,36 +482,6 @@ function redraw() {
     );
     ctx.shadowBlur = 0;
     stateY += 28;
-  }
-
-  if (showEvents) {
-    const FADE_SEC = 2.5;
-    const t = vid.currentTime;
-    let recentEv = null;
-    for (let i = EVENTS.length - 1; i >= 0; i--) {
-      const dt = t - EVENTS[i].time;
-      if (dt >= 0 && dt < FADE_SEC && evVisible(EVENTS[i], eventTeams[i])) {
-        recentEv = { ...EVENTS[i], team: eventTeams[i] };
-        break;
-      }
-      if (dt >= FADE_SEC) break;
-    }
-    if (recentEv) {
-      const dt    = t - recentEv.time;
-      const alpha = Math.pow(1 - dt / FADE_SEC, 1.5);
-      const color = evColor(recentEv.type);
-      const label = recentEv.type.replace(/_/g, ' ').toUpperCase();
-      const team  = recentEv.team ? ` · ${teamLabel(recentEv.team)}` : '';
-      const fs    = Math.round(28 * Math.max(sx, 0.6));
-      ctx.font        = `bold ${fs}px system-ui`;
-      ctx.shadowColor = '#000';
-      ctx.shadowBlur  = 10;
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle   = color;
-      ctx.fillText('⚡ ' + label + team, px(20), py(115));
-      ctx.globalAlpha = 1;
-      ctx.shadowBlur  = 0;
-    }
   }
 
   // viewer_substitutions.js; absent on pages that embed only this overlay.
