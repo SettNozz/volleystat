@@ -47,7 +47,8 @@ def test_checksum_is_checked_before_deserializing(tmp_path, monkeypatch):
 
 def test_frozen_head_choice_and_feature_order_guard(model):
     features = {"columns": ["x"], "global_columns": ["g"], "global_features": np.ones((1, 1)),
-        "candidate_features": [np.array([[.1], [.8], [.4]])], "options": ["P1", "P8", "other_team"], "evidence": [{}]}
+        "candidate_features": [np.array([[.1], [.8], [.4]])], "options": ["P1", "P8", "other_team"],
+        "evidence": [{pid: {"distance_body_heights": .1} for pid in ("P1", "P8")}]}
     result = model.predict_features(features, [{"frame": 10, "type": "pass", "video_id": "test"}])
     assert result[0]["label"] == "P8"
     # P8 was substituted off at frame 10: the best on-court player gets the contact.
@@ -71,6 +72,57 @@ def test_features_ignore_author_targets_and_leave_source_poses_untouched():
     second = runtime.build_features(ann, contacts, roster, vectors)
     np.testing.assert_array_equal(first["candidate_features"], second["candidate_features"])
     assert ann == before and first["evidence"][0]["P1"]["raw_track_id"] == 1
+
+
+def test_candidate_cannot_borrow_another_stable_roster_players_touch(model):
+    setter = {"frame": 10, "distance_body_heights": .08,
+              "roster_support": {"player_id": "P5", "strong_frames": 11}}
+    features = {"columns": ["x"], "global_columns": ["g"], "global_features": np.ones((1, 1)),
+        "candidate_features": [np.array([[.28], [.95], [.04]])], "options": ["P5", "P6", "other_team"],
+        "evidence": [{"P5": deepcopy(setter), "P6": deepcopy(setter)}]}
+    before = deepcopy(features)
+    result = model.predict_features(features, [{"frame": 10, "type": "set", "video_id": "unseen"}])[0]
+    assert result["label"] == "P5" and result["actor"] == setter
+    assert result["scores"][1] == pytest.approx(.95)
+    assert result["eligibility_rejections"] == {"P6": "observed_roster_conflict"}
+    assert features["evidence"] == before["evidence"]
+    # A benched or physically distant alternative must not inherit this touch.
+    result = model.predict_features(features, [{"frame": 10, "type": "set", "video_id": "unseen"}],
+                                    on_court={"P5": [[20, 30]]})[0]
+    assert result["label"] is None
+    features["evidence"][0]["P5"]["distance_body_heights"] = .8
+    assert model.predict_features(features, [{"frame": 10, "type": "set", "video_id": "unseen"}])[0]["label"] is None
+
+
+def test_missing_ball_or_unconfirmed_replacement_does_not_inherit_a_touch(model):
+    features = {"columns": ["x"], "global_columns": ["g"], "global_features": np.ones((1, 1)),
+        "candidate_features": [np.array([[.9], [.1], [.04]])], "options": ["P1", "P2", "other_team"],
+        "evidence": [{"P1": {"distance_body_heights": .8}, "P2": {"distance_body_heights": .1}}]}
+    contacts = [{"frame": 10, "type": "attack", "video_id": "unseen"}]
+    assert model.predict_features(features, contacts)[0]["label"] is None
+    features["evidence"] = [{}]
+    assert model.predict_features(features, contacts)[0]["label"] is None
+
+
+@pytest.mark.parametrize("break_support", [None, "weak", "unknown", "disagreement", "teleport", "gap", "single", "raw_none"])
+def test_roster_constraints_need_strong_continuous_observations(break_support):
+    frames = []
+    for f in (8, 9, 10):
+        p = pose(); p.update(team="b", player_id="P5", identity={"reason": "associated", "appearance_distance": .12})
+        if break_support == "weak": p["identity"]["appearance_distance"] = .5
+        if break_support == "unknown": p["player_id"] = None
+        if break_support == "disagreement" and f == 8: p["player_id"] = "P6"
+        if break_support == "teleport" and f == 10: p["bb"] = [1000, 0, 1020, 100]
+        if break_support == "raw_none": p["id"] = None
+        frames.append({"f": f if break_support != "gap" or f != 10 else 30, "poses": [p]})
+    if break_support == "single": frames = frames[-1:]
+    observations, tracks = runtime.track_segments(frames, 30)
+    f = frames[-1]["f"]
+    support = runtime.observed_roster_support({"frame": f, "pose_index": 0}, f, observations, tracks)
+    if break_support is None:
+        assert support["player_id"] == "P5" and support["strong_frames"] == 3
+    else:
+        assert support is None
 
 
 def test_five_player_setup_keeps_actual_ids_and_substitute_references():

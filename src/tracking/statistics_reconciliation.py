@@ -8,6 +8,7 @@ from collections import Counter, defaultdict
 import math
 
 from src.tracking.player_contacts import CONTACT_TYPES, category, side
+from src.tracking.contact_moments import contact_moment_groups
 
 KINDS = {"attack", "serve", "reception", "dig_pass", "block"}
 OUTCOMES = {
@@ -43,6 +44,9 @@ def _attempts(stats, key):
 def reconcile_statistics(stats, report, point_reviews=()):
     """Return explainable outcomes without mutating saved analysis or reviews."""
     events = stats.get("all_events") or []
+    groups = contact_moment_groups(report["contacts"], events, stats.get("fps"))
+    source_indices = {c["event_index"]: indices for c, indices in groups}
+    duplicates = {index for c, indices in groups for index in indices if index != c["event_index"]}
     current_key = "service_attempts" if stats.get("service_attempts") else "rallies"
     score_key = "service_attempts_fsm" if "service_attempts_fsm" in stats else current_key
     current, scored = _attempts(stats, current_key), _attempts(stats, score_key)
@@ -92,7 +96,7 @@ def reconcile_statistics(stats, report, point_reviews=()):
         })
     points_by_ref = {p["attempt_ref"]: p for p in points}
     indexed = [(i, e) for i, e in enumerate(events)
-               if e.get("type") in CONTACT_TYPES | {"serve_fault"} and _frame(e.get("frame"))]
+               if i not in duplicates and e.get("type") in CONTACT_TYPES | {"serve_fault"} and _frame(e.get("frame"))]
     ordered = sorted(indexed, key=lambda pair: pair[1]["frame"])
     frames = [event["frame"] for _, event in ordered]
 
@@ -187,6 +191,7 @@ def reconcile_statistics(stats, report, point_reviews=()):
             video_frame = frame
         contacts.append({
             "event_index": index, "frame": frame, "video_frame": int(video_frame),
+            "source_event_indices": source_indices.get(index, [index]),
             "kind": kind, "type": event["type"], "event_source": event.get("source") or "saved_event",
             "player_id": author.get("player_id") if assigned else None,
             "author_status": "assigned" if assigned else author.get("status", "unresolved"),

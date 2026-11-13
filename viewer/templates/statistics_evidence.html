@@ -6,6 +6,7 @@
 <link rel="icon" href="/static/brand/icon.svg" type="image/svg+xml">
 <link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='statistics_evidence.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='viewer_controls.css') }}" rel="stylesheet">
 <header><strong>CourtSense · Statistics evidence</strong>
   <a href="{{ url_for('player_statistics', job_id=job.job_id, player=player if player in summary.players else none, view=kind) }}">← Player statistics</a>
   <a href="{{ url_for('results', job_id=job.job_id) }}">Match viewer</a>
@@ -58,7 +59,7 @@
   </div>
   <details id="point-reconciliation"{% if summary.reconciliation.conflicts %} open{% endif %}>
     <summary>Point reconciliation · {{ summary.reconciliation.conflicts }} conflicts · {{ summary.reconciliation.point_summary.get('unresolved', 0) }} unresolved points</summary>
-    <p>Confirm the winner on the court side occupied during this rally: A = far, B = near. Saving updates this statistics view and its Excel export. Original FSM score and heatmap retain their original provenance.</p>
+    <p>Confirm the winner on the court side occupied during this rally: <span data-team-job="{{ job.job_id }}" data-team-side="a">A · far</span> or <span data-team-job="{{ job.job_id }}" data-team-side="b">B · near</span>. Saving updates this statistics view and its Excel export. Original FSM score and heatmap retain their original provenance.</p>
     <p>Point confirmation does not confirm an attack kill or an attack error. Reset restores the saved analysis proposal; review history stays available.</p>
     <p id="review-status" role="status"></p>
     {% if summary.reconciliation.contact_conflicts %}
@@ -77,14 +78,14 @@
       <tr>
         <td>{{ loop.index }}{% if point.set_id %} · {{ point.set_id }}{% endif %}</td>
         <td>{% if point.start_frame is not none %}<button type="button" data-rally-start="{{ point.start_frame }}"{% if point.end_frame is not none %} data-rally-end="{{ point.end_frame }}"{% endif %}>{{ '%.2f' | format(point.start_frame / fps) }}s ▶</button>{% else %}—{% endif %}</td>
-        <td>{{ {'a': 'A · far', 'b': 'B · near'}.get(point.winner_side, 'Unresolved') }}</td>
+        <td data-team-job="{{ job.job_id }}" data-team-side="{{ point.winner_side or '' }}">{{ {'a': 'A · far', 'b': 'B · near'}.get(point.winner_side, 'Unresolved') }}</td>
         <td>{{ 'Human-confirmed winner' if point.verified else ('Human left unresolved' if point.reviewed else 'Automatic · ' + point.status) }}
           {% if point.issues %}<br><span class="warning">{{ point.issues | join(', ') | replace('_', ' ') }}</span>{% endif %}
         </td>
         <td><form class="point-review" data-attempt="{{ point.attempt_ref }}">
           <select aria-label="Winner for score rally {{ loop.index }}">
-            <option value="b"{% if point.winner_side == 'b' %} selected{% endif %}>B · near</option>
-            <option value="a"{% if point.winner_side == 'a' %} selected{% endif %}>A · far</option>
+            <option value="b" data-team-job="{{ job.job_id }}" data-team-side="b"{% if point.winner_side == 'b' %} selected{% endif %}>B · near</option>
+            <option value="a" data-team-job="{{ job.job_id }}" data-team-side="a"{% if point.winner_side == 'a' %} selected{% endif %}>A · far</option>
             <option value="unknown"{% if not point.winner_side %} selected{% endif %}>Leave unresolved</option>
             <option value="reset">Reset to proposal</option>
           </select><button type="submit">Save</button>
@@ -96,5 +97,6 @@
   </details>
 </main>
 <script id="evidence-data" type="application/json">{{ {'contacts': evidence.contacts, 'source': source, 'fps': fps, 'job': job.job_id, 'metric': metric, 'kind': kind, 'modes': modes, 'api': url_for('statistics_data', job_id=job.job_id), 'viewer': url_for('results', job_id=job.job_id)} | tojson }}</script>
+<script src="{{ url_for('static', filename='team_names.js') }}"></script>
 <script src="{{ url_for('static', filename='statistics_evidence.js') }}"></script>
 </html>

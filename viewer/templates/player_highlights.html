@@ -56,6 +56,7 @@
   .uncertain { color: oklch(60% 0.15 70); }
   .empty, .note { padding: 1rem; color: var(--muted); font-size: .88rem; line-height: 1.6; }
 </style>
+<link href="{{ url_for('static', filename='viewer_controls.css') }}" rel="stylesheet">
 <header class="topbar">
   <span class="brand"><img class="brand-mark" src="/static/brand/icon.svg" alt="">CourtSense</span>
   <a class="back" href="{{ url_for('player_statistics', job_id=job.job_id, player=player) }}">← Player statistics</a>

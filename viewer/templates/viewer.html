@@ -12,6 +12,7 @@
 <link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='viewer_page.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='viewer_players.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='viewer_controls.css') }}" rel="stylesheet">
 </head>
 <body>
 
@@ -61,10 +62,10 @@
     </div>
     <section class="card workspace-panel" id="setTrajectoryPanel" data-workspace-panel="trajectories" aria-labelledby="setTrajectoryTitle" hidden>
       <h2 class="card-title" id="setTrajectoryTitle">Set analysis</h2>
-      <label class="cal-row">Court side
+      <label class="cal-row">Team
         <select id="setTrajectorySide" onchange="renderSetTrajectories()">
-          <option value="team_b" selected>Near side</option>
-          <option value="team_a">Far side</option>
+          <option value="team_b" selected data-team-job="{{ job.job_id }}" data-team-side="b">Near side</option>
+          <option value="team_a" data-team-job="{{ job.job_id }}" data-team-side="a">Far side</option>
           <option value="all">All pairs, including unattributed</option>
         </select>
       </label>
@@ -159,7 +160,7 @@
       </div>
       <div id="poseEstimateStatus" style="font-size:11px;color:var(--muted);margin-top:6px"></div>
       <div class="cal-row" style="margin-top:8px">ball path
-        <select id="ballPathMode" class="ctrl" style="padding:3px 6px;max-width:160px" onchange="redraw()">
+        <select id="ballPathMode" class="ctrl" onchange="redraw()">
           <option value="active">Active output</option>
           <option value="raw">Raw detector/DP</option>
           <option value="conservative">Conservative</option>
@@ -173,7 +174,7 @@
         <div class="cal-row">xL <input type="range" id="netXLSlider" min="0" max="1920" step="1" oninput="updateNetX()" onchange="refreshSetTrajectories()"> <span class="cal-val" id="netXLVal"></span></div>
         <div class="cal-row">xR <input type="range" id="netXRSlider" min="0" max="1920" step="1" oninput="updateNetX()" onchange="refreshSetTrajectories()"> <span class="cal-val" id="netXRVal"></span></div>
         <div class="cal-row">setup
-          <select id="courtSetupSelect" class="ctrl" style="padding:2px 6px;max-width:150px" onchange="applyCourtSetup(this.value)">
+          <select id="courtSetupSelect" class="ctrl" onchange="applyCourtSetup(this.value)">
             <option value="">— this game only —</option>
           </select>
         </div>
@@ -236,7 +237,7 @@
       <div class="card" style="padding:16px;">
         <div class="card-title">Contacts by team</div>
         <table class="mini-table">
-          <thead><tr><td>Type</td><td class="num">Team A</td><td class="num">Team B</td></tr></thead>
+          <thead><tr><td>Type</td><td class="num" data-team-job="{{ job.job_id }}" data-team-side="a">Team A</td><td class="num" data-team-job="{{ job.job_id }}" data-team-side="b">Team B</td></tr></thead>
           <tbody id="contactsTable"></tbody>
         </table>
       </div>

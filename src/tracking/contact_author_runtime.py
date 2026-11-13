@@ -19,6 +19,33 @@ from src.tracking.contact_author_person_ranker import person_candidates, pose_ge
 ROOT = Path(__file__).resolve().parents[2]
 METHOD = "osnet_temporal_all_sides_soft_hgb_v1"
 MODEL_SHA256 = "4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091"
+MAX_CONTACT_DISTANCE = .35
+
+
+def observed_roster_support(actor, contact_frame, observations, tracks):
+    """Require repeated, strong IDs on the actor's continuous source track.
+
+    Unknown IDs, occluded-only appearance, gaps and teleports cannot establish
+    a roster constraint. Raw track numbers alone never identify a person.
+    """
+    observation = observations[(actor["frame"], actor["pose_index"])]
+    pose = observation["pose"]
+    pid = pose.get("player_id")
+
+    def strong(p):
+        identity = p.get("identity") or {}
+        return (identity.get("label_source") == "human" and identity.get("verified") is True
+                or identity.get("reason") == "associated" and identity.get("appearance_distance", 1.) <= .25)
+
+    if not pid or pose.get("id") is None or side(pose.get("team")) != "b" or not strong(pose):
+        return None
+    views = [v for v in tracks[observation["segment"]] if abs(v["frame"] - contact_frame) <= 15]
+    matching = [v for v in views if v["pose"].get("player_id") == pid and side(v["pose"].get("team")) == "b"]
+    strong_frames = {v["frame"] for v in matching if strong(v["pose"])}
+    if len(strong_frames) < 3 or len(matching) < .9 * len(views):
+        return None
+    return {"player_id": pid, "strong_frames": len(strong_frames), "observations": len(views),
+            "agreement": len(matching) / len(views), "method": "continuous_observed_roster_v1"}
 
 
 def photo_roster(annotations, explicit=None, source_sha256=None):
@@ -84,6 +111,7 @@ def build_features(annotations, contacts, roster, vectors, context_events=None):
     by_frame = {r["f"]: r for r in annotations["frames"]}
     needed, _, galleries = crop_requests(annotations, contacts, roster)
     vectors, galleries, refinement = refine_appearance(annotations, needed, vectors, galleries)
+    observations, tracks = track_segments(annotations["frames"], annotations["fps"])
     people = [p["player_id"] for p in roster["players"]]; sampled = {}
     for f in sorted(needed):
         row = deepcopy(by_frame[f]); costs = []
@@ -134,6 +162,8 @@ def build_features(annotations, contacts, roster, vectors, context_events=None):
         for actor in actors.values():
             source_row = by_frame[actor["frame"]]
             original = source_row["poses"][actor["pose_index"]]
+            actor["source_player_id"] = original.get("player_id")
+            actor["roster_support"] = observed_roster_support(actor, f, observations, tracks)
             actor["raw_track_id"] = original.get("id"); actor["source_side"] = side(original.get("team"))
             actor["ball_source"] = source_row.get("ball_source") or (
                 "interpolated_short" if source_row.get("ball_interp") else "saved_trajectory" if source_row.get("ball") is not None else "missing")
@@ -173,14 +203,40 @@ class ContactAuthorModel:
         for i, x in enumerate(features["candidate_features"]):
             scores = np.mean([m.predict_proba(x)[:, 1] for m in self.bundle["heads"]["all_sides/hgb_soft"]], axis=0)
             eligible = np.asarray(scores[:-1], dtype=float).copy()
+            rejected = {}
             for k, pid in enumerate(features["options"][:-1]):
                 runs = (on_court or {}).get(pid)
                 if runs is not None and not any(a <= contacts[i]["frame"] <= b for a, b in runs):
                     eligible[k] = -np.inf
+                    rejected[pid] = "off_court"
+            original_person = int(np.argmax(eligible))
+            original_label = features["options"][original_person] if np.isfinite(eligible[original_person]) else None
+            for k, pid in enumerate(features["options"][:-1]):
+                if pid in rejected:
+                    continue
+                actor = features["evidence"][i].get(pid) or {}
+                distance = actor.get("distance_body_heights")
+                support = actor.get("roster_support") or {}
+                if distance is None or not np.isfinite(distance) or actor.get("ball_out_of_frame"):
+                    eligible[k] = -np.inf
+                    rejected[pid] = "no_observed_contact_evidence"
+                elif distance > MAX_CONTACT_DISTANCE:
+                    eligible[k] = -np.inf
+                    rejected[pid] = "too_far_from_observed_ball"
+                elif support.get("player_id") and support["player_id"] != pid:
+                    eligible[k] = -np.inf
+                    rejected[pid] = "observed_roster_conflict"
             person = int(np.argmax(eligible))
-            label = "other_team" if posterior[i] < .5 or not np.isfinite(eligible[person]) else features["options"][person]
+            label = "other_team" if posterior[i] < .5 else (
+                features["options"][person] if np.isfinite(eligible[person]) else None)
+            if label and label != "other_team" and label != original_label:
+                support = features["evidence"][i][label].get("roster_support") or {}
+                if support.get("player_id") != label:
+                    rejected[label] = "replacement_identity_unconfirmed"
+                    label = None
             predictions.append({"label": label, "scores": scores.tolist(), "near_side_score": float(posterior[i]),
-                "team_emission": float(emission[i]), "actor": features["evidence"][i].get(label)})
+                "team_emission": float(emission[i]), "actor": features["evidence"][i].get(label),
+                "model_player_id": original_label, "eligibility_rejections": rejected})
         return predictions
 
     def attribute(self, annotations, events, *, roster=None, cache=None, assets=None, device="auto", require_cache=False, images=None):
@@ -229,12 +285,15 @@ class ContactAuthorModel:
                 rows.append({"event_index": contact["event_index"], "frame": contact["frame"],
                     "time": contact["frame"]/annotations["fps"], "type": contact["type"], "core_type": event.get("core_type"),
                     "event_source": event.get("source"), "event_confidence": event.get("confidence"),
-                    "player_id": None if pid == "other_team" else pid, "status": "other_side" if pid == "other_team" else "assigned",
-                    "reason": METHOD, "label_source": "derived", "verified": False, "score_calibrated": False,
+                    "player_id": None if pid == "other_team" else pid,
+                    "status": "other_side" if pid == "other_team" else "assigned" if pid else "unresolved",
+                    "reason": METHOD if pid else "no_supported_contact_actor", "label_source": "derived", "verified": False, "score_calibrated": False,
                     "candidates": [actor] if actor else [], "contact_frame": actor["frame"] if actor else contact["frame"],
                     "contact_time": (actor["frame"] if actor else contact["frame"])/annotations["fps"], **proposal})
             return summarize({"schema": SCHEMA, "method": METHOD, "side": "b", "label_source": "derived", "verified": False,
-                "roster_ids": features["options"][:-1], "contacts": rows, "parameters": {"future_frames": True, "window_frames": 15, "stride": 3},
+                "roster_ids": features["options"][:-1], "contacts": rows,
+                "parameters": {"future_frames": True, "window_frames": 15, "stride": 3,
+                    "max_body_distance": MAX_CONTACT_DISTANCE, "roster_constraint": "continuous_observed_roster_v1"},
                 "attribution": {"status": "completed", "model_sha256": self.sha256, "model_path": str(self.path.resolve()),
                     "training_sources": self.manifest["source_videos"], "roster_label_source": references.get("label_source", "unknown"),
                     "roster_verified": references.get("verified", False), "missing_osnet_crops": missing,

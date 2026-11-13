@@ -78,6 +78,20 @@ model provenance are added to a fresh result.
 
 ## Runtime and evidence
 
+Runtime eligibility now requires a measured actor within 0.35 body heights of
+the saved ball. Missing/off-camera evidence and distant candidates abstain.
+A candidate cannot borrow the touch of a different roster player when that
+source pose has at least three strong identity observations, at least 90%
+identity agreement, and its own strong match on a continuous local track.
+Gaps, teleports, unknown IDs and occluded-only appearance cannot establish this
+constraint. When rejection changes the model's top choice, the replacement
+also needs that repeated identity support; otherwise attribution is unresolved.
+The team HMM, numeric feature matrices, checkpoint and raw scores are unchanged.
+Reports retain `model_player_id`, `eligibility_rejections`, `source_player_id`
+and `roster_support` so this decision remains reviewable. These are runtime
+guards, not a new measured attribution-accuracy result. See the
+[reported-case investigation](contact_moments_and_authors_20261113.md).
+
 Both sides compete against identity photos; weak saved pose-side assignments
 cannot eliminate a confirmed near-side person. The runtime reproduces the winning
 experiment's +/-15-frame, stride-three observed-pose features, clean local-track
