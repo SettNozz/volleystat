@@ -24,7 +24,7 @@ def _nearby(box, previous, seconds):
 
 
 def recover_recent_roster_handoffs(annotations, report, features, galleries, fps, target):
-    """Use three distinct observations to recover a recently lost roster member.
+    """Bind a roster handoff after three independent appearance/motion matches.
 
     Frozen galleries still define the roster. Recent accepted observations
     provide short-term appearance/motion context, not new training/gallery
@@ -35,6 +35,7 @@ def recover_recent_roster_handoffs(annotations, report, features, galleries, fps
               for frame, _, index in track}
     recent = defaultdict(lambda: deque(maxlen=30))
     pending = {}
+    gallery_pending = {}
     bindings = {}
     counts = Counter()
 
@@ -94,6 +95,43 @@ def recover_recent_roster_handoffs(annotations, report, features, galleries, fps
                 reference = value
             bindings[token] = (pid, frame, pose['bb'], reference)
             continued.add(i)
+
+        # The stricter frozen-gallery/motion recovery runs before this pass.
+        # Its isolated matches must also establish continuity: otherwise a
+        # recycled opponent ID regains its old team as soon as the original
+        # owner's one-second motion anchor expires. Require three distinct,
+        # unambiguous gallery matches, never a track-wide majority/backfill.
+        for i, pose in enumerate(poses):
+            pid, value = pose.get('player_id'), vectors[i]
+            token = tokens.get((frame, i))
+            if (i in continued or pid not in galleries or value is None or token is None
+                    or (pose.get('identity') or {}).get('reason') != 'appearance_motion_roster_recovery'):
+                continue
+            own = gallery_similarity(pid, value)
+            rival = max((gallery_similarity(other, value) for other in galleries if other != pid), default=-1)
+            if own < .85 or own - rival < .10:
+                continue
+            key = (token, pid)
+            history = gallery_pending.get(key, [])
+            if history and (frame - history[-1][0] > .2 * fps
+                            or not _nearby(pose['bb'], history[-1][1]['bb'],
+                                           (frame - history[-1][0]) / fps)):
+                history = []
+            history = [row for row in history if 0 < frame - row[0] <= .33 * fps]
+            history.append((frame, pose, occupied, value))
+            gallery_pending[key] = history
+            if len(history) < 3:
+                continue
+            for _, old_pose, old_occupied, _ in history:
+                mark(old_pose, pid, old_occupied)
+            reference = _unit(np.mean([row[3] for row in history], axis=0))
+            bindings[token] = (pid, frame, pose['bb'], reference)
+            continued.add(i)
+            counts['confirmed_gallery_handoffs'] += 1
+            gallery_pending.pop(key)
+        for key in list(gallery_pending):
+            if frame - gallery_pending[key][-1][0] > .2 * fps:
+                gallery_pending.pop(key)
 
         # Dormant IDs only. Visible owners and competing candidates block a
         # handoff; appearance alone cannot duplicate a roster identity.
