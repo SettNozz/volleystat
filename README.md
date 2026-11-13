@@ -120,6 +120,7 @@ Default output is JSON plus interactive overlays on the original video. Keep the
 | [Usage and setup](docs/usage.md) | Model assets, viewer controls, CLI options, calibration and saved results. |
 | [Cache and replay](docs/model_output_cache.md) | Repeat processing without compatible YOLO/OSNet inference. |
 | [Player identity](docs/player_identity_workflow.md) | Automatic rosters, detected substitutions (P7, P8, ...), confirmed substitutes and optional jersey constraints. |
+| [Tracker comparison](docs/player_tracker_comparison.md) | Cache-only ByteTrack, BoT-SORT and Deep OC-SORT association experiment; scope and promotion limits. |
 | [Player contacts](docs/player_contacts.md) · [Contact-author model](docs/contact_author_production.md) | Attribution, corrections and deployment scope. |
 | [Contact spotting](docs/production_contact_spotter.md) · [Contact review](docs/contact_review_workflow.md) | Typed contacts, rally segmentation and human verification. |
 | [Match analytics](docs/match_analytics_v2.md) | Point confirmation, reception outcomes, sets and team mappings. |
