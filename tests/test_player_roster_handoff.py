@@ -59,6 +59,51 @@ def test_two_observations_cannot_establish_a_handoff():
     assert all(a['poses'][0]['team_id'] == 'opponent_team' for a in annotations[3:])
 
 
+def gallery_fixture(matches=3):
+    annotations, features = fixture(150)
+    for frame in range(3, 3 + matches):
+        annotations[frame]['poses'][0].update(
+            player_id='P2', team='b', team_id='observed_team',
+            identity={'reason': 'appearance_motion_roster_recovery'})
+    for frame in range(3, 150):
+        features[f'{frame}:0'] = FROZEN_P2
+    # No recent accepted appearance remains when the frozen-gallery matches
+    # arrive. Each supplied match already passed the upstream motion gate.
+    for row in reversed(annotations[3:]):
+        old = row['f']
+        row['f'] += 60
+        features[f'{row["f"]}:0'] = features.pop(f'{old}:0')
+    return annotations, features
+
+
+def test_three_frozen_gallery_motion_matches_bind_recycled_track_after_recent_anchor_expires():
+    annotations, features = gallery_fixture()
+    before = deepcopy(annotations[:3])
+    result = recover(annotations, features)
+    assert result['confirmed_gallery_handoffs'] == 1
+    assert annotations[:3] == before
+    assert all(row['poses'][0]['player_id'] == 'P2' for row in annotations[3:])
+    assert all(row['poses'][0]['team_id'] == 'observed_team' for row in annotations[3:])
+
+
+@pytest.mark.parametrize('failure', ['two_matches', 'ambiguous_gallery', 'spaced_matches', 'distant_match'])
+def test_frozen_gallery_binding_requires_three_distinct_unambiguous_continuous_matches(failure):
+    annotations, features = gallery_fixture(2 if failure == 'two_matches' else 3)
+    galleries = GALLERIES
+    if failure == 'ambiguous_gallery':
+        galleries = {**GALLERIES, 'P4': FROZEN_P2[None, :]}
+    elif failure == 'spaced_matches':
+        for row in reversed(annotations[4:]):
+            old = row['f']
+            row['f'] += 20
+            features[f'{row["f"]}:0'] = features.pop(f'{old}:0')
+    elif failure == 'distant_match':
+        annotations[4]['poses'][0]['bb'] = [2000, 20, 2040, 180]
+    result = recover(annotations, features, galleries)
+    assert not result.get('confirmed_gallery_handoffs')
+    assert all(row['poses'][0]['team_id'] == 'opponent_team' for row in annotations[6:])
+
+
 @pytest.mark.parametrize('recent_owner', [True,False])
 def test_rejected_side_prior_cannot_be_revived_from_roster_vacancy(recent_owner):
     annotations, features = fixture()
