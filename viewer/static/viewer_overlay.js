@@ -542,6 +542,9 @@ function redraw() {
     }
   }
 
+  // viewer_substitutions.js; absent on pages that embed only this overlay.
+  if (typeof drawSubstitutions === 'function') drawSubstitutions(ctx, ann, currentFrameIdx, px, py, sx);
+
   ctx.font = `${Math.round(11 * sx)}px monospace`;
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   ctx.textAlign = 'right';

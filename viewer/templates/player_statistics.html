@@ -80,6 +80,11 @@
   .personal-block dt { color: var(--muted2); }
   .personal-block dd { margin: 0; text-align: right; font-weight: 650; }
   .personal-block a { font-size: .82rem; font-weight: 650; }
+  .court-changes { margin: 0 0 .5rem; padding-left: 1rem; font-size: .85rem; }
+  .court-changes .sub-in { color: #16a34a; font-weight: 700; }
+  .court-changes .sub-out { color: #ea580c; font-weight: 700; }
+  .personal-block small { color: var(--muted2); font-size: .75rem; }
+  .sub-badge { margin-left: .35rem; padding: 0 .35rem; border-radius: .3rem; background: #16a34a; color: #fff; font-size: .68rem; font-weight: 750; letter-spacing: .03em; }
   .stat-evidence { color: inherit; text-underline-offset: .2em; }
   .stat-evidence:hover { color: var(--primary); }
   .evidence-note { display: block; font-size: .72rem; color: var(--muted2); line-height: 1.5; white-space: nowrap; }
@@ -132,7 +137,7 @@
         {% endif %}
       </span>
       <div>
-        <p class="eyebrow">Personal statistics · {{ selected_player }}</p>
+        <p class="eyebrow">Personal statistics · {{ selected_player }}{% if lineup.get(selected_player, {}).get('role') == 'substitute' %} · substitute{% endif %}</p>
         <h2 id="personal-title"><span data-player-label="{{ selected_player }}">{{ selected_player }}</span><span class="position" data-player-position="{{ selected_player }}"></span></h2>
       </div>
       <div class="stat-actions">
@@ -140,6 +145,24 @@
       </div>
     </div>
     <div class="personal-grid">
+      {% set court = lineup.get(selected_player) %}
+      {% if court %}
+      <div class="personal-block" id="court-time">
+        <h3>Court time</h3>
+        <dl>
+          <dt>Role</dt><dd>{{ 'Substitute' if court.role == 'substitute' else 'Starter' }}</dd>
+          <dt>On court</dt><dd>{{ '%d:%02d' | format(court.on_court_seconds // 60, court.on_court_seconds % 60) }}</dd>
+        </dl>
+        <ul class="court-changes">
+          {% for change in court.changes %}
+          <li><span class="sub-{{ change.direction }}">{{ '▲ in' if change.direction == 'in' else '▼ out' }}</span>
+            {{ '%d:%02d' | format(change.time // 60, change.time % 60) }}
+            {{ 'for' if change.direction == 'in' else 'replaced by' }} {{ change.other }}</li>
+          {% endfor %}
+        </ul>
+        <small>Automatic, unverified lineup changes between rallies.</small>
+      </div>
+      {% endif %}
       <div class="personal-block">
         <h3>All touches</h3>
         <dl>
@@ -203,6 +226,7 @@
               {% endif %}
             </span>
             <a class="player-link" href="{{ url_for('player_statistics', job_id=job.job_id, view=kind, player=player) }}" data-player-label="{{ player }}">{{ player }}</a><span class="position" data-player-position="{{ player }}"></span>
+            {% if lineup.get(player, {}).get('role') == 'substitute' %}<span class="sub-badge" title="Substitute: entered the match through a detected substitution">SUB</span>{% endif %}
             {% if portraits.get(player, 0) > 1 %}
             <button type="button" class="change-photo" data-player="{{ player }}" data-count="{{ portraits[player] }}" aria-label="Change photo for {{ player }}">Change photo</button>
             {% endif %}

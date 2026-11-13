@@ -89,6 +89,7 @@ python analyze_video.py --help
 | `--ball-smooth light` | Change contact-preserving trajectory smoothing; default is `moderate` (7 frames). |
 | `--ball-reconstruction conservative` | Enable derived gap reconstruction; default is `off`. Other modes: `contact-aware`, `compare`. |
 | `--no-player-identity` | Keep raw tracking without offline roster identity. |
+| `--no-player-substitutions` | Keep the six-player roster; do not detect substitutions or add substitute IDs (P7, P8, ...). |
 | `--player-identity-side a` | Move roster identity from default near side `b` to far side `a`; contact-author model scope remains separate. |
 | `--no-contact-author` | Use legacy geometric contact-author proposals instead of the promoted model. |
 | `--require-model-cache` | Fail on missing compatible model outputs instead of running inference. |
