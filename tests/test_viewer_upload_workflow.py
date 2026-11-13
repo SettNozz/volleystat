@@ -12,7 +12,7 @@ def _results_page_source() -> str:
     static = Path(viewer.app.static_folder)
     parts = [Path(viewer.app.template_folder) / "viewer.html"]
     parts += [static / name for name in (
-        "viewer_charts.js", "viewer_tables.js", "viewer_overlay.js", "viewer_events.js", "viewer_page.js",
+        "viewer_charts.js", "viewer_highlights.js", "viewer_overlay.js", "viewer_events.js", "viewer_page.js",
     )]
     return "\n".join(path.read_text(encoding="utf-8") for path in parts)
 
@@ -204,8 +204,9 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         page = response.get_data(as_text=True)
         self.assertNotIn("3 playable rallies", page)
         self.assertIn('id="nearScore">0', page)
-        self.assertIn('id="playerContactsPanel" data-workspace-panel="contacts"', page)
-        self.assertIn('data-page="contacts"', page)
+        self.assertNotIn('id="playerContactsPanel"', page)
+        self.assertNotIn('data-page="contacts"', page)
+        self.assertIn('id="teamRosterPanel"', page)
         self.assertIn('data-page="trajectories"', page)
         self.assertIn('id="videoSettingsButton"', page)
         self.assertIn('id="videoEventBadge"', page)
@@ -213,7 +214,8 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertNotIn('id="teamChips"', page)
         self.assertNotIn('id="timelineBar"', page)
         self.assertNotIn('class="stat-grid"', page)
-        self.assertIn("Service attempts", page)
+        self.assertIn("const SERVICE_ATTEMPTS", page)
+        self.assertNotIn('id="page-table"', page)
         self.assertIn("serve_fault", page)
 
     def test_upload_request_queues_full_quality_workflow(self):
@@ -707,9 +709,10 @@ class TestViewerResultsLibrary(unittest.TestCase):
         self.assertEqual(beyond.status_code, 404)
         self.assertEqual(unknown.status_code, 404)
 
-    def test_rally_clips_show_their_first_frame(self):
+    def test_initial_view_does_not_render_or_request_rally_clips(self):
         template = _results_page_source()
-        self.assertIn("/api/frame/${JOB_ID}/${rallyStartFrame(r)}", template)
+        self.assertNotIn('id="rallyClips"', template)
+        self.assertNotIn("renderRallyClips", template)
 
 
 if __name__ == "__main__":

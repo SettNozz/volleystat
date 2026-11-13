@@ -1,7 +1,7 @@
 // Results page main script: state, video page, annotations load, court editing,
 // playback controls, listeners and init.
 // Needs the page boot constants (JOB_ID, FPS, ...) and is loaded after
-// viewer_charts.js, viewer_tables.js and viewer_overlay.js.
+// viewer_charts.js, viewer_highlights.js and viewer_overlay.js.
 
 function isPlayableRally(r) {
   const lc = r && r.lifecycle;
@@ -77,8 +77,11 @@ function toggleVideoSettings(open, restoreFocus = true) {
 }
 
 function showPage(name) {
-  const workspace = ['video', 'contacts', 'trajectories'].includes(name);
-  document.querySelector('.video-col').classList.toggle('workspace-review', name === 'contacts' || name === 'trajectories');
+  const workspace = ['video', 'trajectories', 'highlights'].includes(name);
+  if (name !== 'highlights') cancelPlayerHighlight();
+  if (name !== 'trajectories') setTrajectoryOverlay.clip = null;
+  document.querySelector('.video-col').classList.toggle('workspace-review', workspace && name !== 'video');
+  document.getElementById('teamRosterPanel').hidden = name !== 'video';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById(workspace ? 'page-video' : 'page-' + name).classList.add('active');
   document.querySelectorAll('[data-workspace-panel]').forEach(panel => {
@@ -91,8 +94,12 @@ function showPage(name) {
   });
   toggleVideoSettings(false, false);
   if (name === 'charts') renderCharts();
-  if (name === 'table') renderTables();
+  if (name === 'highlights') loadPlayerHighlights();
   if (workspace) resizeCanvas();
+  const url = new URL(location.href);
+  url.pathname = '/results/' + encodeURIComponent(JOB_ID);
+  url.searchParams.set('view', name);
+  history.replaceState(null, '', url);
 }
 
 /* ── Shared chart/table filters ──────────────────────── */
@@ -154,28 +161,6 @@ function renderServeScore() {
   unknown.hidden = !score.unknown;
   const missing = `+?${score.unknown}`;
   if (unknown.textContent !== missing) unknown.textContent = missing;
-}
-
-/* ── Rally clips strip ───────────────────────────────── */
-function renderRallyClips() {
-  const box = document.getElementById('rallyClips');
-  box.innerHTML = '';
-  RALLIES.forEach((r, i) => {
-    const sr = r.serve_reception || {};
-    const outcome = sr.outcome || '—';
-    const outColor = isSuccessfulOutcome(outcome) ? GREEN : (isFailedOutcome(outcome) ? RED : 'var(--muted)');
-    const el = document.createElement('div');
-    el.className = 'clip-card';
-    el.onclick = () => seekAndPlay(rallyStartFrame(r));
-    const widthPct = Math.min(100, (r.duration_sec / 15) * 100);
-    el.innerHTML =
-      // The rally's first frame (its serve), decoded server-side on demand.
-      `<div class="clip-thumb"><img loading="lazy" alt="" src="/api/frame/${JOB_ID}/${rallyStartFrame(r)}" onerror="this.remove()">` +
-      `<div class="bar" style="width:${widthPct}%"></div></div>` +
-      `<div class="clip-name">Rally ${i + 1} · ${r.duration_sec}s</div>` +
-      `<div class="clip-meta">${rallyContactsLabel(r)} · <span style="color:${outColor};font-weight:700">${outcome.replace(/_/g, ' ')}</span></div>`;
-    box.appendChild(el);
-  });
 }
 
 /* ── Annotations load ────────────────────────────────── */
@@ -690,6 +675,7 @@ window.addEventListener('resize', resizeCanvas);
 
 vid.addEventListener('timeupdate', () => {
   enforceSetTrajectoryClip();
+  enforcePlayerHighlightClip();
   updateTimeline();
   updateActiveEvent(Math.max(0, Math.round(vid.currentTime * FPS) + _syncOffset));
 });
@@ -733,6 +719,7 @@ function startRenderLoop() {
   if (_rafId) return;
   function rafLoop() {
     enforceSetTrajectoryClip();
+    enforcePlayerHighlightClip();
     const fi =Math.max(0, Math.round(vid.currentTime * FPS) - SYNC_OFFSET_FRAMES + _syncOffset);
     if (fi !== _lastDrawnFrame) {
       currentFrameIdx = fi;
@@ -766,20 +753,24 @@ function setSpeed(s, btn) {
   if (btn) btn.classList.add('active');
 }
 function stepFrame(d) {
+  cancelPlayerHighlight(false);
   vid.pause();
   vid.currentTime = Math.max(0, vid.currentTime + d / FPS);
 }
 function seekToFrame(f) { vid.currentTime = f / FPS; }
 function seekAndPlay(f, autoPlay = true) {
+  cancelPlayerHighlight(false);
   vid.currentTime = f / FPS;
   if (autoPlay) vid.play(); else vid.pause();
 }
 function seekVideo(value) {
   if (!Number.isFinite(vid.duration)) return;
+  cancelPlayerHighlight(false);
   vid.currentTime = Number(value) / 1000 * vid.duration;
 }
 
 function updateTimeline() {
+  renderViewerLineup(Math.max(0, Math.round(vid.currentTime * FPS)));
   const pct = vid.duration ? (vid.currentTime / vid.duration * 100) : 0;
   const seek = document.getElementById('videoSeek');
   seek.value = Math.round(pct * 10);
@@ -807,6 +798,7 @@ document.addEventListener('pointerdown', event => {
 });
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape') toggleVideoSettings(false);
+  handleViewerPlaybackKey(event);
 });
 document.getElementById('videoSettings').addEventListener('focusout', event => {
   // Clicking a non-focusable label briefly moves focus to the document body
@@ -814,8 +806,7 @@ document.getElementById('videoSettings').addEventListener('focusout', event => {
   if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) toggleVideoSettings(false, false);
 });
 initChartFilters();
-initTableFilters();
 renderEventList();
-renderRallyClips();
-renderTables();
-if (typeof renderSubstitutionPanel === 'function') renderSubstitutionPanel();
+window.addEventListener('player-profiles-changed', renderEventList);
+initPlayerHighlights();
+showPage(INITIAL_PAGE);

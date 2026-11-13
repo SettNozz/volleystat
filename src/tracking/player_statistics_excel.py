@@ -8,6 +8,7 @@ PLAYER_POSITIONS = {
     "middle_blocker": "Middle blocker",
     "setter": "Setter",
     "opposite_hitter": "Opposite hitter",
+    "libero": "Libero",
 }
 
 STATISTICS_VIEWS = {

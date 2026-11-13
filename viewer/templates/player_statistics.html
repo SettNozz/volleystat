@@ -9,106 +9,20 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
-<style>
-  * { box-sizing: border-box; }
-  body { font: 15px Inter, system-ui, sans-serif; color: var(--ink); background: var(--bg); margin: 0; }
-  main { max-width: 76rem; margin: auto; padding: clamp(1rem, 4vw, 3rem); }
-  a { color: var(--primary); }
-  a:focus-visible, button:focus-visible, .table-wrap:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
-  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 1rem; min-height: 60px;
-    padding: .5rem clamp(1rem, 3vw, 28px); background: var(--card); border-bottom: 1px solid var(--border); }
-  .brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
-  .brand-mark { width: 28px; height: 28px; display: block; }
-  .back { padding: 9px 16px; border-radius: 8px; background: var(--head-bg); color: var(--ink); text-decoration: none; font-size: 13px; font-weight: 700; }
-  .back:hover { text-decoration: underline; }
-  .hero { padding: clamp(1.5rem, 4vw, 2.75rem); border: 1px solid var(--border); border-radius: 12px; overflow-wrap: anywhere;
-    background: linear-gradient(120deg, var(--card) 42%, var(--primary-soft)); }
-  .eyebrow { margin: 0; color: var(--primary); font-size: .76rem; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
-  h1 { margin: .35rem 0 .65rem; font-size: clamp(1.5rem, 3.5vw, 2.25rem); line-height: 1.15; letter-spacing: -.03em; }
-  .meta { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem 1rem; color: var(--muted2); margin: 0; }
-  .pill { background: var(--primary-soft); color: var(--primary); border-radius: 8px; padding: .3rem .7rem; font-size: .8rem; font-weight: 700; }
-  section { margin-top: 1.5rem; background: var(--card); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
-  .section-head { padding: 1.15rem 1.35rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .4rem 1rem; }
-  .stat-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-left: auto; }
-  .roster-editor { display: grid; grid-template-columns: auto minmax(7rem, 1fr) minmax(4rem, 6rem) minmax(8rem, 10rem); gap: .55rem; align-items: center; margin: 1rem 0; }
-  .roster-editor input, .roster-editor select { min-width: 0; padding: .45rem; font: inherit; border: 1px solid var(--border); border-radius: 8px; }
-  h2 { margin: 0; font-size: 1.25rem; letter-spacing: -.02em; }
-  .stat-modes { display: flex; flex-wrap: wrap; gap: 4px; padding: .7rem 1.35rem; border-bottom: 1px solid var(--border-soft); }
-  .stat-modes a { padding: 8px 16px; border-radius: 8px; color: var(--muted2); text-decoration: none; font-size: .85rem; font-weight: 600; }
-  .stat-modes a:hover { background: var(--head-bg); }
-  .stat-modes a[aria-current="page"] { background: var(--primary-soft); color: var(--primary); }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; min-width: 39rem; border-spacing: 0; font-variant-numeric: tabular-nums; }
-  th, td { padding: .7rem .85rem; text-align: right; border-top: 1px solid var(--border-soft); }
-  tr > * + * { border-inline-start: 1px solid var(--border); }
-  thead th { background: var(--head-bg); color: var(--muted2); font-size: .76rem; font-weight: 650; }
-  th:first-child { position: sticky; left: 0; z-index: 1; text-align: left; padding-left: 1.35rem; box-shadow: 1px 0 var(--border); }
-  tbody th { background: var(--card); }
-  tbody tr:nth-child(even) > * { background: var(--bg); }
-  tbody tr:hover > *, tbody tr:focus-within > * { background: var(--primary-soft); }
-  .player { display: inline-flex; align-items: center; gap: .65rem; white-space: nowrap; }
-  .portrait { position: relative; display: inline-grid; place-items: center; width: 46px; height: 52px; overflow: hidden;
-    background: var(--head-bg); color: var(--muted2); border: 1px solid var(--border); border-radius: 8px; font-size: .75rem; }
-  .portrait img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center 20%; }
-  button { cursor: pointer; border: 1px solid var(--border); border-radius: 8px; padding: .5rem .7rem; background: var(--card); color: var(--muted2); font: inherit; }
-  button:hover:not(:disabled) { border-color: var(--primary); }
-  button:disabled { cursor: default; opacity: .5; }
-  .change-photo { padding: .25rem .4rem; font-size: .75rem; }
-  dialog { background: var(--card); color: inherit; border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; max-width: calc(100% - 2rem); }
-  dialog::backdrop { background: rgb(15 23 42 / 48%); }
-  #save-photo { background: var(--primary); border-color: var(--primary); color: var(--card); }
-  #photo-preview { display: block; width: 160px; height: 200px; object-fit: contain; margin: 1rem auto; }
-  .photo-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-  .positive { color: var(--primary); font-weight: 750; }
-  .zero { color: var(--muted); }
-  .notes { color: var(--muted); font-size: .88rem; line-height: 1.6; margin: 1.35rem .15rem 0; }
-  .notes summary { cursor: pointer; color: var(--ink); }
-  .player-filter { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: 1rem 0 0; font-size: .85rem; font-weight: 650; color: var(--muted2); }
-  select { padding: .45rem .6rem; font: inherit; color: var(--ink); background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
-  .position { display: inline-block; margin-left: .45rem; padding: .1rem .45rem; border-radius: 6px; background: var(--head-bg); color: var(--muted2); font-size: .72rem; font-weight: 650; }
-  .position:empty { display: none; }
-  .player-link { color: inherit; text-decoration: none; }
-  .player-link:hover { color: var(--primary); text-decoration: underline; }
-  .personal-head { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: 1.15rem 1.35rem; border-bottom: 1px solid var(--border-soft); }
-  .personal-head .portrait { width: 64px; height: 72px; }
-  .personal-head h2 { font-size: 1.4rem; }
-  .button-link { display: inline-block; padding: .5rem .8rem; border-radius: 8px; background: var(--primary); color: var(--card); text-decoration: none; font-weight: 700; font-size: .85rem; }
-  .personal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
-  .personal-block { padding: 1rem 1.35rem; box-shadow: inset -1px -1px var(--border-soft); }
-  .personal-block h3 { margin: 0 0 .6rem; font-size: 1rem; }
-  .personal-block dl { display: grid; grid-template-columns: 1fr auto; gap: .3rem 1rem; margin: 0 0 .6rem; font-variant-numeric: tabular-nums; }
-  .personal-block dt { color: var(--muted2); }
-  .personal-block dd { margin: 0; text-align: right; font-weight: 650; }
-  .personal-block a { font-size: .82rem; font-weight: 650; }
-  .court-changes { margin: 0 0 .5rem; padding-left: 1rem; font-size: .85rem; }
-  .court-changes .sub-in { color: #16a34a; font-weight: 700; }
-  .court-changes .sub-out { color: #ea580c; font-weight: 700; }
-  .personal-block small { color: var(--muted2); font-size: .75rem; }
-  .sub-badge { margin-left: .35rem; padding: 0 .35rem; border-radius: .3rem; background: #16a34a; color: #fff; font-size: .68rem; font-weight: 750; letter-spacing: .03em; }
-  .stat-evidence { color: inherit; text-underline-offset: .2em; }
-  .stat-evidence:hover { color: var(--primary); }
-  .evidence-note { display: block; font-size: .72rem; color: var(--muted2); line-height: 1.5; white-space: nowrap; }
-  .reconciliation-note { padding: 1rem 0 0; line-height: 1.7; }
-</style>
-<header class="topbar">
-  <span class="brand"><img class="brand-mark" src="/static/brand/icon.svg" alt="">CourtSense</span>
-  <a class="back" href="{{ url_for('results', job_id=job.job_id) }}">← Back to match</a>
-</header>
-<main>
-  {% macro evidence_link(player, mode, key, value) -%}
-  <a class="stat-evidence" href="{{ url_for('statistics_evidence_page', job_id=job.job_id, player=player, kind=mode, metric=key) }}" title="Watch contacts counted by this metric; inspect author confirmation and unresolved outcomes">{{ value }}</a>
-  {%- endmacro %}
-  <header class="hero">
-    <p class="eyebrow">Match report</p>
+<link href="{{ url_for('static', filename='viewer_page.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='viewer_players.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='viewer_statistics.css') }}" rel="stylesheet">
+<body class="statistics-page">
+{% set active_view = 'statistics' %}
+{% include 'viewer_nav.html' %}
+<main class="statistics-main">
+  <header class="statistics-heading">
     <h1>Player statistics</h1>
     <p class="meta">
       <span class="pill" data-team-job="{{ job.job_id }}" data-team-side="{{ summary.side or '' }}">{{ {'b': 'Near team', 'a': 'Far team'}.get(summary.side, 'Court side unavailable') }}</span>
       <span>{{ summary.players | length }} tracked players</span>
     </p>
   </header>
-  <p class="reconciliation-note"><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}#point-reconciliation">Review statistics evidence and point winners</a>
-    · {{ summary.reconciliation.conflicts }} conflicts · {{ summary.reconciliation.point_summary.get('unresolved', 0) }} unresolved points.<br>
-    Click any statistic to watch its evidence. Human-confirmed authors and derived outcomes are counted separately.</p>
   {% if summary.players %}
   {% set requested = request.args.get('view') %}
   {% set kind = requested if requested in modes else 'attack' %}
@@ -141,7 +55,7 @@
         <h2 id="personal-title"><span data-player-label="{{ selected_player }}">{{ selected_player }}</span><span class="position" data-player-position="{{ selected_player }}"></span></h2>
       </div>
       <div class="stat-actions">
-        <a class="button-link" href="{{ url_for('player_highlights_page', job_id=job.job_id, player=selected_player) }}" target="_blank" rel="noopener">Player highlights ↗</a>
+        <a class="button-link" href="{{ url_for('player_highlights_page', job_id=job.job_id, player=selected_player) }}">Player highlights</a>
       </div>
     </div>
     <div class="personal-grid">
@@ -167,7 +81,7 @@
         <h3>All touches</h3>
         <dl>
           {% for key, label in [('attack', 'Attacks'), ('serve', 'Serves'), ('reception', 'Receptions'), ('dig_pass', 'Digs, passes and sets'), ('block', 'Blocks')] %}
-          <dt>{{ label }}</dt><dd{% if not touches.get(key) %} class="zero"{% endif %}>{{ evidence_link(selected_player, key, 'total', touches.get(key, 0)) }}</dd>
+          <dt>{{ label }}</dt><dd{% if not touches.get(key) %} class="zero"{% endif %}>{{ touches.get(key, 0) }}</dd>
           {% endfor %}
         </dl>
       </div>
@@ -179,13 +93,13 @@
           {% set value = stat_value(mode, prow[mode], key) %}
           <dt>{{ label }}</dt>
           {% if key == 'rate' %}
-          <dd>{{ evidence_link(selected_player, mode, key, ('%.1f%%' | format(100 * value)) if value is not none else '—') }}</dd>
+          <dd>{{ ('%.1f%%' | format(100 * value)) if value is not none else '—' }}</dd>
           {% else %}
-          <dd{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ evidence_link(selected_player, mode, key, value) }}</dd>
+          <dd{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ value }}</dd>
           {% endif %}
           {% endfor %}
         </dl>
-        {% if prow[mode]['total'] %}<a href="{{ url_for('player_highlights_page', job_id=job.job_id, player=selected_player, type=mode) }}" target="_blank" rel="noopener">Watch {{ mode_config[0] | lower }} ↗</a>{% endif %}
+        {% if prow[mode]['total'] %}<a href="{{ url_for('player_highlights_page', job_id=job.job_id, player=selected_player, type=mode) }}">Watch {{ mode_config[0] | lower }}</a>{% endif %}
       </div>
       {% endfor %}
     </div>
@@ -213,7 +127,6 @@
       <thead><tr>
         <th scope="col">Player</th>
         {% for key, label in columns %}<th scope="col">{{ label }}</th>{% endfor %}
-        <th scope="col">Evidence coverage</th>
       </tr></thead>
       <tbody>
         {% for player, row in summary.players.items() %}
@@ -227,70 +140,37 @@
             </span>
             <a class="player-link" href="{{ url_for('player_statistics', job_id=job.job_id, view=kind, player=player) }}" data-player-label="{{ player }}">{{ player }}</a><span class="position" data-player-position="{{ player }}"></span>
             {% if lineup.get(player, {}).get('role') == 'substitute' %}<span class="sub-badge" title="Substitute: entered the match through a detected substitution">SUB</span>{% endif %}
-            {% if portraits.get(player, 0) > 1 %}
-            <button type="button" class="change-photo" data-player="{{ player }}" data-count="{{ portraits[player] }}" aria-label="Change photo for {{ player }}">Change photo</button>
-            {% endif %}
           </span></th>
           {% for key, label in columns %}
           {% set value = stat_value(kind, row[kind], key) %}
           {% if key == 'rate' %}
-          <td>{{ evidence_link(player, kind, key, ('%.1f%%' | format(100 * value)) if value is not none else '—') }}</td>
+          <td>{{ ('%.1f%%' | format(100 * value)) if value is not none else '—' }}</td>
           {% else %}
-          <td{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ evidence_link(player, kind, key, value) }}</td>
+          <td{% if not value %} class="zero"{% elif key in ('point', 'controlled', 'ace') %} class="positive"{% endif %}>{{ value }}</td>
           {% endif %}
           {% endfor %}
-          {% set coverage = summary.coverage[player][kind] %}
-          <td><span class="evidence-note">Authors: {{ coverage.human }} human · {{ coverage.automatic }} automatic</span>
-            <span class="evidence-note">Outcomes: {{ coverage.classified }} derived · {{ coverage.unknown }} unresolved</span></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
   </section>
+  <p class="reconciliation-note"><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}#point-reconciliation">Review statistics evidence and point winners</a>
+    · {{ summary.reconciliation.conflicts }} conflicts · {{ summary.reconciliation.point_summary.get('unresolved', 0) }} unresolved points.<br>
+    Human-confirmed authors and derived outcomes are counted separately.</p>
   <details class="notes">
     <summary>How these statistics are counted</summary>
-    <p>Without an assigned player: {{ evidence_link('unassigned', 'attack', 'total', summary.unassigned.get('attack', 0)) }} attacks, {{ evidence_link('unassigned', 'serve', 'total', summary.unassigned.get('serve', 0)) }} serves and {{ evidence_link('unassigned', 'reception', 'total', summary.unassigned.get('reception', 0)) }} receptions. These contacts may include either side when the side is unknown.</p>
+    <p>Without an assigned player: {{ summary.unassigned.get('attack', 0) }} attacks, {{ summary.unassigned.get('serve', 0) }} serves and {{ summary.unassigned.get('reception', 0) }} receptions. These contacts may include either side when the side is unknown.</p>
     <p>Author assignments include model proposals and saved human corrections. Point-winning attacks are inferred from the final recorded contact and the team point ledger. Attack errors require a recorded fault reason. Reception quality comes from the matched serve lifecycle. Controlled percentage uses classified receptions.</p>
     <p>Serve error percentage uses classified serves. Explicit faults can use proximity to estimate the server. Unresolved serves are excluded from the percentage.</p>
   </details>
-  <dialog id="roster-picker" aria-labelledby="roster-title">
-    <h2 id="roster-title">Edit players</h2>
-    <form method="dialog" id="roster-form">
-      <div class="roster-editor">
-        <strong>ID</strong><strong>Name</strong><strong>Jersey</strong><strong>Position</strong>
-        {% for player in summary.players %}
-        <span>{{ player }}</span>
-        <input data-player-name="{{ player }}" aria-label="{{ player }} name" maxlength="64">
-        <input data-player-number="{{ player }}" aria-label="{{ player }} jersey number" inputmode="numeric" maxlength="8">
-        <select data-player-pos="{{ player }}" aria-label="{{ player }} position">
-          <option value="">—</option>
-          {% for value, label in position_labels.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-        </select>
-        {% endfor %}
-      </div>
-      <div class="photo-actions">
-        <button type="submit" value="save">Save players</button>
-        <button type="submit" value="cancel">Cancel</button>
-      </div>
-    </form>
-  </dialog>
   {% else %}
   <p>This result has no tracked player roster.</p>
   {% endif %}
 </main>
-<dialog id="photo-picker" aria-labelledby="photo-title">
-  <h2 id="photo-title">Change photo</h2>
-  <img id="photo-preview" alt="Player photo candidate">
-  <p id="photo-status" role="status"></p>
-  <div class="photo-actions">
-    <button type="button" id="prev-photo">← Previous photo</button>
-    <button type="button" id="next-photo">Next photo →</button>
-    <button type="button" id="save-photo">Use this photo</button>
-    <form method="dialog"><button>Cancel</button></form>
-  </div>
-</dialog>
+{% include 'player_editor.html' %}
 <script src="{{ url_for('static', filename='team_names.js') }}"></script>
+<script src="{{ url_for('static', filename='player_profiles.js') }}"></script>
 <script>
 const modeLinks = Array.from(document.querySelectorAll('.stat-modes a'));
 const modeError = document.getElementById('mode-error');
@@ -314,13 +194,19 @@ for (const link of modeLinks) {
       if (!nextTable || nextTable.rows.length !== table.rows.length) throw new Error('Roster changed');
       const scrollTop = window.scrollY;
       for (const [index, row] of Array.from(table.rows).entries()) {
-        // Keep the existing player cell and its portrait controls.
+        // Keep player cells so browser-local profiles and portraits stay visible.
+        const playerLink = row.querySelector('.player-link');
+        const nextPlayerLink = nextTable.rows[index].querySelector('.player-link');
+        if (playerLink && nextPlayerLink) playerLink.href = nextPlayerLink.href;
         for (const cell of Array.from(row.cells).slice(1)) cell.remove();
         row.append(...Array.from(nextTable.rows[index].cells).slice(1));
       }
       const heading = document.querySelector('.section-head');
       const nextHeading = page.querySelector('.section-head');
       heading.querySelector('h2').textContent = nextHeading.querySelector('h2').textContent;
+      heading.querySelector('h2').id = nextHeading.querySelector('h2').id;
+      table.setAttribute('aria-labelledby', nextTable.getAttribute('aria-labelledby'));
+      heading.closest('section').setAttribute('aria-labelledby', nextHeading.querySelector('h2').id);
       for (const item of modeLinks) item.removeAttribute('aria-current');
       link.setAttribute('aria-current', 'page');
       history.replaceState(null, '', link.href);
@@ -333,124 +219,14 @@ for (const link of modeLinks) {
   });
 }
 
-const photoScope = {{ [job.job_id | default(''), portrait_version] | tojson }};
-const rosterPicker = document.getElementById('roster-picker');
-if (rosterPicker) {
-  const rosterKey = JSON.stringify(['player-profiles', {{ request.view_args.job_id | tojson }}]);
-  const labels = Array.from(document.querySelectorAll('[data-player-label]'));
-  const names = Array.from(rosterPicker.querySelectorAll('[data-player-name]'));
-  const numbers = Array.from(rosterPicker.querySelectorAll('[data-player-number]'));
-  const positions = Array.from(rosterPicker.querySelectorAll('[data-player-pos]'));
-  const positionLabels = {{ position_labels | tojson }};
-  let profiles = {};
-  try { profiles = JSON.parse(localStorage.getItem(rosterKey)) || {}; } catch {}
-
-  function showProfiles() {
-    for (const label of labels) {
-      const id = label.dataset.playerLabel;
-      const {name, number} = profiles[id] || {};
-      label.textContent = name || (number ? '#' + number : id);
-    }
-    for (const badge of document.querySelectorAll('[data-player-position]')) {
-      badge.textContent = positionLabels[(profiles[badge.dataset.playerPosition] || {}).position] || '';
-    }
-    for (const option of document.querySelectorAll('[data-player-option]')) {
-      const id = option.dataset.playerOption;
-      const {name, number, position} = profiles[id] || {};
-      option.textContent = [name || (number ? '#' + number : id), positionLabels[position]].filter(Boolean).join(' · ');
-    }
-    document.querySelector('#export-excel input[name="profiles"]').value = JSON.stringify(profiles);
-  }
-
-  document.getElementById('edit-players').onclick = () => {
-    names.forEach((input, index) => {
-      const {name, number, position} = profiles[input.dataset.playerName] || {};
-      input.value = name || '';
-      numbers[index].value = number || '';
-      positions[index].value = position in positionLabels ? position : '';
-    });
-    rosterPicker.showModal();
-  };
-  document.getElementById('roster-form').onsubmit = event => {
-    if (event.submitter?.value !== 'save') return;
-    profiles = Object.fromEntries(names.map((input, index) => [
-      input.dataset.playerName, {name: input.value.trim(), number: numbers[index].value.trim(), position: positions[index].value},
-    ]));
-    try { localStorage.setItem(rosterKey, JSON.stringify(profiles)); } catch {}
-    showProfiles();
-  };
-  showProfiles();
-}
-const photos = Array.from(document.querySelectorAll('[data-player-photo]'));
-const picker = document.getElementById('photo-picker');
-const preview = document.getElementById('photo-preview');
-const photoStatus = document.getElementById('photo-status');
-const save = document.getElementById('save-photo');
-const selected = new Map();
-let player, index, count;
-
-function storageKey(id) {
-  return JSON.stringify(['player-photo', ...photoScope, id]);
-}
-
-function photoUrl(img, candidate) {
-  const url = new URL(img.src);
-  url.searchParams.set('candidate', candidate);
-  return url.href;
-}
-
-function updatePhotos(id, candidate) {
-  selected.set(id, candidate);
-  for (const img of photos.filter(img => img.dataset.playerPhoto === id)) {
-    img.src = photoUrl(img, candidate);
-  }
-}
-
-function showPhoto(step) {
-  index = ((index + step) % count + count) % count;
-  save.disabled = true;
-  photoStatus.textContent = 'Loading photo…';
-  preview.src = photoUrl(photos.find(img => img.dataset.playerPhoto === player), index);
-}
-
-preview.onload = () => {
-  save.disabled = false;
-  photoStatus.textContent = 'Photo ' + (index + 1) + ' of ' + count;
-};
-preview.onerror = () => {
-  save.disabled = true;
-  photoStatus.textContent = 'Photo unavailable. Try the next one.';
-};
-document.getElementById('next-photo').onclick = () => showPhoto(1);
-document.getElementById('prev-photo').onclick = () => showPhoto(-1);
-picker.addEventListener('keydown', event => {
-  if (event.key === 'ArrowRight') { event.preventDefault(); showPhoto(1); }
-  if (event.key === 'ArrowLeft') { event.preventDefault(); showPhoto(-1); }
+PlayerProfiles.configure({
+  jobId: {{ job.job_id | tojson }},
+  sourceVersion: {{ portrait_version | tojson }},
+  roster: {{ summary.players.keys() | list | tojson }},
+  portraits: {{ portraits | tojson }},
+  positions: {{ position_labels | tojson }}
 });
-save.onclick = () => {
-  updatePhotos(player, index);
-  try { localStorage.setItem(storageKey(player), index); } catch {}
-  picker.close();
-};
-
-for (const button of document.querySelectorAll('.change-photo')) {
-  const id = button.dataset.player;
-  const total = Number(button.dataset.count);
-  try {
-    const saved = Number(localStorage.getItem(storageKey(id)));
-    if (Number.isInteger(saved) && saved > 0 && saved < total) updatePhotos(id, saved);
-  } catch {}
-  button.onclick = () => {
-    player = id;
-    count = total;
-    index = selected.get(id) ?? 0;
-    document.getElementById('photo-title').textContent = 'Change photo · ' + id;
-    document.getElementById('prev-photo').disabled = count < 2;
-    document.getElementById('next-photo').disabled = count < 2;
-    picker.showModal();
-    // Open on the photo in use; Previous and Next step from there.
-    showPhoto(0);
-  };
-}
+document.getElementById('edit-players')?.addEventListener('click', () => PlayerProfiles.openEditor());
 </script>
+</body>
 </html>

@@ -523,7 +523,10 @@ def results(job_id):
 
     with open(job["stats_path"]) as f:
         stats = _prepare_viewer_stats(json.load(f))
-    return render_template("viewer.html", job=job, stats=stats)
+    view = request.args.get("view", "video")
+    if view not in {"video", "charts", "trajectories", "highlights"}:
+        view = "video"
+    return render_template("viewer.html", job=job, stats=stats, initial_page=view)
 
 
 @app.route("/api/annotations/<job_id>")
@@ -581,6 +584,16 @@ def player_highlights_page(job_id):
     return _player_contact_response(job_id, statistics_page=True, highlights_page=True)
 
 
+@app.route("/api/player_highlights/<job_id>")
+def player_highlights_data(job_id):
+    return _player_contact_response(job_id, statistics_page=True, highlights_api=True)
+
+
+@app.route("/api/player_roster/<job_id>")
+def player_roster_data(job_id):
+    return _player_contact_response(job_id, statistics_page=True, roster_api=True)
+
+
 @app.route("/statistics-evidence/<job_id>")
 def statistics_evidence_page(job_id):
     return _player_contact_response(job_id, statistics_page=True, evidence_page=True)
@@ -592,10 +605,12 @@ def statistics_data(job_id):
 
 
 def _player_contact_response(job_id, *, statistics_page=False, highlights_page=False,
-                             evidence_page=False, statistics_api=False):
+                             evidence_page=False, statistics_api=False, highlights_api=False,
+                             roster_api=False):
     job = _get_job(job_id)
     if not job or job["status"] != "done":
         return jsonify({"error": "Results not ready"}), 404
+    job = dict(job, job_id=job_id)
     try:
         # Serialize read-modify-append to preserve corrections from two tabs.
         with _player_contact_lock:
@@ -643,23 +658,26 @@ def _player_contact_response(job_id, *, statistics_page=False, highlights_page=F
                     stream.write(json.dumps(record, ensure_ascii=False, allow_nan=False) + "\n")
                 reviews.append(review)
             result = apply_reviews(report, reviews)
-            if highlights_page:
+            if roster_api:
+                from src.tracking.player_substitutions import player_lineup
+                stats = json.loads(stats_path.read_bytes())
+                return jsonify(roster=result["roster_ids"], source=source, side=result.get("side"),
+                               portraits={player: len(choices) for player, choices in references.items()},
+                               positions=PLAYER_POSITIONS, lineup=player_lineup(stats))
+            if highlights_page or highlights_api:
                 stats = json.loads(Path(job["stats_path"]).read_bytes())
                 player = request.args.get("player") or (result["roster_ids"] or [None])[0]
-                if player not in result["roster_ids"]:
-                    return "Unknown roster player", 404
+                if player is not None and player not in result["roster_ids"]:
+                    return jsonify({"error": "Unknown roster player"}), 404
                 moments = player_highlights(
                     result, stats.get("all_events") or [], stats["fps"], player,
                     extra_contacts=fault_contacts, include_suggestions=request.args.get("suggestions") == "1",
-                )
-                video_url = (f"/api/original_video?path={job['original_video_path_url']}"
-                             if job.get("original_video_path_url") else url_for("video", job_id=job_id))
-                return render_template("player_highlights.html", job=job, player=player, moments=moments,
-                                       roster=result["roster_ids"], categories=HIGHLIGHT_CATEGORIES,
-                                       fps=float(stats["fps"]), video_url=video_url,
-                                       include_suggestions=request.args.get("suggestions") == "1",
-                                       position_labels=PLAYER_POSITIONS,
-                                       portraits={p: len(c) for p, c in references.items()})
+                ) if player is not None else []
+                if highlights_api:
+                    return jsonify(player=player, moments=moments, roster=result["roster_ids"],
+                                   categories=HIGHLIGHT_CATEGORIES, source=source)
+                return render_template("viewer.html", job=job, stats=_prepare_viewer_stats(stats),
+                                       initial_page="highlights")
             if statistics_page:
                 stats_raw = stats_path.read_bytes()
                 with Path(job["annotations_path"]).open("rb") as stream:

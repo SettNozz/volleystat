@@ -168,7 +168,7 @@ Main code:
   preview, player-contact inputs, court-correction I/O, media/thumbnails).
 - `viewer/templates/viewer.html`: results-page markup and Jinja boot constants;
   its scripts are `viewer/static/viewer_page.js` (state, listeners, init, loaded
-  last), `viewer_charts.js`, `viewer_tables.js`, `viewer_overlay.js` (redraw),
+  last), `viewer_charts.js`, `viewer_highlights.js` (shared-video clips), `viewer_overlay.js` (redraw),
   `viewer_set_trajectories.js` (set-to-attack pairs, zone/setter filters,
   clickable overlay lines),
   `viewer_attack_height.js` (approximate near-side contact height),
@@ -515,19 +515,30 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   not end-on, and when box sizes disagree with the calibration. With contact
   authors it records `author_check` disagreements as review hints only. See
   `docs/team_attribution.md`.
-- **Viewer player views**: **Player contacts** and **Player statistics** derive
+- **Viewer player views**: **Player highlights** and **Player statistics** derive
   per-roster counts/outcomes from saved contacts, reviews, FSM attempts and the
   point ledger without inference; unknowns are excluded from totals. With both
   teams selected, unknown-team contacts are listed as `—`; selecting one team
   excludes them. Never infer a team to fill the list. `?player=Pn` adds a
-  personal panel above the team table; `/player-highlights/<job>` plays that
-  player's assigned contacts (`src/viewer_app/player_highlights.py`; uncertain
-  suggestions only with `suggestions=1`). Name, jersey and position
-  (outside/middle/setter/opposite) are per-browser `localStorage`, never
+  personal panel above the team table. Top navigation uses **Set analysis**,
+  **Player statistics** and **Player highlights** through shared `viewer_nav.html`.
+  The initial video view shows a roster beside Events; the standalone Player
+  contacts panel and rally-clip strip are removed. `player_profiles.js` shares
+  browser-local name/jersey/position and source-scoped photo choices across views;
+  Change photo exists only inside Edit players. `viewer_roster.js` reads
+  `/api/player_roster/<job>` and follows saved substitution intervals, while
+  Events merges substitutions without changing original contact indexes.
+  `/player-highlights/<job>` opens highlights in the main
+  viewer; `viewer_highlights.js` shares its video/overlays and reads saved
+  moments from `/api/player_highlights/<job>` (`src/viewer_app/player_highlights.py`;
+  uncertain suggestions only with `suggestions=1`). Space outside interactive
+  controls and dialogs toggles playback. Name, jersey and position
+  (outside/middle/setter/opposite/libero) are per-browser `localStorage`, never
   written to results.
 - **Statistics evidence**: `statistics_reconciliation.py` supplies player totals,
   metric clips and Excel from source-scoped rally/point joins; ambiguous joins
-  abstain. Point reviews append beside results, bound to both source hashes;
+  abstain. Player statistics uses plain numeric values and no evidence-coverage
+  column; the evidence-review link stays below the table. Point reviews append beside results, bound to both source hashes;
   confirming a winner never verifies a contact or attack outcome. See
   `docs/statistics_evidence.md`. Original FSM score/heatmap remain separate.
 - **Pose input and net floor**: default `--pose-imgsz 2560`.

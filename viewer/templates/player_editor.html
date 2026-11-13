@@ -1,0 +1,22 @@
+<dialog id="roster-picker" aria-labelledby="roster-title">
+  <h2 id="roster-title">Edit players</h2>
+  <p class="profile-hint">Add names, jersey numbers and positions. Profiles and photo choices are saved in this browser.</p>
+  <form method="dialog" id="roster-form">
+    <div id="roster-editor" class="roster-editor"></div>
+    <div class="photo-actions">
+      <button type="submit" class="ctrl active" value="save">Save players</button>
+      <button type="submit" class="ctrl" value="cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="photo-picker" aria-labelledby="photo-title">
+  <h2 id="photo-title">Change photo</h2>
+  <img id="photo-preview" alt="Player photo candidate">
+  <p id="photo-status" role="status"></p>
+  <div class="photo-actions">
+    <button type="button" class="ctrl" id="prev-photo">← Previous photo</button>
+    <button type="button" class="ctrl" id="next-photo">Next photo →</button>
+    <button type="button" class="ctrl active" id="save-photo">Use this photo</button>
+    <form method="dialog"><button class="ctrl">Cancel</button></form>
+  </div>
+</dialog>

@@ -4,7 +4,7 @@ const {test} = require('node:test');
 const {readFileSync} = require('node:fs');
 const vm = require('node:vm');
 
-function fixture(events, reducedMotion = false) {
+function fixture(events, reducedMotion = false, substitutions = []) {
   class Element {
     children = [];
     hidden = false;
@@ -33,6 +33,7 @@ function fixture(events, reducedMotion = false) {
   const seeks = [];
   const context = vm.createContext({
     EVENTS: events, FPS: 30, RALLIES: [], currentFrameIdx: 0,
+    substitutionEvents: () => substitutions,
     eventTeams: events.map(event => event.team), vid: {paused: true, seeking: false},
     document: {getElementById: element, createElement: () => new Element()},
     window: {matchMedia: () => ({matches: reducedMotion})},
@@ -83,6 +84,24 @@ test('full log shows future contacts without making them active or displaying th
   assert.equal(rows()[0].hidden, true);
 });
 
+test('substitutions join Events in time order without changing contact indexes or side attribution', () => {
+  const {element, run, rows, seeks} = fixture([{frame: 30, type: 'serve'}, {frame: 90, type: 'attack', team: 'team_b'}], false,
+    [{frame: 60, player_in: 'P7', player_out: 'P1', window: [55, 65]}]);
+  run('updateActiveEvent(60)');
+  assert.equal(rows()[0].id, 'ev0');
+  assert.equal(rows()[1].id, 'evsubstitution-0');
+  assert.equal(rows()[2].id, 'ev1');
+  assert.equal(element('videoEventKicker').textContent, 'SUBSTITUTION');
+  assert.equal(element('videoEventMeta').textContent, 'P7 in · P1 out · Unverified');
+  assert.equal(element('eventFeedCount').textContent, '2 / 3 events');
+  assert.equal(element('eventFeedCount').title, '1 / 2 contacts · 1/1 substitutions');
+  rows()[1].onclick();
+  assert.deepEqual(seeks, [60]);
+  run('updateActiveEvent(90)');
+  assert.equal(element('videoEventKicker').textContent, 'CONTACT EVENT');
+  assert.equal(element('videoEventMeta').textContent, 'Near side');
+});
+
 test('playback animates new contacts; seeks and reduced motion do not animate', () => {
   for (const reducedMotion of [false, true]) {
     const {context, element, run, rows} = fixture([
@@ -115,7 +134,7 @@ test('legacy timestamps, simultaneous contacts and empty results remain usable',
   assert.ok(element('videoEventBadge').hidden);
   const empty = fixture([]);
   empty.run('toggleEventLog()');
-  assert.equal(empty.element('eventFeedEmpty').textContent, 'No contact events in this result.');
+  assert.equal(empty.element('eventFeedEmpty').textContent, 'No events in this result.');
 });
 
 test('substitution toggle works after the event-marker timeline is removed', () => {
