@@ -149,6 +149,7 @@ def apply(args):
         analyzer.player_identity_side=args.side
         analyzer.player_identity_seed=str(args.seed) if args.seed else None
         analyzer.player_identity_method=args.method
+        analyzer.enable_player_substitutions=not args.no_substitutions
         analyzer.player_reid_assets=str(args.assets) if args.assets else None
         analyzer.player_reid_device=args.device
         analyzer.max_players_per_team=6
@@ -169,6 +170,10 @@ def apply(args):
             analyzer.player_jersey_reads=reads
         stats=GameStats(video_name=annotations['video'],fps=annotations['fps'],frame_annotations=annotations['frames'])
         analyzer._apply_player_identity(stats,images(),annotations['fps'],source)
+        # Saved rallies are final; substitutions are found only between them.
+        stats.service_attempts=original_stats.get('service_attempts') or []
+        stats.rallies=original_stats.get('rallies') or []
+        analyzer._apply_player_substitutions(stats,annotations['fps'])
     finally:
         cap.release()
     report=stats.player_identity
@@ -221,6 +226,8 @@ def main():
     replay.add_argument('--no-model-registry',action='store_true')
     replay.add_argument('--model-cache-dir',type=Path,default=DEFAULT_CACHE)
     replay.add_argument('--require-model-cache',action='store_true',help='Refuse inference; use saved OSNet embeddings only')
+    replay.add_argument('--no-substitutions',action='store_true',
+                        help='Keep the discovered roster only; do not detect substitutions or add P7, P8, ...')
     replay.add_argument('--jersey-reads',type=Path,help='Optional jersey_number_reads_v1 file from scripts/evaluation/read_jersey_numbers.py; adds jersey-number constraints')
     args=parser.parse_args()
     if args.command=='export-seed':

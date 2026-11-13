@@ -79,6 +79,7 @@ Current high-value analysis options:
 --player-identity-side a|b
 --player-identity-seed <JSON>
 --player-identity-method roster-discovery|seed-frame
+--no-player-substitutions
 --player-reid-assets <DIR>
 --player-reid-device auto|cpu|cuda
 --no-model-prefetch
@@ -171,7 +172,8 @@ Main code:
   `viewer_set_trajectories.js` (set-to-attack pairs, zone/setter filters,
   clickable overlay lines),
   `viewer_attack_height.js` (approximate near-side contact height),
-  `viewer_events.js` (causal animated contact feed and on-video event card), and
+  `viewer_events.js` (causal animated contact feed and on-video event card),
+  `viewer_substitutions.js` (optional overlay and list in Player contacts), and
   `viewer_page.css`. The feature scripts only declare functions and state.
 
 ## Ball trajectory invariants
@@ -477,9 +479,16 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   `human_player_movement_v1` export before changing defaults.
   `poses[].id` stays raw; `player_id` and
   `identity` are separate; unknown is null / `P?`, never a recycled ID.
-  Substitutes come only from explicit `player_identity_roster_v2` anchors
-  (`scripts/apply_player_identity.py add-player`); returning players keep their
-  IDs. Install assets once with `scripts/models/install_player_reid.py`; no
+  Substitutions (default on, `--no-player-substitutions`):
+  `src/tracking/player_substitutions.py` (`presence_handoff_v1`) runs after the
+  final rallies, before contact authors. A non-roster person's on-court stint
+  that starts as a roster player's ends, outside any rally, is a substitution;
+  the substitute gets the next ID (P7, P8, ...), everyone involved is limited
+  to their own on-court intervals, and contact authors skip benched players.
+  Events live in `player_identity.substitutions`; viewer overlay/panel/stats
+  read them. Explicit `player_identity_roster_v2` anchors
+  (`scripts/apply_player_identity.py add-player`) still work; returning
+  players keep their IDs. Install assets once with `scripts/models/install_player_reid.py`; no
   runtime downloads. `scripts/apply_player_identity.py export-seed|apply`
   writes fresh paired results. Opt-in jersey OCR (pinned TrOCR,
   `scripts/models/install_jersey_ocr.py`; reads from

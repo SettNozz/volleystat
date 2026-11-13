@@ -71,6 +71,12 @@ canvas#overlay.trajectory-picking { pointer-events: auto; }
 
 .controls { padding: 14px 16px; }
 .video-seek { display: block; width: 100%; height: 8px; margin: 3px 0 17px; accent-color: var(--primary); cursor: pointer; }
+.substitution-panel { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border-soft); }
+.substitution-panel summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+.substitution-list { max-height: 220px; }
+.substitution-row { display: grid; grid-template-columns: auto 1fr 1fr; gap: 4px 8px; width: 100%; text-align: left; margin-bottom: 4px; }
+.substitution-row small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; }
+.substitution-row.current { outline: 2px solid #22c55e; background: rgba(34,197,94,.12); }
 .btn-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 button.ctrl { background: var(--card); border: 1px solid var(--border); color: var(--muted2); padding: 7px 13px; border-radius: 8px; cursor: pointer; font-size: 12.5px; font-weight: 600; font-family: inherit; transition: all .15s; }
 button.ctrl:hover { border-color: var(--primary); color: var(--primary); }

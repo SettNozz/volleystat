@@ -142,6 +142,9 @@ def main():
                         default="roster-discovery",
                         help="roster-discovery (default): find the constant players from tracklets of the whole "
                              "video; seed-frame: the older tracker started from one complete frame")
+    parser.add_argument("--no-player-substitutions", action="store_true",
+                        help="Keep the six-player roster; do not detect substitutions between rallies "
+                             "or give substitutes new IDs (P7, P8, ...)")
     parser.add_argument("--player-reid-assets", metavar="DIR",
                         help="Override pinned OSNet bundle (osnet.py + osnet_msmt17.pth)")
     parser.add_argument("--player-reid-device", choices=("auto", "cpu", "cuda"), default="auto",
@@ -290,6 +293,7 @@ def main():
         player_identity_side=args.player_identity_side,
         player_identity_seed=args.player_identity_seed,
         player_identity_method=args.player_identity_method,
+        enable_player_substitutions=not args.no_player_substitutions,
         player_reid_assets=args.player_reid_assets,
         player_reid_device=args.player_reid_device,
         enable_contact_author=not args.no_contact_author,

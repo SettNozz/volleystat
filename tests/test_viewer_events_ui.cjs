@@ -117,3 +117,14 @@ test('legacy timestamps, simultaneous contacts and empty results remain usable',
   empty.run('toggleEventLog()');
   assert.equal(empty.element('eventFeedEmpty').textContent, 'No contact events in this result.');
 });
+
+test('substitution toggle works after the event-marker timeline is removed', () => {
+  let redraws = 0;
+  const context = vm.createContext({
+    document: {getElementById: () => null},
+    redraw: () => redraws++,
+  });
+  vm.runInContext(readFileSync('viewer/static/viewer_substitutions.js', 'utf8'), context);
+  vm.runInContext('onSubstitutionToggle()', context);
+  assert.equal(redraws, 1);
+});

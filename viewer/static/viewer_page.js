@@ -818,3 +818,4 @@ initTableFilters();
 renderEventList();
 renderRallyClips();
 renderTables();
+if (typeof renderSubstitutionPanel === 'function') renderSubstitutionPanel();

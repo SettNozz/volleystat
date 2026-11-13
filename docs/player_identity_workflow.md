@@ -108,8 +108,9 @@ enters the method. `player_identity.roster_discovery` records the players'
 presence, the people left out (`other_person` or `unresolved`) and the
 selection rule. `seed` holds one reference box per player.
 
-Substitutes still need a confirmed anchor (`add-player`): a leftover group is
-never given an ID on its own. When fewer than six constant players are found,
+A leftover group gets an ID only through a detected substitution (see
+[Substitutions](#substitutions-presence_handoff_v1-default-on)) or a confirmed
+anchor (`add-player`). When fewer than six constant players are found,
 the seed-frame tracker runs and the report says
 `roster_discovery.status: fallback_to_seed_frame`.
 
@@ -171,7 +172,79 @@ Limits:
   walk in. A few boxes there still get roster IDs and there are no labels to
   count them.
 - Teammates in identical kit with similar build have not been measured.
-- A substitute is listed among the people left out until confirmed.
+- A substitute who never pairs with a lineup change stays among the people
+  left out.
+
+## Substitutions (presence_handoff_v1, default on)
+
+`src/tracking/player_substitutions.py`. A substitution changes who is on
+court: one player walks off, another walks on, and the two usually cross at
+the sideline while the ball is dead. The pass runs in `GameAnalyzer` after the
+final rallies exist and before contact authors. `--no-player-substitutions`
+turns it off; `scripts/apply_player_identity.py apply` runs it on saved
+results (`--no-substitutions` skips it).
+
+1. Roster discovery also returns possible substitutes: non-roster people
+   present at least 20 s (at most 8). Every box is scored against the roster
+   and these people together, one-to-one per frame as usual.
+2. Each person's assigned boxes become on-court stints: seconds where an
+   assigned box is in at least a quarter of the frames, absences up to 20 s
+   merged, stints at least 15 s long and half dense. An opponent at the net is
+   seen in scattered pieces and forms no stint.
+3. A stint end of one person and a stint start of another at most 15 s apart
+   form one substitution, paired one-to-one by time. A pair whose whole
+   crossing window lies inside one rally (service attempts, ±1 s) is rejected
+   as `during_rally`. Each person must alternate between leaving and entering.
+4. A substitute who takes part in a substitution gets the next ID (P7, P8, ...
+   in order of first entry). Everyone involved is limited to the frames
+   between their own substitutions (±3 s for the crossing), so a player on the
+   bench cannot lend their ID to whoever replaced them. Others are assigned
+   exactly as before. IDs set later by team membership are kept unless they
+   name a player who is off court at that frame.
+
+`player_identity.substitutions` (stats and annotations) holds `events`
+(`player_in`, `player_out`, `frame`, crossing `window`, neighbouring rally
+boundaries), `players` (substitutes with a reference box), `on_court`
+intervals, `stints`, `rejected` pairs and parameters, all
+`label_source: model`, `verified: false`. The substitute joins
+`gallery_keys`, so contact authors, player contacts and statistics list it.
+The contact-author model chooses only among players on court at the contact.
+
+Viewer: the **Substitutions** toggle under the video gear's **Advanced overlays**
+(off by default) draws a banner
+"⇄ SUBSTITUTION · P7 IN · P1 OUT" from 2 s before to 4 s after the crossing,
+dashed IN/OUT boxes on both players. The **Substitutions** section in the
+**Player contacts** tab lists every event and seeks to it. **Player
+statistics** lists every roster ID including substitutes (marked `SUB`); the
+personal panel shows role, time on court and each substitution.
+
+### Measured (2026-11-13)
+
+`7YnJlvChSzw_4k` (one camera, 11:50), viewer job `job_1794524983478148700`,
+cache-only replay. The user named four substitution windows. All four were
+found between rallies, with no other events:
+
+| User window | Detected window | Change |
+|---|---|---|
+| F6174–6252 | F6253–6315 | P7 (bald #1) in, P1 (blue shirt) out |
+| F7274–7340 | F7290–7409 | P1 in, P4 (#7) out |
+| F13698–13726 | F13714–13829 | P4 in, P1 out |
+| F15669–15740 | F15693–15779 | P1 in, P7 out |
+
+The detected window starts at the first assigned box, so it can trail the
+moment the substitute steps on court by a few seconds. Coverage of near-side
+boxes rose from 91.7% to 97.6% (P7: 6,526 boxes, before unknown
+`other_person`). Random crops of P7, of P1 while P7 played and of P4 after
+returning show the right person. Without the on-court constraint the
+contact-author model gave 5 contacts to benched players; with it none. P7 has
+8 contacts. Artifacts: `results/viewer/job_1794524983478148700_subs_v1`
+(identity) and `results/viewer/job_1794524983478148700_subs_v3` (with contact
+authors).
+
+Limits: one match, no held-out check, no labelled false-positive rate. A
+substitution during a timeout or set break, when exit and entry are more than
+15 s apart, is not paired. Libero replacements look the same and are reported
+as substitutions. A substitute present less than 20 s is not a candidate.
 
 ## Human initial IDs
 
@@ -202,8 +275,8 @@ original video. Existing analysis files are never upgraded in place.
 ## Scope and proof
 
 User requested adoption after the [OSNet experiment](player_reid_experiment.md).
-This remains a single-side method. Substitutes require explicit new-person
-confirmation and an observed appearance anchor; discovery is not automatic.
+This remains a single-side method. Substitutes come from detected lineup
+changes between rallies or from explicit new-person anchors.
 Set-side changes and cross-video identities are not solved. Per-player contact
 counts now expose conservative, unverified body-proximity proposals plus
 source-bound human corrections; they are not verified personal statistics.

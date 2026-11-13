@@ -39,6 +39,9 @@ def photo_roster(annotations, explicit=None, source_sha256=None):
             players.append({"player_id": pid, "references": [{"frame": frame, "bbox": pose["bb"]}]})
         for key, pid in (seed.get("assignments") or {}).items(): reference(key, pid)
         for addition in seed.get("introductions") or []: reference(addition["key"], addition["player_id"])
+        # Substitutes found from lineup changes (src/tracking/player_substitutions.py).
+        for person in (identity.get("substitutions") or {}).get("players") or []:
+            reference(person["reference_key"], person["player_id"])
         if set(identity.get("gallery_keys") or {})- {p["player_id"] for p in players}:
             raise ValueError("Saved roster is missing identity photo references")
         roster = {"schema": "contact_author_photo_roster_v1", "side": "b", "players": players,
@@ -157,7 +160,9 @@ class ContactAuthorModel:
                 or len(self.bundle["heads"]["all_sides/hgb_soft"]) != 3 or len(self.bundle["team_models"]) != 3):
             raise ValueError("Unsupported contact author checkpoint contract")
 
-    def predict_features(self, features, contacts):
+    def predict_features(self, features, contacts, on_court=None):
+        """``on_court`` (``player_id -> [[first, last], ...]``) excludes players
+        who were substituted off at the contact frame."""
         from src.tracking.contact_author_person_ranker import chain_posterior
         expected = self.manifest["feature_views"]["all_sides"]
         if features["columns"] != expected["soft_columns"] or features["global_columns"] != expected["global_columns"]:
@@ -167,7 +172,13 @@ class ContactAuthorModel:
         predictions = []
         for i, x in enumerate(features["candidate_features"]):
             scores = np.mean([m.predict_proba(x)[:, 1] for m in self.bundle["heads"]["all_sides/hgb_soft"]], axis=0)
-            person = int(np.argmax(scores[:-1])); label = "other_team" if posterior[i] < .5 else features["options"][person]
+            eligible = np.asarray(scores[:-1], dtype=float).copy()
+            for k, pid in enumerate(features["options"][:-1]):
+                runs = (on_court or {}).get(pid)
+                if runs is not None and not any(a <= contacts[i]["frame"] <= b for a, b in runs):
+                    eligible[k] = -np.inf
+            person = int(np.argmax(eligible))
+            label = "other_team" if posterior[i] < .5 or not np.isfinite(eligible[person]) else features["options"][person]
             predictions.append({"label": label, "scores": scores.tolist(), "near_side_score": float(posterior[i]),
                 "team_emission": float(emission[i]), "actor": features["evidence"][i].get(label)})
         return predictions
@@ -208,7 +219,8 @@ class ContactAuthorModel:
             vectors = collect_embeddings([{"f": f, "players": p} for f, p in sorted(requests.items())],
                 images or (lambda wanted: video_frames(video, wanted)), encoder, store, batch_size=128)
             features = build_features(annotations, contacts, references, vectors, context_events=contacts)
-            proposals = self.predict_features(features, contacts)
+            on_court = ((annotations.get("player_identity") or {}).get("substitutions") or {}).get("on_court")
+            proposals = self.predict_features(features, contacts, on_court)
             rows = []
             for contact, proposal in zip(contacts, proposals):
                 event = events[contact["event_index"]]; pid = proposal["label"]; actor = proposal.pop("actor")
