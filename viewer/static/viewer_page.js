@@ -84,17 +84,21 @@ function showPage(name) {
     activePlayerContact = null;
   }
   if (name !== 'trajectories') setTrajectoryOverlay.clip = null;
-  document.querySelector('.video-col').classList.toggle('workspace-review', workspace && name !== 'video');
-  document.getElementById('teamRosterPanel').hidden = name !== 'video';
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById(workspace ? 'page-video' : 'page-' + name).classList.add('active');
   document.querySelectorAll('[data-workspace-panel]').forEach(panel => {
     panel.hidden = panel.dataset.workspacePanel !== name;
   });
   document.querySelectorAll('.nav-item').forEach(n => {
-    n.classList.toggle('active', n.dataset.page === name);
-    if (n.dataset.page === name) n.setAttribute('aria-current', 'page');
+    const active = n.dataset.page === (workspace ? 'video' : name);
+    n.classList.toggle('active', active);
+    if (active) n.setAttribute('aria-current', 'page');
     else n.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('[data-workspace-view]').forEach(button => {
+    const active = button.dataset.workspaceView === name;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
   });
   toggleVideoSettings(false, false);
   if (name === 'charts') renderCharts();

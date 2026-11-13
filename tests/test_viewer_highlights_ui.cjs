@@ -174,3 +174,46 @@ test('newer highlight requests win; failed requests clear stale clips and rows',
   assert.equal(element('highlightList').children.length, 0);
   assert.equal(element('highlightPlayAll').disabled, true);
 });
+
+test('workspace buttons switch one shared panel and keep Video Analysis selected', () => {
+  function node(dataset = {}) {
+    const classes = new Set();
+    return {dataset, hidden: false, attributes: {}, classes,
+      classList: {add: name => classes.add(name), remove: name => classes.delete(name),
+        toggle: (name, active) => active ? classes.add(name) : classes.delete(name)},
+      setAttribute(name, value) { this.attributes[name] = value; },
+      removeAttribute(name) { delete this.attributes[name]; }};
+  }
+  const views = ['video', 'trajectories', 'highlights'];
+  const panels = views.map(workspacePanel => node({workspacePanel}));
+  const buttons = views.map(workspaceView => node({workspaceView}));
+  const nav = ['video', 'charts', 'statistics'].map(page => node({page}));
+  const pages = {'page-video': node(), 'page-charts': node()};
+  let loads = 0, cancellations = 0;
+  const context = vm.createContext({
+    document: {getElementById: id => pages[id], querySelectorAll: selector => ({
+      '.page': Object.values(pages), '.nav-item': nav,
+      '[data-workspace-panel]': panels, '[data-workspace-view]': buttons,
+    })[selector]},
+    selectedPlayerId: 'P1', activePlayerContact: {}, setTrajectoryOverlay: {clip: {}},
+    cancelPlayerHighlight: () => cancellations++, loadPlayerHighlights: () => loads++,
+    toggleVideoSettings() {}, renderCharts() {}, resizeCanvas() {},
+    location: {href: 'http://localhost/results/job'}, URL, JOB_ID: 'job', history: {replaceState() {}},
+  });
+  const source = readFileSync('viewer/static/viewer_page.js', 'utf8');
+  vm.runInContext(source.slice(source.indexOf('function showPage('), source.indexOf('/* ── Shared chart')), context);
+  for (const [index, view] of views.entries()) {
+    vm.runInContext(`showPage('${view}')`, context);
+    assert.deepEqual(panels.map(panel => panel.hidden), views.map((_, i) => i !== index));
+    assert.deepEqual(buttons.map(button => button.attributes['aria-pressed']), views.map((_, i) => String(i === index)));
+    assert.ok(pages['page-video'].classes.has('active'));
+    assert.ok(nav[0].classes.has('active'));
+  }
+  assert.equal(loads, 1);
+  assert.equal(cancellations, 2);
+  assert.equal(context.selectedPlayerId, null);
+  vm.runInContext("showPage('charts')", context);
+  assert.ok(pages['page-charts'].classes.has('active'));
+  assert.ok(!pages['page-video'].classes.has('active'));
+  assert.ok(nav[1].classes.has('active'));
+});

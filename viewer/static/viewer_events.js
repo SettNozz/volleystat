@@ -39,8 +39,9 @@ function contactLabel(type) {
   return labels[type] || String(type || 'Contact').replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 }
 
+const eventTimeline = viewerEventTimeline(EVENTS, FPS, typeof substitutionEvents === 'function' ? substitutionEvents() : []);
 const contactFeed = {
-  timeline: viewerEventTimeline(EVENTS, FPS, typeof substitutionEvents === 'function' ? substitutionEvents() : []), rows: [],
+  timeline: eventTimeline, substitutions: eventTimeline.filter(item => item.kind === 'substitution'), rows: [],
   count: -1, lastFrame: null, fullLog: false, badgeIndex: null,
 };
 
@@ -55,6 +56,11 @@ function animateContact(element) {
 
 function renderEventList() {
   const box = document.getElementById('eventList');
+  if (!box) {
+    contactFeed.badgeIndex = null;
+    updateActiveEvent(currentFrameIdx);
+    return;
+  }
   const rallyFirst = new Map();
   RALLIES.forEach((rally, index) => {
     const frame = rally.events?.[0]?.frame;
@@ -115,6 +121,12 @@ function updateActiveEvent(frame = currentFrameIdx) {
     frame - state.lastFrame <= FPS && !vid.paused && !vid.seeking;
   const mode = state.fullLog ? 'Full log' : vid.paused ? 'Paused' : 'Live';
   const modeBadge = document.getElementById('eventFeedMode');
+  if (!modeBadge) {
+    state.count = count;
+    state.lastFrame = frame;
+    renderVideoEvent(frame, count, animate);
+    return;
+  }
   if (modeBadge.dataset.mode !== mode) {
     modeBadge.dataset.mode = mode;
     modeBadge.lastChild.textContent = ' ' + mode;
@@ -163,8 +175,14 @@ function updateActiveEvent(frame = currentFrameIdx) {
 
 function renderVideoEvent(frame, count, animate) {
   const badge = document.getElementById('videoEventBadge');
-  const latest = contactFeed.timeline[count - 1];
-  const visible = latest && frame - latest.frame < 2.5 * FPS && document.getElementById('togEvents').checked;
+  const hold = (typeof SUBSTITUTION_HOLD_SEC === 'number' ? SUBSTITUTION_HOLD_SEC : 4) * FPS;
+  const substitutions = contactFeed.substitutions.filter(item => {
+    const end = item.event.window?.[1];
+    return item.frame <= frame && frame <= Math.max(item.frame, Number.isFinite(end) ? end : item.frame) + hold;
+  });
+  let latest = contactFeed.timeline[count - 1];
+  if (latest && frame - latest.frame >= 2.5 * FPS) latest = substitutions.at(-1);
+  const visible = latest && document.getElementById('togEvents').checked;
   if (!visible) {
     badge.hidden = true;
     contactFeed.badgeIndex = null;
@@ -182,6 +200,10 @@ function renderVideoEvent(frame, count, animate) {
   }
   document.getElementById('videoEventMeta').textContent = latest.kind === 'substitution'
     ? viewerEventLabel(latest) + ' · Unverified' : sideLabel + (latest.event.inferred ? ' · Inferred' : '');
+  const changes = document.getElementById('videoEventSubstitutions');
+  const otherChanges = substitutions.filter(item => item.index !== latest.index);
+  changes.textContent = otherChanges.map(item => viewerEventLabel(item) + ' · Unverified').join(' / ');
+  changes.hidden = !otherChanges.length;
   badge.hidden = false;
   if (changed && animate) animateContact(badge);
   contactFeed.badgeIndex = latest.index;

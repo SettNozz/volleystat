@@ -36,6 +36,7 @@
         <span class="video-event-kicker" id="videoEventKicker">CONTACT EVENT</span>
         <strong id="videoEventLabel"></strong>
         <span class="video-event-meta" id="videoEventMeta"></span>
+        <span class="video-event-substitutions" id="videoEventSubstitutions" hidden></span>
       </div>
       <output id="attackHeightBadge" class="attack-height-badge" aria-label="Estimated attack contact height" hidden></output>
       <div class="scoreboard" aria-label="Points inferred from serves" title="Points inferred from the next serve.">
@@ -60,7 +61,23 @@
     </div>
 
     </div>
-    <section class="card workspace-panel" id="setTrajectoryPanel" data-workspace-panel="trajectories" aria-labelledby="setTrajectoryTitle" hidden>
+  </div>
+
+  <aside class="card video-workspace" aria-label="Video tools">
+    <div class="workspace-buttons" role="group" aria-label="Video tools">
+      <button type="button" class="ctrl active" data-workspace-view="video" aria-pressed="true" aria-controls="teamRosterPanel" onclick="showPage('video')">Team lineup</button>
+      <button type="button" class="ctrl" data-workspace-view="trajectories" aria-pressed="false" aria-controls="setTrajectoryPanel" onclick="showPage('trajectories')">Set analysis</button>
+      <button type="button" class="ctrl" data-workspace-view="highlights" aria-pressed="false" aria-controls="playerHighlightsPanel" onclick="showPage('highlights')">Player highlights</button>
+    </div>
+    <section class="workspace-panel team-roster" id="teamRosterPanel" data-workspace-panel="video" aria-labelledby="teamRosterTitle">
+      <div class="roster-heading"><h2 class="card-title" id="teamRosterTitle">Team lineup</h2>
+        <button type="button" class="ctrl" id="edit-players" disabled onclick="PlayerProfiles.openEditor()">Edit players</button>
+      </div>
+      <p class="profile-hint" id="rosterStatus" role="status">Loading players…</p>
+      <div class="roster-list" id="teamRosterList" aria-label="Players on court"></div>
+      <details class="roster-bench" id="rosterBench" hidden><summary>Bench</summary><div class="roster-list" id="rosterBenchList"></div></details>
+    </section>
+    <section class="workspace-panel" id="setTrajectoryPanel" data-workspace-panel="trajectories" aria-labelledby="setTrajectoryTitle" hidden>
       <h2 class="card-title" id="setTrajectoryTitle">Set analysis</h2>
       <label class="cal-row">Team
         <select id="setTrajectorySide" onchange="renderSetTrajectories()">
@@ -81,7 +98,7 @@
       <div class="event-list" id="setTrajectoryList" aria-label="Set-to-attack pairs"></div>
     </section>
 
-    <section class="card workspace-panel" id="playerHighlightsPanel" data-workspace-panel="highlights" aria-labelledby="playerHighlightsTitle" hidden>
+    <section class="workspace-panel" id="playerHighlightsPanel" data-workspace-panel="highlights" aria-labelledby="playerHighlightsTitle" hidden>
       <h2 class="card-title" id="playerHighlightsTitle">Player highlights</h2>
       <div class="highlight-identity" id="highlightIdentity" aria-live="polite"></div>
       <label class="cal-row">Player
@@ -102,34 +119,6 @@
       <div class="event-list highlight-list" id="highlightList" aria-label="Highlight moments"></div>
       <p class="court-edit-hint">Moments use saved contact assignments and human reviews. Automatic attribution is unverified. Uncertain suggestions appear only when enabled.</p>
     </section>
-  </div>
-
-  <aside class="side-col" aria-label="Events">
-    <section class="card contact-feed">
-      <div class="contact-feed-heading">
-        <h2>Events</h2>
-        <span class="feed-mode" id="eventFeedMode"><i aria-hidden="true"></i> Live</span>
-      </div>
-      <div class="contact-feed-toolbar">
-        <span id="eventFeedCount">0 events</span>
-        <button type="button" class="feed-log-toggle" id="eventLogToggle" aria-pressed="false" onclick="toggleEventLog()">Full log</button>
-      </div>
-      <div class="event-list" id="eventList" aria-label="Event history"></div>
-      <p class="event-feed-empty" id="eventFeedEmpty">Play the video to follow events.</p>
-      <div class="contact-feed-footer" id="eventFeedStatus" role="status" aria-live="polite">Events appear as the video plays. Click one to replay.</div>
-    </section>
-    <section class="card attack-origins" id="attackHeatmapPanel" aria-labelledby="attackOriginsTitle" hidden>
-      <h2 class="card-title" id="attackOriginsTitle">Attack origins <span id="attackHeatmapTotal"></span></h2>
-      <div id="attackHeatmapZones" class="attack-heatmap-zones"></div>
-    </section>
-  </aside>
-  <aside class="card team-roster" id="teamRosterPanel" aria-labelledby="teamRosterTitle">
-    <div class="roster-heading"><h2 class="card-title" id="teamRosterTitle">Team lineup</h2>
-      <button type="button" class="ctrl" id="edit-players" disabled onclick="PlayerProfiles.openEditor()">Edit players</button>
-    </div>
-    <p class="profile-hint" id="rosterStatus" role="status">Loading players…</p>
-    <div class="roster-list" id="teamRosterList" aria-label="Players on court"></div>
-    <details class="roster-bench" id="rosterBench" hidden><summary>Bench</summary><div class="roster-list" id="rosterBenchList"></div></details>
   </aside>
 </div>
 
@@ -146,7 +135,7 @@
         <label class="toggle"><input type="checkbox" id="togTrail" onchange="redraw()"> Trail</label>
         <label class="toggle"><input type="checkbox" id="togNet" onchange="redraw()"> Net</label>
         <label class="toggle"><input type="checkbox" id="togPlayers" onchange="redraw()"> Players</label>
-        <label class="toggle"><input type="checkbox" id="togEvents" onchange="redraw()"> Events</label>
+        <label class="toggle"><input type="checkbox" id="togEvents" checked onchange="redraw()"> Events</label>
         <label class="toggle"><input type="checkbox" id="togCourt" onchange="redraw()"> Court</label>
       </div>
     <details class="settings-section">
@@ -234,6 +223,10 @@
     </div>
 
     <div class="chart-col">
+      <section class="card attack-origins" id="attackHeatmapPanel" aria-labelledby="attackOriginsTitle" hidden>
+        <h2 class="card-title" id="attackOriginsTitle">Attack origins <span id="attackHeatmapTotal"></span></h2>
+        <div id="attackHeatmapZones" class="attack-heatmap-zones"></div>
+      </section>
       <div class="card" style="padding:16px;">
         <div class="card-title">Contacts by team</div>
         <table class="mini-table">
