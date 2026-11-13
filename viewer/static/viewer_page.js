@@ -853,6 +853,7 @@ function setupEventMarkers() {
     m.onclick = (e) => { e.stopPropagation(); seekAndPlay(startFrame); };
     bar.appendChild(m);
   }
+  if (typeof setupSubstitutionMarkers === 'function') setupSubstitutionMarkers(bar);
 }
 
 function updateActiveEvent() {
@@ -889,3 +890,4 @@ initTableFilters();
 renderEventList();
 renderRallyClips();
 renderTables();
+if (typeof renderSubstitutionPanel === 'function') renderSubstitutionPanel();

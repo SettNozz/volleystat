@@ -716,7 +716,9 @@ def _player_contact_response(job_id, *, statistics_page=False, highlights_page=F
                         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 selected = request.args.get("player")
+                from src.tracking.player_substitutions import player_lineup
                 return render_template("player_statistics.html", job=job, summary=summary,
+                                       lineup=player_lineup(stats),
                                        selected_player=selected if selected in summary["players"] else None,
                                        contact_counts=summary["touch_counts"],
                                        position_labels=PLAYER_POSITIONS,

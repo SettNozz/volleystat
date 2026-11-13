@@ -52,6 +52,9 @@ class RosterDiscoveryParameters:
     # A non-roster group seen together with every roster person, for at least
     # this long, is a known other person (opponent at the net, referee).
     other_person_min_seconds: float = 1.
+    # Non-roster people present at least this long are possible substitutes.
+    candidate_min_seconds: float = 20.
+    max_candidates: int = 8
     # Assignment.
     smooth_seconds: float = .5
     occluded_weight: float = .3
@@ -265,7 +268,24 @@ def discover_roster(frames: list[dict], features: dict, fps: float, roster_size:
                'example_key': chunks[groups[g][0]]['keys'][0],
                'role': 'other_person' if g in known_others else 'unresolved'}
               for g in range(len(groups)) if g not in chosen][:10]
-    return {'roster': roster, 'other_people': others,
+    # Possible substitutes: people left out of the roster who were present long
+    # enough to have played. Whether they did is decided from the timeline
+    # (src/tracking/player_substitutions.py), never from presence alone.
+    candidates = []
+    for g in range(len(groups)):
+        if g in chosen or presence[g] < parameters.candidate_min_seconds*fps:
+            continue
+        views = gallery(groups[g])
+        candidates.append({'presence_frames': presence[g], 'tracklets': len(groups[g]),
+                           'first_frame': min(chunks[i]['start'] for i in groups[g]),
+                           'last_frame': max(chunks[i]['end'] for i in groups[g]),
+                           'gallery': np.stack([chunks[i]['mean'] for i in views]),
+                           'gallery_keys': [chunks[i]['keys'][len(chunks[i]['keys'])//2] for i in views],
+                           'member_keys': {key for i in groups[g] for key in chunks[i]['keys']},
+                           'cohort_index': known_others.index(g) if g in known_others else None})
+        if len(candidates) >= parameters.max_candidates:
+            break
+    return {'roster': roster, 'other_people': others, 'candidates': candidates,
             'cohort': [np.stack([chunks[i]['mean'] for i in gallery(groups[g])]) for g in known_others],
             'tracklets': len(chunks), 'people': len(groups)}
 
@@ -294,11 +314,14 @@ def _track_average(scores, frame, raw, weight, window):
 def assign_roster(frames: list[dict], features: dict, fps: float, roster: list[dict],
                   parameters: RosterDiscoveryParameters = RosterDiscoveryParameters(), *,
                   available_from: dict | None = None, forced: dict | None = None,
-                  cohort: list | None = None) -> dict:
+                  cohort: list | None = None, active_intervals: dict | None = None) -> dict:
     """One-to-one roster IDs per frame from appearance; uncertain boxes stay unknown.
 
     ``cohort`` holds galleries of other people found on this side. A box that
     looks more like one of them than like any roster person stays unknown.
+    ``active_intervals`` (``player_id -> [(first, last), ...]``, inclusive)
+    limits a person to the frames they are on court, e.g. between their
+    substitutions. People without an entry are unrestricted.
     """
     ids = [person['player_id'] for person in roster]
     if len(set(ids)) != len(ids) or any(not pid for pid in ids):
@@ -335,6 +358,12 @@ def assign_roster(frames: list[dict], features: dict, fps: float, roster: list[d
         first = (available_from or {}).get(pid)
         if first is not None:
             scores[frame < first, j] = -np.inf
+        intervals = (active_intervals or {}).get(pid)
+        if intervals is not None:
+            inside = np.zeros(len(frame), dtype=bool)
+            for low, high in intervals:
+                inside |= (frame >= low) & (frame <= high)
+            scores[~inside, j] = -np.inf
     forced = forced or {}
     row = 0
     while row < len(usable):

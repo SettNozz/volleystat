@@ -131,6 +131,9 @@ class IdentityMixin:
             return
         from src.tracking.player_identity_workflow import METHOD, run_identity_pass
         started = time.time()
+        # Filled by the whole-video roster pass; read by _apply_player_substitutions
+        # once the final rallies exist, then released.
+        self._identity_context = {}
         side = self.player_identity_side
         cache = getattr(self, '_model_cache', None)
         if cache is None and video_path is not None and hasattr(self, 'model_cache_dir'):
@@ -170,6 +173,7 @@ class IdentityMixin:
                 method=getattr(self, "player_identity_method", "roster-discovery"),
                 preserve_membership=True, identity_map=getattr(self, 'team_identity_map', None),
                 segments=getattr(self, 'match_segments', ()),
+                context=self._identity_context,
             )
             stats.player_identity["model_resolution"] = resolved.as_dict()
             self.model_provenance["player_reid"].update(encoder.provenance)
@@ -179,6 +183,32 @@ class IdentityMixin:
         elapsed = time.time() - started
         stats.player_identity["processing_time_sec"] = round(elapsed, 3)
         stats.processing_time_sec += elapsed
+
+    def _apply_player_substitutions(self, stats: "GameStats", fps: float) -> None:
+        """Extend the roster with detected substitutes; needs the final rallies.
+
+        Runs after the offline passes (substitutions happen only between rallies)
+        and before contact authors, which must see the substitutes' IDs.
+        """
+        context = getattr(self, '_identity_context', None) or {}
+        self._identity_context = None
+        report = stats.player_identity or {}
+        if not getattr(self, 'enable_player_substitutions', True):
+            if report.get('status') == 'completed':
+                report['substitutions'] = {'status': 'disabled'}
+            return
+        if report.get('status') != 'completed' or 'roster' not in context:
+            if report.get('status') == 'completed':
+                report['substitutions'] = {'status': 'not_applicable',
+                                           'reason': 'needs the whole-video roster method'}
+            return
+        from src.tracking.player_substitutions import apply_substitutions
+        started = time.time()
+        rallies = stats.service_attempts or stats.rallies
+        apply_substitutions(stats.frame_annotations, report, context, rallies, fps)
+        block = report['substitutions']
+        block['processing_time_sec'] = round(time.time() - started, 3)
+        log.info(f"Player substitutions: {block['status']}, {len(block.get('events') or [])} detected")
 
     # ------------------------------------------------------------------
     # Output

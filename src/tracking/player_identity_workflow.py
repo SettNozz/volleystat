@@ -203,11 +203,12 @@ def discovery_possible(frames,fps,roster_size=6,parameters=DISCOVERY_PARAMETERS)
 
 
 def apply_discovered_identities(annotations,frames,features,fps,side='b',roster_size=6,seed=None,
-                                parameters=DISCOVERY_PARAMETERS):
+                                parameters=DISCOVERY_PARAMETERS,context=None):
     """Roster from tracklets of the whole video; confirmed anchors name it when given.
 
     Raises ``RosterNotFound`` before anything is written when the video does not
-    show ``roster_size`` separable constant players.
+    show ``roster_size`` separable constant players. ``context`` (a dict), when
+    given, receives what the substitution pass needs to extend this roster.
     """
     anchors=identity_anchors(seed) if seed is not None else None
     found=discover_roster(frames,features,fps,roster_size,parameters,anchors=anchors)
@@ -222,6 +223,9 @@ def apply_discovered_identities(annotations,frames,features,fps,side='b',roster_
                               cohort=found['cohort'])
     counts,by_person=_write_predictions(annotations,predictions,side,METHOD,
                                        {p['key'] for f in frames for p in f['players']})
+    if context is not None:
+        context.update(frames=frames,features=features,found=found,roster=roster,forced=forced,
+                       available=available,parameters=parameters,predictions=predictions,side=side)
     return {'enabled':True,'status':'completed','method':METHOD,'side':side,'roster_size':len(roster),
             'max_on_court':len(seed['assignments']),'tracklet_consistency':{'enabled':False},
             'seed':seed,'gallery_keys':{p['player_id']:p['gallery_keys'] for p in roster},
@@ -266,7 +270,7 @@ def apply_jersey_identities(annotations,frames,seed,features,fps,reads,side='b',
 
 def run_identity_pass(annotations,images,fps,encoder,side='b',roster_size=6,seed_path=None,video_path=None,progress=None,
                       feature_cache=None,jersey_reads=None,method='roster-discovery',
-                      preserve_membership=False,identity_map=None,segments=()):
+                      preserve_membership=False,identity_map=None,segments=(),context=None):
     if method not in IDENTITY_METHODS:
         raise ValueError(f'Unknown identity method: {method}')
     preseed = None
@@ -298,7 +302,8 @@ def run_identity_pass(annotations,images,fps,encoder,side='b',roster_size=6,seed
         seed=preseed or (load_seed(seed_path,frames,video_path,side,roster_size) if seed_path is not None else None)
         features=collect_embeddings(feature_frames,images,encoder,feature_cache,progress=progress)
         try:
-            report=apply_discovered_identities(annotations,frames,features,fps,side,roster_size,seed)
+            report=apply_discovered_identities(annotations,frames,features,fps,side,roster_size,seed,
+                                               context=context)
         except RosterNotFound as exc:
             fallback=str(exc)
         else:

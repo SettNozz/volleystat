@@ -112,6 +112,12 @@
       <div class="event-list" id="playerContactList" style="max-height:300px"></div>
     </details>
 
+    <details class="card side-card" id="substitutionPanel" open>
+      <summary>Substitutions <span id="substitutionCount" style="color:var(--primary)"></span></summary>
+      <p class="court-edit-hint" id="substitutionStatus" role="status"></p>
+      <div class="event-list substitution-list" id="substitutionList" aria-label="Detected substitutions"></div>
+    </details>
+
     <div class="card side-card">
       <div class="card-title">Event type</div>
       <div class="chip-row" id="typeChips"></div>
@@ -129,6 +135,7 @@
         <label class="toggle"><input type="checkbox" id="togState" checked onchange="redraw()"> FSM State</label>
         <label class="toggle"><input type="checkbox" id="togModel" checked onchange="redraw()"> Model</label>
         <label class="toggle"><input type="checkbox" id="togEvents" checked onchange="redraw()"> Events</label>
+        <label class="toggle"><input type="checkbox" id="togSubstitutions" checked onchange="onSubstitutionToggle()"> Substitutions</label>
         <label class="toggle"><input type="checkbox" id="togAttackHeatmap" onchange="redraw()"> Attack zones</label>
         <label class="toggle"><input type="checkbox" id="togCourt" checked onchange="redraw()"> Court</label>
       </div>
@@ -350,12 +357,14 @@ const EVENTS = {{ stats.all_events | tojson }};
 const RAW_RALLIES = {{ stats.rallies | tojson }};
 const SERVICE_ATTEMPTS = {{ stats.service_attempts | tojson }};
 const LIFECYCLE = {{ stats.viewer_lifecycle | tojson }};
+const SUBSTITUTIONS = {{ ((stats.player_identity or {}).get('substitutions') or {}) | tojson }};
 const VIDEO_STEM = "{{ job.video_stem }}";
 </script>
 <script src="{{ url_for('static', filename='viewer_charts.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_tables.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_set_trajectories.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_attack_height.js') }}"></script>
+<script src="{{ url_for('static', filename='viewer_substitutions.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_overlay.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_page.js') }}"></script>
 </body>

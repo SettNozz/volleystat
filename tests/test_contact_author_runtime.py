@@ -50,6 +50,10 @@ def test_frozen_head_choice_and_feature_order_guard(model):
         "candidate_features": [np.array([[.1], [.8], [.4]])], "options": ["P1", "P8", "other_team"], "evidence": [{}]}
     result = model.predict_features(features, [{"frame": 10, "type": "pass", "video_id": "test"}])
     assert result[0]["label"] == "P8"
+    # P8 was substituted off at frame 10: the best on-court player gets the contact.
+    benched = model.predict_features(features, [{"frame": 10, "type": "pass", "video_id": "test"}],
+                                     on_court={"P8": [[0, 5], [20, 40]]})
+    assert benched[0]["label"] == "P1" and benched[0]["scores"][1] == pytest.approx(.8)
     features["columns"] = ["different"]
     with pytest.raises(ValueError, match="schema"): model.predict_features(features, [])
 

@@ -124,6 +124,7 @@ class GameAnalyzer(
         player_identity_side: str = "b",
         player_identity_seed: Optional[str] = None,
         player_identity_method: str = "roster-discovery",
+        enable_player_substitutions: bool = True,
         player_reid_assets: Optional[str] = None,
         player_reid_device: str = "auto",
         model_cache_dir: Optional[str] = None,
@@ -193,6 +194,7 @@ class GameAnalyzer(
         if player_identity_method not in {"roster-discovery", "seed-frame"}:
             raise ValueError("player_identity_method must be roster-discovery or seed-frame")
         self.player_identity_method = player_identity_method
+        self.enable_player_substitutions = bool(enable_player_substitutions)
         self.player_reid_assets = player_reid_assets
         self.player_reid_device = player_reid_device
         self.model_cache_dir = Path(model_cache_dir) if model_cache_dir else DEFAULT_CACHE
@@ -1048,6 +1050,7 @@ class GameAnalyzer(
             else:
                 stats.player_identity = {"enabled": False, "status": "disabled"}
             self._run_offline_passes(stats, fps)
+            self._apply_player_substitutions(stats, fps)
             self._apply_contact_authors(stats, str(vp.resolve()), w, h)
             if defer_final_render:
                 self._render_final_video(
@@ -1150,6 +1153,7 @@ class GameAnalyzer(
         self._validate_final_poses(stats, fps)
         self._apply_player_identity(stats, frame_iter(), fps)
         self._run_offline_passes(stats, fps)
+        self._apply_player_substitutions(stats, fps)
         self._apply_contact_authors(stats, "", w if frame_files else 1280, h if frame_files else 720,
             images=lambda wanted: ((f, image) for f, image in frame_iter() if f in wanted))
         if out_frames_dir is not None and getattr(self, "enable_player_identity", False):
