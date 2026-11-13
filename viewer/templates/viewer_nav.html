@@ -2,7 +2,7 @@
 <header class="topbar">
   <a class="logo" href="/"><img class="logo-mark" src="/static/brand/icon.svg" alt=""><span class="logo-name">CourtSense</span></a>
   <nav class="nav" aria-label="Analysis views">
-    {% for view, label in [('video', 'Video Analysis'), ('charts', 'Visual Stats'), ('statistics', 'Player statistics'), ('trajectories', 'Set analysis'), ('highlights', 'Player highlights')] %}
+    {% for view, label in [('video', 'Video Analysis'), ('charts', 'Visual Stats'), ('statistics', 'Player statistics')] %}
     {% if view == 'statistics' %}
     <a class="nav-item{% if statistics_view %} active{% endif %}" href="{{ url_for('player_statistics', job_id=job.job_id) }}"{% if statistics_view %} aria-current="page"{% endif %}>{{ label }}</a>
     {% elif statistics_view %}

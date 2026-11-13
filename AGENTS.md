@@ -337,7 +337,7 @@ results/game/game_analyzed.mp4
 ```
 
 Viewer reads actual annotations, not redrawn guesses. It supports ball/trail, reconstruction provenance, players, net/court, FSM/events, attack heatmap, match analytics, upload jobs, persisted result restore, and court editing.
-Overlays start off in the transparent video gear menu; Attack origins sits below the contact feed in the right column.
+Events starts enabled as a compact upper-left video card, including saved substitutions; other overlays start off in the transparent video gear menu. Attack origins lives in Visual Stats.
 
 Viewer uploads select the ball batch automatically. Prefer compatible cached detections before sizing from available GPU memory. Reduce the batch on CUDA memory exhaustion. Explicit CLI batches remain supported.
 
@@ -520,9 +520,11 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   point ledger without inference; unknowns are excluded from totals. With both
   teams selected, unknown-team contacts are listed as `—`; selecting one team
   excludes them. Never infer a team to fill the list. `?player=Pn` adds a
-  personal panel above the team table. Top navigation uses **Set analysis**,
-  **Player statistics** and **Player highlights** through shared `viewer_nav.html`.
-  The initial video view shows a roster beside Events; the standalone Player
+  personal panel above the team table. Top navigation uses **Video Analysis**,
+  **Visual Stats** and **Player statistics** through shared `viewer_nav.html`.
+  One wide video-side block switches between **Team lineup** (default),
+  **Set analysis** and **Player highlights**; Events is an enabled upper-left
+  video card that retains incoming/outgoing substitution information. The standalone Player
   contacts panel and rally-clip strip are removed. `player_profiles.js` shares
   browser-local name/jersey/position and source-scoped photo choices across views;
   Change photo exists only inside Edit players. `viewer_roster.js` reads

@@ -207,7 +207,7 @@ class TestViewerUploadWorkflow(unittest.TestCase):
         self.assertNotIn('id="playerContactsPanel"', page)
         self.assertNotIn('data-page="contacts"', page)
         self.assertIn('id="teamRosterPanel"', page)
-        self.assertIn('data-page="trajectories"', page)
+        self.assertIn('data-workspace-view="trajectories"', page)
         self.assertIn('id="videoSettingsButton"', page)
         self.assertIn('id="videoEventBadge"', page)
         self.assertNotIn('id="typeChips"', page)

@@ -105,6 +105,16 @@ def test_main_menu_replaces_match_stats_and_removes_rally_strip(client):
         assert removed not in page.data
     assert b'data-page="contacts"' not in page.data and b'id="playerContactsPanel"' not in page.data
     assert b'id="teamRosterPanel"' in page.data and b'id="roster-picker"' in page.data
+    nav = page.data.split(b'<nav class="nav"', 1)[1].split(b'</nav>', 1)[0]
+    assert b'Set analysis' not in nav and b'Player highlights' not in nav
+    tools = page.data.split(b'<aside class="card video-workspace"', 1)[1].split(b'</aside>', 1)[0]
+    for panel in (b'teamRosterPanel', b'setTrajectoryPanel', b'playerHighlightsPanel'):
+        assert b'id="' + panel + b'"' in tools
+    assert b'id="eventList"' not in page.data
+    video, charts = page.data.split(b'id="page-charts"', 1)
+    assert b'id="attackHeatmapPanel"' not in video and b'id="attackHeatmapPanel"' in charts
+    assert b'id="togEvents" checked' in video
+    assert b'id="videoEventSubstitutions"' in video
 
 
 def test_roster_metadata_uses_saved_players_and_source_scoped_portraits(client):
@@ -124,7 +134,8 @@ def test_statistics_share_navigation_and_move_explanation_below_tables(client):
     assert b"player_profiles.js" in page
     assert b"Change photo for" not in page  # Controls are created only in Edit players.
     assert page.index(b'class="reconciliation-note"') > page.index(b"</table>")
-    assert b"view=highlights" in page and b"view=trajectories" in page
+    assert b"view=video" in page and b"view=charts" in page
+    assert b">Set analysis</a>" not in page and b">Player highlights</a>" not in page
     assert b'const INITIAL_PAGE = "trajectories"' in client.get("/results/highlight-test?view=trajectories").data
 
 

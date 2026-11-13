@@ -4,7 +4,7 @@ const {test} = require('node:test');
 const {readFileSync} = require('node:fs');
 const vm = require('node:vm');
 
-function fixture(events, reducedMotion = false, substitutions = []) {
+function fixture(events, reducedMotion = false, substitutions = [], withHistory = true) {
   class Element {
     children = [];
     hidden = false;
@@ -35,7 +35,8 @@ function fixture(events, reducedMotion = false, substitutions = []) {
     EVENTS: events, FPS: 30, RALLIES: [], currentFrameIdx: 0,
     substitutionEvents: () => substitutions,
     eventTeams: events.map(event => event.team), vid: {paused: true, seeking: false},
-    document: {getElementById: element, createElement: () => new Element()},
+    document: {getElementById: id => !withHistory && ['eventList', 'eventFeedMode'].includes(id) ? null : element(id),
+      createElement: () => new Element()},
     window: {matchMedia: () => ({matches: reducedMotion})},
     evColor: () => '#3b82f6', formatTime: seconds => seconds.toFixed(1),
     seekAndPlay: frame => seeks.push(frame),
@@ -157,4 +158,28 @@ test('substitution toggle works after the event-marker timeline is removed', () 
   vm.runInContext(readFileSync('viewer/static/viewer_substitutions.js', 'utf8'), context);
   vm.runInContext('onSubstitutionToggle()', context);
   assert.equal(redraws, 1);
+});
+
+test('event card works without sidebar and retains simultaneous substitutions across a later contact', () => {
+  const f = fixture([{frame: 30, type: 'serve', team: 'team_b'}, {frame: 90, type: 'attack'}], false, [
+    {frame: 60, player_in: 'P7', player_out: 'P1', window: [55, 70]},
+    {frame: 60, player_in: 'P8', player_out: 'P2', window: [55, 70]},
+  ], false);
+  f.run('updateActiveEvent(59)');
+  assert.equal(f.element('videoEventKicker').textContent, 'CONTACT EVENT');
+  assert.ok(f.element('videoEventSubstitutions').hidden);
+  f.run('updateActiveEvent(60)');
+  assert.match(f.element('videoEventMeta').textContent, /P8 in · P2 out/);
+  assert.match(f.element('videoEventSubstitutions').textContent, /P7 in · P1 out/);
+  f.run('updateActiveEvent(90)');
+  assert.equal(f.element('videoEventLabel').textContent, 'Attack');
+  assert.match(f.element('videoEventSubstitutions').textContent, /P7 in · P1 out.*P8 in · P2 out/);
+  f.run('updateActiveEvent(190)');
+  assert.equal(f.element('videoEventKicker').textContent, 'SUBSTITUTION');
+  assert.equal(f.element('videoEventBadge').hidden, false);
+  f.run('updateActiveEvent(191)');
+  assert.equal(f.element('videoEventBadge').hidden, true);
+  f.run('updateActiveEvent(59)');
+  assert.ok(f.element('videoEventSubstitutions').hidden);
+  assert.equal(f.element('videoEventKicker').textContent, 'CONTACT EVENT');
 });
