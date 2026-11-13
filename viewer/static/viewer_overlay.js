@@ -399,11 +399,6 @@ function redraw() {
                        px(anchor[0]) + 5, py(anchor[1]) - 5);
         }
       }
-      if (pose.team_prior && pose.bb && (!selectedPlayerId || pose.player_id === selectedPlayerId)) {
-        ctx.font = `bold ${Math.max(9, Math.round(10 * sx))}px system-ui`;
-        ctx.fillStyle = '#ff42e6';
-        ctx.fillText('BACK/NET prior', px(pose.bb[0]), py(pose.bb[1]) - 6);
-      }
     }
   }
 

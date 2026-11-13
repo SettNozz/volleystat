@@ -109,12 +109,6 @@ class RenderingMixin:
                 draw_skeleton(out, pose, st["color"],
                               bone_thickness=st["bone"], kp_radius=st["kp"],
                               draw_id=st["draw_id"] or pose.player_identity_processed)
-                if pose.team_prior:
-                    x1, y1 = int(pose.bbox[0]), int(pose.bbox[1])
-                    cv2.putText(
-                        out, "BACK/NET prior", (x1, max(20, y1 - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 255), 2,
-                    )
         else:
             colors = {"team_a": (255, 80, 0), "team_b": (0, 80, 255)}
             for team, pts in player_teams.items():
