@@ -1,5 +1,5 @@
 // Results page main script: state, video page, annotations load, court editing,
-// timeline, listeners and init. Moved verbatim from viewer/templates/viewer.html.
+// playback controls, listeners and init.
 // Needs the page boot constants (JOB_ID, FPS, ...) and is loaded after
 // viewer_charts.js, viewer_tables.js and viewer_overlay.js.
 
@@ -40,8 +40,7 @@ const EV_COLORS = {
   setting_pass: '#3b82f6', set: '#3b82f6', pass: '#8b5cf6', ace: '#facc15',
   serve_out: '#9ca3af', out: '#9ca3af', ball_out: '#9ca3af', goal_or_out: '#9ca3af',
 };
-// Event types without a fixed colour still get a stable, distinct one, so the
-// timeline markers, the Event type chips and the event list always agree.
+// Event types without a fixed colour still get a stable, distinct one.
 const EV_FALLBACK = ['#ec4899', '#06b6d4', '#84cc16', '#a855f7', '#f43f5e', '#0ea5e9', '#d946ef', '#22c55e'];
 function evColor(type) {
   if (EV_COLORS[type]) return EV_COLORS[type];
@@ -66,20 +65,37 @@ let annotations = null;
 let currentFrameIdx = 0;
 
 /* ── Page navigation ─────────────────────────────────── */
-function showPage(name) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.getElementById('page-' + name).classList.add('active');
-  document.querySelectorAll('.nav-item').forEach(n =>
-    n.classList.toggle('active', n.dataset.page === name));
-  if (name === 'charts') renderCharts();
-  if (name === 'table') renderTables();
-  if (name === 'video') resizeCanvas();
+function toggleVideoSettings(open, restoreFocus = true) {
+  const menu = document.getElementById('videoSettingsMenu');
+  const button = document.getElementById('videoSettingsButton');
+  const wasOpen = !menu.hidden;
+  const show = open === undefined ? menu.hidden : open;
+  menu.hidden = !show;
+  button.setAttribute('aria-expanded', String(show));
+  if (show) menu.querySelector('.settings-close').focus();
+  else if (wasOpen && restoreFocus) button.focus();
 }
 
-/* ── Filters (video page) ────────────────────────────── */
-const allTypes = [...new Set(EVENTS.map(e => e.type))];
-const filterState = { types: new Set(allTypes), teams: new Set(['team_a', 'team_b']) };
+function showPage(name) {
+  const workspace = ['video', 'contacts', 'trajectories'].includes(name);
+  document.querySelector('.video-col').classList.toggle('workspace-review', name === 'contacts' || name === 'trajectories');
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById(workspace ? 'page-video' : 'page-' + name).classList.add('active');
+  document.querySelectorAll('[data-workspace-panel]').forEach(panel => {
+    panel.hidden = panel.dataset.workspacePanel !== name;
+  });
+  document.querySelectorAll('.nav-item').forEach(n => {
+    n.classList.toggle('active', n.dataset.page === name);
+    if (n.dataset.page === name) n.setAttribute('aria-current', 'page');
+    else n.removeAttribute('aria-current');
+  });
+  toggleVideoSettings(false, false);
+  if (name === 'charts') renderCharts();
+  if (name === 'table') renderTables();
+  if (workspace) resizeCanvas();
+}
 
+/* ── Shared chart/table filters ──────────────────────── */
 function buildChips(containerId, items, activeSet, labelFn, onToggle, colorFn = null) {
   const box = document.getElementById(containerId);
   box.innerHTML = '';
@@ -105,30 +121,7 @@ function buildChips(containerId, items, activeSet, labelFn, onToggle, colorFn = 
   }
 }
 
-function initVideoFilters() {
-  buildChips('typeChips', allTypes, filterState.types,
-    t => t.replace(/_/g, ' '),
-    t => { toggleSet(filterState.types, t); applyEventFilters(); },
-    evColor);
-  buildChips('teamChips', ['team_a', 'team_b'], filterState.teams,
-    t => t === 'team_a' ? 'Team A' : 'Team B',
-    t => { toggleSet(filterState.teams, t); applyEventFilters(); });
-}
-
 function toggleSet(set, v) { set.has(v) ? set.delete(v) : set.add(v); }
-function evVisible(ev, team) {
-  const allTeams = filterState.teams.has('team_a') && filterState.teams.has('team_b');
-  const unattributed = team !== 'team_a' && team !== 'team_b';
-  return filterState.types.has(ev.type) &&
-    (filterState.teams.has(team) || (allTeams && unattributed));
-}
-
-function applyEventFilters() {
-  renderEventList();
-  setupEventMarkers();
-  updateActiveEvent();
-  redraw();
-}
 
 function updateContactTeams(report) {
   eventTeams = EVENTS.map(event => event.team);
@@ -146,7 +139,8 @@ function updateContactTeams(report) {
   }
   scorePoints = buildServeScore(EVENTS, scoreAttempts, eventTeams);
   refreshAttackHeights();
-  applyEventFilters();
+  renderEventList();
+  redraw();
   refreshSetTrajectories();
 }
 
@@ -160,35 +154,6 @@ function renderServeScore() {
   unknown.hidden = !score.unknown;
   const missing = `+?${score.unknown}`;
   if (unknown.textContent !== missing) unknown.textContent = missing;
-}
-
-/* ── Event list (video page sidebar) ─────────────────── */
-function renderEventList() {
-  const box = document.getElementById('eventList');
-  box.innerHTML = '';
-  const rallyFirst = new Map();
-  RALLIES.forEach((r, i) => { if (r.events && r.events.length) rallyFirst.set(r.events[0].frame, i + 1); });
-  EVENTS.forEach((ev, i) => {
-    const team = eventTeams[i];
-    if (!evVisible(ev, team)) return;
-    if (rallyFirst.has(ev.frame)) {
-      const sep = document.createElement('div');
-      sep.className = 'rally-sep';
-      sep.innerHTML = `<span class="rally-sep-label">Rally ${rallyFirst.get(ev.frame)}</span><div class="rally-sep-line"></div>`;
-      sep.onclick = () => seekAndPlay(ev.frame);
-      box.appendChild(sep);
-    }
-    const el = document.createElement('div');
-    el.className = 'event-item';
-    el.id = 'ev' + i;
-    el.onclick = () => seekAndPlay(ev.frame);
-    el.innerHTML = `<div class="event-dot" style="background:${evColor(ev.type)}"></div>` +
-      `<span class="event-time">${ev.time.toFixed(2)}s</span>` +
-      `<span class="event-type">${ev.type.replace(/_/g, ' ')}${ev.inferred ? ' <span class="c-muted" title="Missed by the decode, recovered from the spotter serve probability">· inferred</span>' : ''}</span>` +
-      `<span class="event-team ${teamClass(team)}">${teamLabel(team)}</span>`;
-    box.appendChild(el);
-  });
-  if (!box.children.length) box.textContent = 'No events for these filters.';
 }
 
 /* ── Rally clips strip ───────────────────────────────── */
@@ -243,7 +208,6 @@ fetch('/api/annotations/' + JOB_ID)
     renderAttackHeatmapSummary(data.attack_heatmap);
     refreshAttackHeights();
     refreshSetTrajectories();
-    setupEventMarkers();
     startRenderLoop();
     redraw();
     if (document.getElementById('page-charts').classList.contains('active')) renderCharts(true);
@@ -645,7 +609,7 @@ function attackZoneCounts(heatmap) {
 
 function renderAttackHeatmapSummary(heatmap) {
   if (!heatmap) return;
-  document.getElementById('attackHeatmapPanel').style.display = 'block';
+  document.getElementById('attackHeatmapPanel').hidden = false;
   const counts = attackZoneCounts(heatmap);
   const total = heatmap.total_attacks != null
     ? heatmap.total_attacks : counts.left + counts.center + counts.right;
@@ -703,6 +667,7 @@ function changeSyncOffset(d) {
 function resizeCanvas() {
   const vr = vid.getBoundingClientRect();
   if (!vr.width) return;
+  document.getElementById('videoSettingsMenu').style.maxHeight = Math.max(100, vr.height - 78) + 'px';
   const vw = vid.videoWidth || (window._annData && window._annData.frame_width) || 1280;
   const vh = vid.videoHeight || (window._annData && window._annData.frame_height) || 720;
   const scale = Math.min(vr.width / vw, vr.height / vh);
@@ -726,7 +691,7 @@ window.addEventListener('resize', resizeCanvas);
 vid.addEventListener('timeupdate', () => {
   enforceSetTrajectoryClip();
   updateTimeline();
-  updateActiveEvent();
+  updateActiveEvent(Math.max(0, Math.round(vid.currentTime * FPS) + _syncOffset));
 });
 
 // rAF and rVFC are both suspended while the tab is in the background, and
@@ -779,8 +744,14 @@ function startRenderLoop() {
   _rafId = requestAnimationFrame(rafLoop);
 }
 
-vid.addEventListener('play', () => document.getElementById('playBtn').textContent = '⏸ Pause');
-vid.addEventListener('pause', () => document.getElementById('playBtn').textContent = '▶ Play');
+vid.addEventListener('play', () => {
+  document.getElementById('playBtn').textContent = '⏸ Pause';
+  updateActiveEvent();
+});
+vid.addEventListener('pause', () => {
+  document.getElementById('playBtn').textContent = '▶ Play';
+  updateActiveEvent();
+});
 
 function togglePlay() { vid.paused ? vid.play() : vid.pause(); }
 function toggleMute() {
@@ -803,16 +774,16 @@ function seekAndPlay(f, autoPlay = true) {
   vid.currentTime = f / FPS;
   if (autoPlay) vid.play(); else vid.pause();
 }
-function seekTo(e) {
-  const bar = document.getElementById('timelineBar');
-  const rect = bar.getBoundingClientRect();
-  const pct = (e.clientX - rect.left) / rect.width;
-  vid.currentTime = pct * vid.duration;
+function seekVideo(value) {
+  if (!Number.isFinite(vid.duration)) return;
+  vid.currentTime = Number(value) / 1000 * vid.duration;
 }
 
 function updateTimeline() {
   const pct = vid.duration ? (vid.currentTime / vid.duration * 100) : 0;
-  document.getElementById('timelineProgress').style.width = pct + '%';
+  const seek = document.getElementById('videoSeek');
+  seek.value = Math.round(pct * 10);
+  seek.setAttribute('aria-valuetext', formatTime(vid.currentTime) + ' of ' + formatTime(vid.duration || 0));
   const cur = formatTime(vid.currentTime);
   const tot = formatTime(vid.duration || 0);
   document.getElementById('timeDisplay').textContent = cur + ' / ' + tot;
@@ -826,64 +797,22 @@ function formatTime(s) {
   return m + ':' + ss;
 }
 
-function setupEventMarkers() {
-  const bar = document.getElementById('timelineBar');
-  bar.querySelectorAll('.event-marker').forEach(m => m.remove());
-  const dur = TOTAL_FRAMES / FPS;
-  for (const [index, ev] of EVENTS.entries()) {
-    const team = eventTeams[index];
-    if (!evVisible(ev, team)) continue;
-    const pct = (ev.time / dur * 100);
-    const m = document.createElement('div');
-    m.className = 'event-marker';
-    m.style.left = pct + '%';
-    m.style.background = evColor(ev.type);
-    m.title = ev.type + ' ' + teamLabel(team) + ' @' + ev.time + 's';
-    m.onclick = (e) => { e.stopPropagation(); seekAndPlay(ev.frame); };
-    bar.appendChild(m);
-  }
-  for (const r of RALLIES) {
-    const startFrame = rallyStartFrame(r);
-    if (!Number.isFinite(startFrame)) continue;
-    const pct = (startFrame / TOTAL_FRAMES * 100);
-    const m = document.createElement('div');
-    m.className = 'event-marker rally_start';
-    m.style.left = pct + '%';
-    m.title = (LIFECYCLE.available ? 'Confirmed playable rally' : 'Rally start') + ' @f' + startFrame;
-    m.onclick = (e) => { e.stopPropagation(); seekAndPlay(startFrame); };
-    bar.appendChild(m);
-  }
-}
-
-function updateActiveEvent() {
-  const t = vid.currentTime;
-  let closest = null, minDist = 1e9;
-  EVENTS.forEach((ev, i) => {
-    if (!evVisible(ev, eventTeams[i])) return;
-    const d = Math.abs(ev.time - t);
-    if (d < minDist) { minDist = d; closest = i; }
-  });
-  document.querySelectorAll('.event-item').forEach(el => el.classList.remove('active'));
-  if (closest !== null && minDist < 1.5) {
-    const el = document.getElementById('ev' + closest);
-    if (el) {
-      el.classList.add('active');
-      // Scroll inside the event list only — scrollIntoView would drag the
-      // whole page down and push the video out of view.
-      const list = document.getElementById('eventList');
-      const top = el.offsetTop - list.offsetTop;
-      if (top < list.scrollTop || top + el.offsetHeight > list.scrollTop + list.clientHeight) {
-        list.scrollTop = top - list.clientHeight / 2 + el.offsetHeight / 2;
-      }
-    }
-  }
-}
-
 vid.addEventListener('play',  () => { document.title = `▶ CourtSense — ${VIDEO_STEM}`; });
 vid.addEventListener('pause', () => { document.title = `⏸ f${currentFrameIdx} — CourtSense`; });
 
 /* ── Init ────────────────────────────────────────────── */
-initVideoFilters();
+document.querySelector('.video-shell').append(document.getElementById('videoSettings'));
+document.addEventListener('pointerdown', event => {
+  if (!document.getElementById('videoSettings').contains(event.target)) toggleVideoSettings(false, false);
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') toggleVideoSettings(false);
+});
+document.getElementById('videoSettings').addEventListener('focusout', event => {
+  // Clicking a non-focusable label briefly moves focus to the document body
+  // before its checkbox receives the click. Keep the menu open during that gap.
+  if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) toggleVideoSettings(false, false);
+});
 initChartFilters();
 initTableFilters();
 renderEventList();

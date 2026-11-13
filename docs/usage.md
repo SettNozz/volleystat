@@ -45,19 +45,21 @@ Start `python viewer.py` and open [localhost:5050](http://localhost:5050). A sec
 3. Choose a clearer preview time if needed, then start **Analyze Video**. Edited geometry is saved for that job. Manual mode uses the drawn court centre line as the floor divider and bypasses automatic net detection. **Use automatic settings** restores the automatic workflow.
 4. Open the result and inspect overlays and events. The original recording remains the video source; saved annotations supply the overlays.
 
-The preview and result share three net references: upper tape, lower mesh edge and player divider. **Calibration & sync** saves a manual correction for all three together. Named camera setups live in `configs/court_setups.json`; job-local calibration does not change shared setups.
+The preview and result share three net references: upper tape, lower mesh edge and player divider. Open the gear at the video's upper right, then **Calibration & sync**, to save a manual correction for all three together. Named camera setups live in `configs/court_setups.json`; job-local calibration does not change shared setups.
 
 ### Review tools
 
-- **Video Analysis:** ball and trail, player skeletons/IDs, net/court, FSM and model overlays, event timeline and rally clips.
-- **Set-to-attack trajectories:** adjacent set/attack pairs from the same rally. Filter by side, attack zone and setter; overlay matching paths and click a path or row to play that sequence. Derived points are dashed; gaps and new tracks break paths.
-- **Player contacts:** select a roster ID, highlight that player and seek to their saved contacts. Contact-author corrections are stored separately and bound to the analyzed result. Unknown-team contacts show `—` with both teams selected and are excluded by a single-team filter.
+- **Video Analysis:** ball and trail, player skeletons/IDs, net/court and rally clips. All overlays start off. The transparent upper-right gear menu controls overlays, calibration and sync; click an overlay's name or checkbox to toggle it. Advanced overlays contain FSM/model diagnostics. When Events is enabled, a prominent event card appears on the video. The wider sidebar adds contacts as playback reaches them, with **Attack origins** below the contact history. Click a contact to replay, or **Full log** to browse future contacts. Seeking backward restores the history for that frame. Event/team filter chips, the event-marker timeline and the sidebar statistics/lifecycle cards are removed; ordinary video seeking remains available.
+- **Set-to-attack trajectories:** top navigation tab with adjacent set/attack pairs from the same rally and the shared video. Filter by side, attack zone and setter; overlay matching paths and click a path or row to play that sequence. Derived points are dashed; gaps and new tracks break paths.
+- **Player contacts:** top navigation tab with the shared video. Select a roster ID, highlight that player and seek to their saved contacts. Contact-author corrections are stored separately and bound to the analyzed result. Unknown-team contacts show `—` with both teams selected and are excluded by a single-team filter.
 - **Visual Stats:** serve/reception maps, attack origin/direction, team contact totals and serve lifecycle summaries.
 - **Match Stats:** rallies, service attempts and a contact log, with team/outcome filters.
 - **Player statistics:** attack attempts, inferred point-winning attacks and reception outcomes from saved contacts, reviews and point evidence. Missing evidence leaves outcomes unresolved. **Edit players** sets name, jersey and position (outside hitter, middle blocker, setter, opposite hitter) in this browser; Excel export includes them. Pick a player (or click a name) for a personal panel with all categories; **Player highlights** opens a separate page that plays that player's attributed attacks, receptions, serves and other contacts with adjustable lead-in and follow-through.
 - **Statistics evidence:** click any player statistic to watch exactly its counted contacts, or its classified denominator for a percentage. Inspect author confirmation and unresolved outcomes, play matched rally context, and review point winners. Source conflicts remain explicit. Excel uses the same reviewed totals and adds contact/point evidence sheets. See [counting rules and review persistence](statistics_evidence.md).
 
 Near-side attack height is an approximate projection from saved ball, pose and net geometry. Without usable evidence, the badge reports that height is unavailable.
+
+The ball marker and its trail stay green for observed, interpolated and reconstructed coordinates, with no source/confidence label beside the ball. Coordinate provenance remains in the saved annotations.
 
 The viewer chooses a ball batch using compatible caches or available GPU memory, then reduces it on CUDA memory exhaustion. CLI batch size is explicit/default 8; batch size is part of the ball cache key.
 

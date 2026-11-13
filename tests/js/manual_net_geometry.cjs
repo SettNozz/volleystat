@@ -72,7 +72,7 @@ function overlay() {
     vid: {videoWidth: input.data.frame_width, videoHeight: input.data.frame_height},
     window: {_annData: input.data}, annotations: {0: {f: 0}}, currentFrameIdx: 0,
     courtEditor: {active: false},
-    renderServeScore() {}, renderAttackHeight() {}, drawSetTrajectories() {},
+    renderServeScore() {}, renderAttackHeight() {}, updateActiveEvent() {}, drawSetTrajectories() {},
     document: {getElementById: id => ({checked: id === 'togNet', value: 'active'})},
   };
   vm.runInNewContext(source('viewer_overlay.js') + '\nredraw();', sandbox);
