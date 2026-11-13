@@ -8,6 +8,21 @@ function contactTimeline(events, fps) {
     .sort((a, b) => a.frame - b.frame || a.index - b.index);
 }
 
+function viewerEventTimeline(events, fps, substitutions = []) {
+  const contacts = contactTimeline(events, fps).map(item => ({...item, kind: 'contact'}));
+  const changes = substitutions.map((event, index) => ({
+    event: {...event, type: 'substitution'}, index: 'substitution-' + index,
+    frame: event.frame, kind: 'substitution',
+  })).filter(item => Number.isFinite(item.frame) && item.frame >= 0);
+  return [...contacts, ...changes].sort((a, b) => a.frame - b.frame || (a.kind === b.kind ? 0 : a.kind === 'contact' ? -1 : 1));
+}
+
+function viewerEventLabel(item) {
+  if (item.kind !== 'substitution') return contactLabel(item.event.type);
+  const label = id => typeof PlayerProfiles !== 'undefined' ? PlayerProfiles.label(id) : id;
+  return `${label(item.event.player_in)} in · ${label(item.event.player_out)} out`;
+}
+
 // Upper bound: future contacts never become active, even just before a seek.
 function contactCountAtFrame(timeline, frame) {
   let low = 0, high = timeline.length;
@@ -25,7 +40,7 @@ function contactLabel(type) {
 }
 
 const contactFeed = {
-  timeline: contactTimeline(EVENTS, FPS), rows: [],
+  timeline: viewerEventTimeline(EVENTS, FPS, typeof substitutionEvents === 'function' ? substitutionEvents() : []), rows: [],
   count: -1, lastFrame: null, fullLog: false, badgeIndex: null,
 };
 
@@ -45,19 +60,21 @@ function renderEventList() {
     const frame = rally.events?.[0]?.frame;
     if (Number.isFinite(frame)) rallyFirst.set(frame, index + 1);
   });
-  contactFeed.rows = contactFeed.timeline.map(({event, index, frame}) => {
+  contactFeed.rows = contactFeed.timeline.map(item => {
+    const {event, index, frame, kind} = item;
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = 'event-item';
+    row.className = 'event-item' + (kind === 'substitution' ? ' event-substitution' : '');
     row.id = 'ev' + index;
-    row.style.setProperty('--event-color', evColor(event.type));
+    row.style.setProperty('--event-color', kind === 'substitution' ? '#22c55e' : evColor(event.type));
+    if (kind === 'substitution') row.title = 'Automatic substitution; unverified.';
     row.onclick = () => seekAndPlay(frame);
     const dot = document.createElement('span');
     dot.className = 'event-dot';
     dot.setAttribute('aria-hidden', 'true');
     const label = document.createElement('span');
     label.className = 'event-type';
-    label.textContent = contactLabel(event.type);
+    label.textContent = viewerEventLabel(item);
     const time = document.createElement('span');
     time.className = 'event-time';
     time.textContent = formatTime(frame / FPS) + '.' + Math.floor(frame / FPS * 10) % 10;
@@ -69,7 +86,7 @@ function renderEventList() {
       inferred.title = 'Recovered from the spotter serve probability; not human-verified.';
       row.append(inferred);
     }
-    const separator = rallyFirst.has(frame) ? document.createElement('div') : null;
+    const separator = kind === 'contact' && rallyFirst.has(frame) ? document.createElement('div') : null;
     if (separator) {
       separator.className = 'rally-sep';
       separator.textContent = 'Rally ' + rallyFirst.get(frame);
@@ -114,11 +131,16 @@ function updateActiveEvent(frame = currentFrameIdx) {
       else row.removeAttribute('aria-current');
       if (newlyVisible && animate && position >= state.count) animateContact(row);
     });
-    document.getElementById('eventFeedCount').textContent = `${count} / ${state.timeline.length} contacts`;
+    const changes = state.timeline.filter(item => item.kind === 'substitution');
+    const pastChanges = changes.filter(item => item.frame <= frame).length;
+    const counter = document.getElementById('eventFeedCount');
+    counter.textContent = `${count} / ${state.timeline.length} events`;
+    counter.title = `${count - pastChanges} / ${state.timeline.length - changes.length} contacts`
+      + (changes.length ? ` · ${pastChanges}/${changes.length} substitutions` : '');
     const empty = document.getElementById('eventFeedEmpty');
     empty.hidden = state.fullLog ? state.timeline.length > 0 : count > 0;
     empty.textContent = state.timeline.length
-      ? 'Play the video to follow each contact.' : 'No contact events in this result.';
+      ? 'Play the video to follow events.' : 'No events in this result.';
     const active = state.rows[count - 1]?.row;
     const box = document.getElementById('eventList');
     // Scroll only this panel; the video and navigation must stay in place.
@@ -131,8 +153,8 @@ function updateActiveEvent(frame = currentFrameIdx) {
     } else box.scrollTop = 0;
     const latest = state.timeline[count - 1];
     document.getElementById('eventFeedStatus').textContent = latest
-      ? `${contactLabel(latest.event.type)} · ${formatTime(latest.frame / FPS)} · Click any contact to replay.`
-      : 'Contacts appear as the video plays. Click one to replay.';
+      ? `${viewerEventLabel(latest)} · ${formatTime(latest.frame / FPS)} · Click any event to replay.`
+      : 'Events appear as the video plays. Click one to replay.';
     state.count = count;
   }
   state.lastFrame = frame;
@@ -152,9 +174,12 @@ function renderVideoEvent(frame, count, animate) {
   const side = eventTeams[latest.index];
   const sideLabel = side === 'team_b' ? 'Near side' : side === 'team_a' ? 'Far side' : 'Unattributed';
   if (changed) {
-    badge.style.setProperty('--event-color', evColor(latest.event.type));
-    document.getElementById('videoEventLabel').textContent = contactLabel(latest.event.type);
-    document.getElementById('videoEventMeta').textContent = sideLabel + (latest.event.inferred ? ' · Inferred' : '');
+    const substitution = latest.kind === 'substitution';
+    badge.style.setProperty('--event-color', substitution ? '#22c55e' : evColor(latest.event.type));
+    document.getElementById('videoEventKicker').textContent = substitution ? 'SUBSTITUTION' : 'CONTACT EVENT';
+    document.getElementById('videoEventLabel').textContent = substitution ? 'Substitution' : contactLabel(latest.event.type);
+    document.getElementById('videoEventMeta').textContent = substitution ? viewerEventLabel(latest) + ' · Unverified'
+      : sideLabel + (latest.event.inferred ? ' · Inferred' : '');
   }
   badge.hidden = false;
   if (changed && animate) animateContact(badge);

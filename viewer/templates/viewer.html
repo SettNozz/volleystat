@@ -11,30 +11,16 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link href="{{ url_for('static', filename='viewer_theme.css') }}" rel="stylesheet">
 <link href="{{ url_for('static', filename='viewer_page.css') }}" rel="stylesheet">
+<link href="{{ url_for('static', filename='viewer_players.css') }}" rel="stylesheet">
 </head>
 <body>
 
-<!-- ── Top bar ─────────────────────────────────────────── -->
-<div class="topbar">
-  <a class="logo" href="/">
-    <img class="logo-mark" src="/static/brand/icon.svg" alt="">
-    <div class="logo-name">CourtSense</div>
-  </a>
-  <nav class="nav" aria-label="Analysis views">
-    <button type="button" class="nav-item active" data-page="video" aria-current="page" onclick="showPage('video')">Video Analysis</button>
-    <button type="button" class="nav-item" data-page="charts" onclick="showPage('charts')">Visual Stats</button>
-    <button type="button" class="nav-item" data-page="table" onclick="showPage('table')">Match Stats</button>
-    <button type="button" class="nav-item" data-page="contacts" onclick="showPage('contacts')">Player contacts</button>
-    <button type="button" class="nav-item" data-page="trajectories" onclick="showPage('trajectories')">Set-to-attack trajectories</button>
-  </nav>
-  <a class="library-btn" href="/library">Library</a>
-  <a class="library-btn" href="{{ url_for('player_statistics', job_id=job.job_id) }}">Player statistics</a>
-  <a class="upload-btn" href="/">Upload</a>
-</div>
+{% include 'viewer_nav.html' %}
 
 <!-- ── Page 1: Video Analysis ──────────────────────────── -->
 <div class="page active" id="page-video">
   <div class="video-col">
+    <div class="video-player">
     <div class="video-shell">
       <video id="vid" preload="auto">
         {% if job.original_video_path_url %}
@@ -46,7 +32,7 @@
       <canvas id="overlay"></canvas>
       <div class="video-badge" id="videoBadge">{{ job.video_stem }}</div>
       <div class="video-event-badge" id="videoEventBadge" role="status" aria-live="polite" aria-atomic="true" hidden>
-        <span class="video-event-kicker">CONTACT EVENT</span>
+        <span class="video-event-kicker" id="videoEventKicker">CONTACT EVENT</span>
         <strong id="videoEventLabel"></strong>
         <span class="video-event-meta" id="videoEventMeta"></span>
       </div>
@@ -61,7 +47,7 @@
     <div class="card controls">
       <input type="range" class="video-seek" id="videoSeek" aria-label="Video position" min="0" max="1000" value="0" step="1" oninput="seekVideo(this.value)">
       <div class="btn-row">
-        <button class="ctrl" onclick="togglePlay()" id="playBtn">▶ Play</button>
+        <button class="ctrl" onclick="togglePlay()" id="playBtn" aria-keyshortcuts="Space" title="Play / pause (Space)">▶ Play</button>
         <button class="ctrl" onclick="stepFrame(-1)">⟨ Frame</button>
         <button class="ctrl" onclick="stepFrame(1)">Frame ⟩</button>
         <button class="ctrl" onclick="toggleMute()" id="muteBtn">🔊</button>
@@ -72,12 +58,9 @@
       </div>
     </div>
 
-    <div data-workspace-panel="video">
-      <div class="clips-title">Rally clips</div>
-      <div class="clips-row" id="rallyClips"></div>
     </div>
     <section class="card workspace-panel" id="setTrajectoryPanel" data-workspace-panel="trajectories" aria-labelledby="setTrajectoryTitle" hidden>
-      <h2 class="card-title" id="setTrajectoryTitle">Set-to-attack trajectories</h2>
+      <h2 class="card-title" id="setTrajectoryTitle">Set analysis</h2>
       <label class="cal-row">Court side
         <select id="setTrajectorySide" onchange="renderSetTrajectories()">
           <option value="team_b" selected>Near side</option>
@@ -93,51 +76,59 @@
       <div class="chip-row set-trajectory-zones" id="setTrajectoryZones" role="group" aria-label="Attack zone"></div>
       <label class="toggle"><input type="checkbox" id="togSetTrajectories" disabled onchange="redraw()"> Overlay all matching paths</label>
       <p class="court-edit-hint" id="setTrajectoryStatus" role="status">Loading ball annotations…</p>
-      <p class="court-edit-hint">Dots mark the ball at the attack contact. The dot's zone sets the color. Click a line on the video or a row to play the set, the attack and 2 s after it; the other lines fade. Click empty video to clear. Dashed lines show saved reconstruction or interpolation. Setter IDs come from Player contacts (automatic, unverified); <b>P?</b> is an unidentified setter.</p>
+      <p class="court-edit-hint">Dots mark the ball at the attack contact. The dot's zone sets the color. Click a line on the video or a row to play the set, the attack and 2 s after it; the other lines fade. Click empty video to clear. Dashed lines show saved reconstruction or interpolation. Setter IDs use saved contact assignments (automatic, unverified); <b>P?</b> is an unidentified setter.</p>
       <div class="event-list" id="setTrajectoryList" aria-label="Set-to-attack pairs"></div>
     </section>
 
-    <section class="card workspace-panel" id="playerContactsPanel" data-workspace-panel="contacts" aria-labelledby="playerContactsTitle" hidden>
-      <h2 class="card-title" id="playerContactsTitle">Player contacts</h2>
-      <div id="playerContactMethodBar" style="display:none;margin-bottom:8px">
-        <label style="font-size:11px;color:var(--muted)">Review approach
-          <select class="ctrl" id="playerContactMethod" style="max-width:100%;width:100%;font-size:11px" onchange="changePlayerContactMethod(this.value)"></select>
-        </label>
-        <p id="playerContactMethodQuality" style="font-size:11px;color:var(--muted)"></p>
-      </div>
-      <div class="chip-row" id="playerChips" aria-label="Roster player"></div>
-      <label style="font-size:11px;color:var(--muted);display:block;margin-top:8px">
-        <input type="checkbox" id="showPlayerContactCandidates" checked onchange="renderPlayerContacts()"> Include uncertain suggestions
+    <section class="card workspace-panel" id="playerHighlightsPanel" data-workspace-panel="highlights" aria-labelledby="playerHighlightsTitle" hidden>
+      <h2 class="card-title" id="playerHighlightsTitle">Player highlights</h2>
+      <div class="highlight-identity" id="highlightIdentity" aria-live="polite"></div>
+      <label class="cal-row">Player
+        <select id="highlightPlayer" onchange="loadPlayerHighlights(this.value)" disabled aria-label="Highlight player"></select>
       </label>
-      <p id="playerContactSummary" style="font-size:12px;line-height:1.7"></p>
-      <p id="playerContactStatus" role="status" style="font-size:11px;color:var(--muted)">Loading player contacts…</p>
-      <div class="event-list" id="playerContactList"></div>
-      <details class="substitution-panel" id="substitutionPanel" open>
-        <summary>Substitutions <span id="substitutionCount" style="color:var(--primary)"></span></summary>
-        <p class="court-edit-hint" id="substitutionStatus" role="status"></p>
-        <div class="event-list substitution-list" id="substitutionList" aria-label="Detected substitutions"></div>
-      </details>
+      <label class="toggle highlight-suggestions"><input type="checkbox" id="highlightSuggestions" onchange="loadPlayerHighlights()"> Include uncertain suggestions</label>
+      <div class="highlight-window">
+        <label>Before contact <input type="number" id="highlightBefore" min="0" max="15" step="0.5" value="3"> s</label>
+        <label>After contact <input type="number" id="highlightAfter" min="0" max="15" step="0.5" value="2"> s</label>
+      </div>
+      <div class="chip-row highlight-types" id="highlightTypes" role="group" aria-label="Moment type"></div>
+      <div class="btn-row highlight-controls">
+        <button type="button" class="ctrl" id="highlightPrev" onclick="playPlayerHighlight(playerHighlights.current - 1)" disabled>◀ Prev</button>
+        <button type="button" class="ctrl" id="highlightPlayAll" onclick="togglePlayerHighlights()" disabled>▶ Play all</button>
+        <button type="button" class="ctrl" id="highlightNext" onclick="playPlayerHighlight(playerHighlights.current + 1)" disabled>Next ▶</button>
+      </div>
+      <p class="court-edit-hint" id="highlightStatus" role="status" aria-live="polite">Choose a player to watch their contacts.</p>
+      <div class="event-list highlight-list" id="highlightList" aria-label="Highlight moments"></div>
+      <p class="court-edit-hint">Moments use saved contact assignments and human reviews. Automatic attribution is unverified. Uncertain suggestions appear only when enabled.</p>
     </section>
   </div>
 
-  <aside class="side-col" aria-label="Contact events">
+  <aside class="side-col" aria-label="Events">
     <section class="card contact-feed">
       <div class="contact-feed-heading">
-        <h2>Contact events</h2>
+        <h2>Events</h2>
         <span class="feed-mode" id="eventFeedMode"><i aria-hidden="true"></i> Live</span>
       </div>
       <div class="contact-feed-toolbar">
-        <span id="eventFeedCount">0 contacts</span>
+        <span id="eventFeedCount">0 events</span>
         <button type="button" class="feed-log-toggle" id="eventLogToggle" aria-pressed="false" onclick="toggleEventLog()">Full log</button>
       </div>
-      <div class="event-list" id="eventList" aria-label="Contact event history"></div>
-      <p class="event-feed-empty" id="eventFeedEmpty">Play the video to follow each contact.</p>
-      <div class="contact-feed-footer" id="eventFeedStatus" role="status" aria-live="polite">Contacts appear as the video plays. Click one to replay.</div>
+      <div class="event-list" id="eventList" aria-label="Event history"></div>
+      <p class="event-feed-empty" id="eventFeedEmpty">Play the video to follow events.</p>
+      <div class="contact-feed-footer" id="eventFeedStatus" role="status" aria-live="polite">Events appear as the video plays. Click one to replay.</div>
     </section>
     <section class="card attack-origins" id="attackHeatmapPanel" aria-labelledby="attackOriginsTitle" hidden>
       <h2 class="card-title" id="attackOriginsTitle">Attack origins <span id="attackHeatmapTotal"></span></h2>
       <div id="attackHeatmapZones" class="attack-heatmap-zones"></div>
     </section>
+  </aside>
+  <aside class="card team-roster" id="teamRosterPanel" aria-labelledby="teamRosterTitle">
+    <div class="roster-heading"><h2 class="card-title" id="teamRosterTitle">Team lineup</h2>
+      <button type="button" class="ctrl" id="edit-players" disabled onclick="PlayerProfiles.openEditor()">Edit players</button>
+    </div>
+    <p class="profile-hint" id="rosterStatus" role="status">Loading players…</p>
+    <div class="roster-list" id="teamRosterList" aria-label="Players on court"></div>
+    <details class="roster-bench" id="rosterBench" hidden><summary>Bench</summary><div class="roster-list" id="rosterBenchList"></div></details>
   </aside>
 </div>
 
@@ -260,84 +251,9 @@
   </div>
 </div>
 
-<!-- ── Page 3: Match Stats ─────────────────────────────── -->
-<div class="page" id="page-table">
-  <p><a href="{{ url_for('statistics_evidence_page', job_id=job.job_id) }}#point-reconciliation">Review point winners and statistics evidence ↗</a></p>
-  <div class="presets-row" id="rallyPresets"></div>
-
-  <div class="card table-filterbar">
-    <div style="display:flex;gap:6px;align-items:center;">
-      <span class="filter-label">Team</span>
-      <div class="chip-row" id="tableTeamChips"></div>
-    </div>
-    <div class="vsep"></div>
-    <div style="display:flex;gap:6px;align-items:center;">
-      <span class="filter-label">Reception outcome</span>
-      <div class="chip-row" id="tableOutcomeChips"></div>
-    </div>
-    <span class="reset-link" onclick="resetTableFilters()">Reset filters</span>
-  </div>
-
-  <div class="tab-row">
-    <div class="tab on" id="tabStats" onclick="setTableTab('stats')">Rallies</div>
-    {% if stats.viewer_lifecycle.available %}
-    <div class="tab" id="tabAttempts" onclick="setTableTab('attempts')">Service attempts</div>
-    {% endif %}
-    <div class="tab" id="tabScoring" onclick="setTableTab('scoring')">Contact log</div>
-  </div>
-
-  <div class="card big-table-wrap" id="statsTabPanel">
-    <table class="big-table">
-      <thead>
-        <tr class="grp">
-          <td colspan="3">Rally</td>
-          <td colspan="2" class="bl">Contacts</td>
-          <td colspan="3" class="bl">Serve → Reception</td>
-          <td class="bl">Events</td>
-        </tr>
-        <tr>
-          <td>#</td><td>Start</td><td class="num">Duration</td>
-          <td class="num bl">A</td><td class="num">B</td>
-          <td class="bl">Serve by</td><td>Received by</td><td>Outcome</td>
-          <td class="num bl">Total</td>
-        </tr>
-      </thead>
-      <tbody id="rallyTableBody"></tbody>
-    </table>
-  </div>
-
-  {% if stats.viewer_lifecycle.available %}
-  <div class="card big-table-wrap" id="attemptsTabPanel" style="display:none;">
-    <table class="big-table" style="width:100%;">
-      <thead>
-        <tr>
-          <td>#</td><td>Serve</td><td>Serving team</td><td>Status</td>
-          <td>Confirmed</td><td>Net crossing</td><td>Reception</td><td>Follow-up</td>
-        </tr>
-      </thead>
-      <tbody id="attemptsTableBody"></tbody>
-    </table>
-  </div>
-  {% endif %}
-
-  <div class="card big-table-wrap" id="scoringTabPanel" style="display:none;">
-    <table class="big-table" style="width:100%;">
-      <thead>
-        <tr>
-          <td>Rally</td><td>Time</td><td>Type</td><td>Team</td><td>Phase</td><td>FSM state</td>
-        </tr>
-      </thead>
-      <tbody id="scoringTableBody"></tbody>
-    </table>
-  </div>
-</div>
-
-<style>
-.player-contact-row { display:grid; grid-template-columns:1fr auto; gap:5px; padding:8px 0; border-bottom:1px solid var(--border); }
-.player-contact-row small { grid-column:1 / -1; color:var(--muted); font-size:10px; }
-.player-contact-jump { text-align:left; white-space:normal; }
-.player-contact-row.candidate { border-left:3px solid #f0b429; padding-left:6px; }
-</style>
+{% include 'player_editor.html' %}
+<script src="{{ url_for('static', filename='player_profiles.js') }}"></script>
+<script src="{{ url_for('static', filename='viewer_roster.js') }}"></script>
 <script src="{{ url_for('static', filename='player_contacts.js') }}"></script>
 <script src="{{ url_for('static', filename='pose_completion.js') }}"></script>
 <script src="/static/court_geometry.js"></script>
@@ -353,14 +269,15 @@ const SERVICE_ATTEMPTS = {{ stats.service_attempts | tojson }};
 const LIFECYCLE = {{ stats.viewer_lifecycle | tojson }};
 const SUBSTITUTIONS = {{ ((stats.player_identity or {}).get('substitutions') or {}) | tojson }};
 const VIDEO_STEM = "{{ job.video_stem }}";
+const INITIAL_PAGE = {{ initial_page | default('video') | tojson }};
 </script>
 <script src="{{ url_for('static', filename='viewer_charts.js') }}"></script>
-<script src="{{ url_for('static', filename='viewer_tables.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_set_trajectories.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_attack_height.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_substitutions.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_overlay.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_events.js') }}"></script>
+<script src="{{ url_for('static', filename='viewer_highlights.js') }}"></script>
 <script src="{{ url_for('static', filename='viewer_page.js') }}"></script>
 </body>
 </html>

@@ -1,5 +1,6 @@
 from io import BytesIO
 import json
+from pathlib import Path
 import zipfile
 
 import pytest
@@ -73,26 +74,81 @@ def test_statistics_page_adds_personal_view_and_keeps_the_team_table(client):
     assert b'id="personal"' in page and b'<th scope="row">' in page
     assert b"/player-highlights/highlight-test?player=P1" in page
     assert b"Opposite hitter" in page
+    assert b"Libero" in page
     assert b'id="personal"' not in client.get("/player-statistics/highlight-test?player=P9").data
 
 
-def test_highlights_page_lists_moments_and_rejects_unknown_players(client):
+def test_highlights_open_in_main_viewer_and_api_keeps_saved_moments(client):
     page = client.get("/player-highlights/highlight-test?player=P1&type=attack")
     assert page.status_code == 200
-    moments = json.loads(page.data.split(b"const MOMENTS = ", 1)[1].split(b";\n", 1)[0])
+    assert b'const INITIAL_PAGE = "highlights"' in page.data
+    assert b'id="playerHighlightsPanel"' in page.data
+    assert b'id="overlay"' in page.data
+    payload = client.get("/api/player_highlights/highlight-test?player=P1").get_json()
+    moments = payload["moments"]
     assert [(m["frame"], m["category"]) for m in moments] == [(30, "attack")]
+    assert payload["player"] == "P1" and payload["roster"] == ["P1"]
+    assert "stats_sha256" in payload["source"]
     assert b"/api/video/highlight-test" in page.data
     assert client.get("/player-highlights/highlight-test?player=P9").status_code == 404
+    assert client.get("/api/player_highlights/highlight-test?player=P9").status_code == 404
 
 
-def test_excel_export_writes_position(client):
-    profiles = {"P1": {"name": "Ann", "number": "7", "position": "setter"}}
+def test_main_menu_replaces_match_stats_and_removes_rally_strip(client):
+    page = client.get("/results/highlight-test")
+    assert page.status_code == 200
+    assert page.data.count(b">Player statistics</a>") == 1
+    assert b"/player-statistics/highlight-test" in page.data
+    for label in (b">Player highlights</button>", b">Set analysis</button>"):
+        assert label in page.data
+    for removed in (b"Match Stats", b"Set-to-attack trajectories", b'id="rallyClips"', b'id="page-table"'):
+        assert removed not in page.data
+    assert b'data-page="contacts"' not in page.data and b'id="playerContactsPanel"' not in page.data
+    assert b'id="teamRosterPanel"' in page.data and b'id="roster-picker"' in page.data
+
+
+def test_roster_metadata_uses_saved_players_and_source_scoped_portraits(client):
+    response = client.get("/api/player_roster/highlight-test")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["roster"] == ["P1"]
+    assert "annotations_sha256" in payload["source"] and "setter" in payload["positions"]
+    assert payload["positions"]["libero"] == "Libero"
+    assert payload["lineup"] == {}
+    assert client.get("/api/player_roster/no-such-result").status_code == 404
+
+
+def test_statistics_share_navigation_and_move_explanation_below_tables(client):
+    page = client.get("/player-statistics/highlight-test").data
+    assert b"viewer_page.css" in page and b"viewer_statistics.css" in page
+    assert b"player_profiles.js" in page
+    assert b"Change photo for" not in page  # Controls are created only in Edit players.
+    assert page.index(b'class="reconciliation-note"') > page.index(b"</table>")
+    assert b"view=highlights" in page and b"view=trajectories" in page
+    assert b'const INITIAL_PAGE = "trajectories"' in client.get("/results/highlight-test?view=trajectories").data
+
+
+def test_highlights_without_roster_return_empty_state(client):
+    import viewer
+    path = viewer.jobs["highlight-test"]["annotations_path"]
+    annotations = json.loads(Path(path).read_text())
+    annotations["frames"] = []
+    Path(path).write_text(json.dumps(annotations))
+    viewer._player_contact_inputs.cache_clear()
+    payload = client.get("/api/player_highlights/highlight-test").get_json()
+    assert payload["player"] is None and payload["moments"] == [] and payload["roster"] == []
+    assert client.get("/player-highlights/highlight-test").status_code == 200
+
+
+@pytest.mark.parametrize(("position", "label"), [("setter", "Setter"), ("libero", "Libero")])
+def test_excel_export_writes_position(client, position, label):
+    profiles = {"P1": {"name": "Ann", "number": "7", "position": position}}
     response = client.post("/player-statistics/highlight-test/excel", data={"profiles": json.dumps(profiles)})
     assert response.status_code == 200, response.data
     with zipfile.ZipFile(BytesIO(response.data)) as workbook:
         strings = workbook.read("xl/sharedStrings.xml").decode()
-    for text in ("Position", "Ann", "Setter", "P1"):
+    for text in ("Position", "Ann", label, "P1"):
         assert f">{text}<" in strings
-    bad = {"P1": {"position": "libero"}}
+    bad = {"P1": {"position": "unknown_position"}}
     assert client.post("/player-statistics/highlight-test/excel",
                        data={"profiles": json.dumps(bad)}).status_code == 400

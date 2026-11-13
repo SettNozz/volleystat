@@ -33,11 +33,12 @@ def evidence_client(tmp_path):
     viewer._player_contact_inputs.cache_clear()
 
 
-def test_clickable_metrics_empty_categories_and_evidence_payload(evidence_client):
+def test_plain_metrics_empty_categories_and_evidence_payload(evidence_client):
     client, _, _ = evidence_client
     page = client.get("/player-statistics/evidence-test?player=P1")
     assert page.status_code == 200
-    assert b"metric=point" in page.data and b"Evidence coverage" in page.data
+    assert b"metric=point" not in page.data and b"Evidence coverage" not in page.data
+    assert b'class="stat-evidence"' not in page.data
     for kind in ("attack", "serve", "reception", "dig_pass", "block"):
         evidence = client.get(f"/statistics-evidence/evidence-test?player=P1&kind={kind}&metric=total")
         assert evidence.status_code == 200, evidence.data

@@ -120,7 +120,7 @@ function selectPlayer(playerId) {
 
 function renderPlayerContacts() {
   const report = playerContactReport;
-  if (!report) return;
+  if (!report || !document.getElementById('playerChips')) return;
   if (activePlayerContact) {
     activePlayerContact = report.contacts.find(c => c.event_index === activePlayerContact.event_index) || null;
   }
@@ -239,12 +239,17 @@ async function loadPlayerContacts(method) {
     playerContactReport = data;
     if (typeof updateContactTeams === 'function') updateContactTeams(data);
     renderPlayerContacts();
-    document.getElementById('playerContactStatus').textContent = data.roster_ids.length
+    if (typeof window !== 'undefined' && window._annData && typeof initPoseEstimates === 'function') {
+      initPoseEstimates(window._annData, Boolean(data.parameters && data.parameters.estimates));
+    }
+    const status = document.getElementById('playerContactStatus');
+    if (status) status.textContent = data.roster_ids.length
       ? 'Automatic attribution is unverified. Review via dropdown; unknowns are excluded from player totals.'
       : 'No stable roster IDs in this result. Contacts stay unresolved.';
   } catch (error) {
     if (requestId !== playerContactRequest) return;
-    document.getElementById('playerContactStatus').textContent = error.message;
+    const status = document.getElementById('playerContactStatus') || document.getElementById('rosterStatus');
+    if (status) status.textContent = error.message;
     const select = document.getElementById('playerContactMethod');
     if (select) {
       select.disabled = false;
