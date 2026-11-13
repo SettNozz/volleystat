@@ -172,15 +172,16 @@ function renderVideoEvent(frame, count, animate) {
   }
   const changed = contactFeed.badgeIndex !== latest.index;
   const side = eventTeams[latest.index];
-  const sideLabel = side === 'team_b' ? 'Near side' : side === 'team_a' ? 'Far side' : 'Unattributed';
+  const fallback = side === 'team_b' ? 'Near side' : side === 'team_a' ? 'Far side' : 'Unattributed';
+  const sideLabel = typeof TeamNames !== 'undefined' ? TeamNames.label(side, fallback) : fallback;
   if (changed) {
     const substitution = latest.kind === 'substitution';
     badge.style.setProperty('--event-color', substitution ? '#22c55e' : evColor(latest.event.type));
     document.getElementById('videoEventKicker').textContent = substitution ? 'SUBSTITUTION' : 'CONTACT EVENT';
     document.getElementById('videoEventLabel').textContent = substitution ? 'Substitution' : contactLabel(latest.event.type);
-    document.getElementById('videoEventMeta').textContent = substitution ? viewerEventLabel(latest) + ' · Unverified'
-      : sideLabel + (latest.event.inferred ? ' · Inferred' : '');
   }
+  document.getElementById('videoEventMeta').textContent = latest.kind === 'substitution'
+    ? viewerEventLabel(latest) + ' · Unverified' : sideLabel + (latest.event.inferred ? ' · Inferred' : '');
   badge.hidden = false;
   if (changed && animate) animateContact(badge);
   contactFeed.badgeIndex = latest.index;

@@ -63,6 +63,25 @@ test('the main setter is the most frequent identified one and a tie has none', (
   assert.equal(context.setAttackMainSetter([{setter: null}]).main, null);
 });
 
+test('selecting a set replaces an unrelated player focus with its saved setter', () => {
+  const context = load();
+  const toggle = {};
+  context.document = {getElementById: id => id === 'setTrajectoryList' ? {children: []} : toggle};
+  context.selectedPlayerId = 'P1';
+  context.activePlayerContact = {event_index: 999};
+  context.playerContactReport = {contacts: [{event_index: 2, player_id: 'P5'}]};
+  context.FPS = 30;
+  context.seekAndPlay = () => {};
+  context.redraw = () => {};
+  context.selectSetTrajectory({start: 60, end: 90, setIndex: 2, setter: 'P5'});
+  assert.equal(context.selectedPlayerId, 'P5');
+  assert.equal(context.activePlayerContact.event_index, 2);
+  assert.equal(toggle.checked, true);
+  context.selectSetTrajectory(null);
+  assert.equal(context.selectedPlayerId, null);
+  assert.equal(context.activePlayerContact, null);
+});
+
 test('filters combine court side, attack zone and setter', () => {
   const {setTrajectoryMatches} = load();
   const pair = {team: 'team_b', zone: 'left', setter: 'P5'};

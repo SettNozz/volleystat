@@ -79,6 +79,10 @@ function toggleVideoSettings(open, restoreFocus = true) {
 function showPage(name) {
   const workspace = ['video', 'trajectories', 'highlights'].includes(name);
   if (name !== 'highlights') cancelPlayerHighlight();
+  if (name === 'trajectories') {
+    selectedPlayerId = null;
+    activePlayerContact = null;
+  }
   if (name !== 'trajectories') setTrajectoryOverlay.clip = null;
   document.querySelector('.video-col').classList.toggle('workspace-review', workspace && name !== 'video');
   document.getElementById('teamRosterPanel').hidden = name !== 'video';
@@ -808,5 +812,12 @@ document.getElementById('videoSettings').addEventListener('focusout', event => {
 initChartFilters();
 renderEventList();
 window.addEventListener('player-profiles-changed', renderEventList);
+window.addEventListener('team-names-changed', () => {
+  initChartFilters();
+  if (chartsBuilt) renderCharts(true);
+  renderSetTrajectories();
+  renderPlayerContacts();
+  redraw();
+});
 initPlayerHighlights();
 showPage(INITIAL_PAGE);

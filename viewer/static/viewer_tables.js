@@ -21,8 +21,8 @@ function initTableFilters() {
     box.appendChild(el);
   };
   mk('tableTeamChips', 'All', 'all', 'team');
-  mk('tableTeamChips', 'Team A', 'team_a', 'team');
-  mk('tableTeamChips', 'Team B', 'team_b', 'team');
+  mk('tableTeamChips', teamLabel('team_a', 'Team A'), 'team_a', 'team');
+  mk('tableTeamChips', teamLabel('team_b', 'Team B'), 'team_b', 'team');
   for (const o of ['all', 'success', 'failed', 'no_reception'])
     mk('tableOutcomeChips', o === 'all' ? 'All' : o.replace(/_/g, ' '), o, 'outcome');
 }
@@ -45,6 +45,11 @@ function setTableTab(t) {
   document.getElementById('tabScoring').classList.toggle('on', t === 'scoring');
   document.getElementById('statsTabPanel').style.display = t === 'stats' ? '' : 'none';
   document.getElementById('scoringTabPanel').style.display = t === 'scoring' ? '' : 'none';
+}
+
+function tableTeamLabel(team) {
+  const fallback = team === 'team_a' ? 'Team A' : team === 'team_b' ? 'Team B' : '—';
+  return typeof TeamNames !== 'undefined' ? TeamNames.html(team, fallback) : fallback;
 }
 
 function renderRallyPresets() {
@@ -85,8 +90,8 @@ function renderTables() {
     shown++;
     sumA += r.contacts_team_a || 0; sumB += r.contacts_team_b || 0; sumEv += (r.events || []).length;
     const sr = r.serve_reception || {};
-    const serveTeam = sr.serve ? teamLabel(sr.serve.team) : '—';
-    const recTeam = sr.reception ? teamLabel(sr.reception.team) : '—';
+    const serveTeam = sr.serve ? tableTeamLabel(sr.serve.team) : '—';
+    const recTeam = sr.reception ? tableTeamLabel(sr.reception.team) : '—';
     const outcome = sr.outcome || '—';
     const oColor = isSuccessfulOutcome(outcome) ? 'c-green' : (isFailedOutcome(outcome) ? 'c-red' : 'c-muted');
     const startFrame = rallyStartFrame(r);
@@ -117,8 +122,7 @@ function renderTables() {
       `<tr class="clickable" onclick="showPage('video');seekAndPlay(${ev.frame})">` +
       `<td>${ri >= 0 ? ri + 1 : '—'}</td><td>${ev.time.toFixed(2)}s</td>` +
       `<td style="color:${evColor(ev.type)};font-weight:700">${ev.type.replace(/_/g, ' ')}</td>` +
-      `<td>${ev.team === 'team_a' ? 'Team A'
-            : (ev.team === 'team_b' ? 'Team B' : '—')}</td>` +
+      `<td>${tableTeamLabel(ev.team)}</td>` +
       `<td class="c-muted">${(ev.rally_phase || '—').replace(/_/g, ' ')}</td>` +
       `<td class="c-muted">${(ev.game_state || '—').replace(/_/g, ' ')}</td></tr>`);
   });
@@ -140,8 +144,7 @@ function renderServiceAttempts() {
     const statusClass = status === 'playable_rally' ? 'c-green'
       : (status === 'reception_failed' || status === 'serve_fault' ? 'c-red' : 'c-muted');
     const frameCell = value => Number.isFinite(value) ? formatTime(value / FPS) : '—';
-    const servingTeam = lc.serving_team === 'team_a' ? 'Team A'
-      : (lc.serving_team === 'team_b' ? 'Team B' : '—');
+    const servingTeam = tableTeamLabel(lc.serving_team);
     body.insertAdjacentHTML('beforeend',
       `<tr class="${Number.isFinite(serveFrame) ? 'clickable' : ''}"` +
       `${Number.isFinite(serveFrame) ? ` onclick="showPage('video');seekAndPlay(${serveFrame})"` : ''}>` +

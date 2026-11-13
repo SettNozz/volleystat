@@ -9,6 +9,7 @@ the player are returned only on request and stay marked as uncertain.
 import math
 
 from src.tracking.player_contacts import category
+from src.tracking.contact_moments import contact_moment_groups
 
 HIGHLIGHT_CATEGORIES = {
     "attack": "Attacks", "reception": "Receptions", "serve": "Serves",
@@ -27,14 +28,12 @@ def player_highlights(report, events, fps, player_id, *, extra_contacts=(), incl
     if player_id not in report["roster_ids"]:
         raise ValueError("Unknown roster player")
     moments = []
-    seen = set()
-    for contact in list(report["contacts"]) + list(extra_contacts):
+    for contact, indices in contact_moment_groups(list(report["contacts"]) + list(extra_contacts), events, fps):
         assigned = contact.get("status") == "assigned" and contact.get("player_id") == player_id
         suggested = (include_suggestions and not assigned and contact.get("label_source") != "human"
                      and contact.get("proposed_player_id") == player_id)
-        if not (assigned or suggested) or contact["event_index"] in seen:
+        if not (assigned or suggested):
             continue
-        seen.add(contact["event_index"])
         event = events[contact["event_index"]] if 0 <= contact["event_index"] < len(events) else {}
         kind = event.get("type") or contact.get("type")
         group = "serve" if kind == "serve_fault" else category(kind)
@@ -44,6 +43,7 @@ def player_highlights(report, events, fps, player_id, *, extra_contacts=(), incl
         frame = contact.get("contact_frame") if derived and _finite(contact.get("contact_frame")) else contact["frame"]
         moments.append({
             "event_index": contact["event_index"], "frame": int(frame), "time": int(frame) / fps,
+            "source_event_indices": indices,
             "type": kind, "category": group,
             "label_source": contact.get("label_source"), "verified": contact.get("verified") is True,
             "uncertain": not assigned,

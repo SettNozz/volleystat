@@ -77,6 +77,10 @@ Open [localhost:5050](http://localhost:5050). Choose **Upload**, provide a local
 
 Saved analyses appear in the [results library](http://localhost:5050/library). The shared top menu offers **Video Analysis**, **Visual Stats**, **Player statistics**, **Set analysis** and **Player highlights**. The main video view shows the team lineup beside **Events**, including saved substitutions. **Edit players** adds names, jersey numbers, positions and photo choices; these browser-local profiles carry into highlights and statistics. Photo controls appear only inside the editor. Highlights share the main video and overlays, with a selected-player portrait, player/type filters, adjustable contact windows and sequential playback. **Set analysis** fills the panel height. Press **Space** outside interactive controls and dialogs to play or pause.
 
+Highlights and player statistics count repeated model proposals as one moment only when they share observed contact evidence; source events and human reviews remain intact. Contact authors must agree with strong, continuous roster evidence and remain close to the saved ball. Selecting a set focuses its saved setter. See [contact validation](docs/contact_moments_and_authors_20261113.md) for rules and limits.
+
+Rename either team directly on the scoreboard. The name updates filters, set paths, event cards, charts, player statistics and point-review labels immediately, and stays saved for that result in this browser. Shared select styling keeps the same keyboard controls and form values across the viewer, library, upload and review pages.
+
 ### 3. Or analyze from the CLI
 
 Calibrate each fixed camera placement, then normalize the calibration into the pipeline's corner order:

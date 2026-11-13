@@ -73,6 +73,17 @@ test('history follows authoritative frames in order and keeps original contact i
   assert.equal(events[0].frame, 90);
 });
 
+test('renaming a team updates an already visible event without changing its side', () => {
+  const f = fixture([{frame: 30, type: 'serve', team: 'team_b'}]);
+  f.context.TeamNames = {label: (side, fallback) => side === 'team_b' ? 'Falcons' : fallback};
+  f.run('updateActiveEvent(30)');
+  assert.equal(f.element('videoEventMeta').textContent, 'Falcons');
+  f.context.TeamNames.label = () => 'Bears';
+  f.run('updateActiveEvent(31)');
+  assert.equal(f.element('videoEventMeta').textContent, 'Bears');
+  assert.equal(f.context.eventTeams[0], 'team_b');
+});
+
 test('full log shows future contacts without making them active or displaying their badge', () => {
   const {element, run, rows} = fixture([{frame: 300, type: 'attack'}]);
   run('toggleEventLog()');

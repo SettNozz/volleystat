@@ -9,6 +9,7 @@ let chartsBuilt = false;
 
 function initChartFilters() {
   const teamBox = document.getElementById('chartTeamChips');
+  teamBox.replaceChildren();
   const mkChip = (box, label, val, stateKey) => {
     const el = document.createElement('div');
     el.className = 'chip' + (chartState[stateKey] === val ? ' on' : '');
@@ -22,9 +23,10 @@ function initChartFilters() {
     box.appendChild(el);
   };
   mkChip(teamBox, 'All', 'all', 'team');
-  mkChip(teamBox, 'Team A', 'team_a', 'team');
-  mkChip(teamBox, 'Team B', 'team_b', 'team');
+  mkChip(teamBox, teamLabel('team_a', 'Team A'), 'team_a', 'team');
+  mkChip(teamBox, teamLabel('team_b', 'Team B'), 'team_b', 'team');
   const rallyBox = document.getElementById('chartRallyChips');
+  rallyBox.replaceChildren();
   mkChip(rallyBox, 'All', 'all', 'rally');
   RALLIES.forEach((r, i) => mkChip(rallyBox, String(i + 1), String(i), 'rally'));
 }
@@ -42,13 +44,15 @@ function ballPosNear(frame, tol = 8) {
 
 // The contact spotter emits no team, so ``ev.team`` can be null. Rendering
 // that as a side would invent information the pipeline never measured.
-function teamLabel(team) { return team === 'team_a' ? 'A' : (team === 'team_b' ? 'B' : '—'); }
+function teamLabel(team, fallback = team === 'team_a' ? 'A' : (team === 'team_b' ? 'B' : '—')) {
+  return typeof TeamNames !== 'undefined' ? TeamNames.label(team, fallback) : fallback;
+}
 function teamClass(team) { return team === 'team_a' ? 'team-a' : (team === 'team_b' ? 'team-b' : 'team-none'); }
 // Spotter rallies carry no side split (``contacts_team_a`` is null), so they
 // show the contact count instead of an invented A/B division.
 function rallyContactsLabel(r) {
   return Number.isFinite(r.contacts_team_a) && Number.isFinite(r.contacts_team_b)
-    ? `A:${r.contacts_team_a} B:${r.contacts_team_b}`
+    ? `${teamLabel('team_a')}:${r.contacts_team_a} ${teamLabel('team_b')}:${r.contacts_team_b}`
     : `${(r.events || []).length} contacts`;
 }
 
@@ -262,7 +266,7 @@ function renderAttackVectorMap(panelId, attackEvents) {
   const legend = document.createElement('div');
   legend.style.cssText = 'position:absolute;right:8px;bottom:6px;max-width:calc(100% - 16px);text-align:right;font-size:10.5px;line-height:1.5;color:var(--muted);background:rgba(255,255,255,.82);border-radius:5px;padding:3px 6px';
   legend.innerHTML = hits.length
-    ? `<span style="color:#dc2626">●</span> team B &nbsp; <span style="color:#4f46e5">●</span> team A &nbsp; ○ back row<br>`
+    ? `<span style="color:#dc2626">●</span> ${typeof TeamNames !== 'undefined' ? TeamNames.html('team_b', 'team B') : 'team B'} &nbsp; <span style="color:#4f46e5">●</span> ${typeof TeamNames !== 'undefined' ? TeamNames.html('team_a', 'team A') : 'team A'} &nbsp; ○ back row<br>`
       + `${directions.line || 0} line · ${directions.diagonal || 0} diagonal`
       + (noTarget ? ` · ${noTarget} without a measured target` : '')
       + `<br><span style="opacity:.75">dashed arrow = net crossing estimate, no defender touch</span>`

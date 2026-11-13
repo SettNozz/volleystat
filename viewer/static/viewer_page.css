@@ -48,10 +48,10 @@ canvas#overlay { position: absolute; top: 50%; left: 50%; transform: translate(-
 canvas#overlay.court-editing { pointer-events: auto; cursor: crosshair; }
 .video-badge { position: absolute; bottom: 14px; left: 14px; padding: 5px 10px; border-radius: 6px; background: oklch(0% 0 0 / 0.55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
 .attack-height-badge { position: absolute; bottom: 14px; right: 14px; padding: 6px 10px; border-radius: 6px; background: #151526e6; color: #fff; font-size: clamp(12px, 1.25vw, 18px); font-weight: 700; font-variant-numeric: tabular-nums; pointer-events: none; }
-.scoreboard { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); display: flex; overflow: hidden; border-radius: 8px; color: #fff; white-space: nowrap; font-size: clamp(11px, 1.2vw, 16px); }
-.scoreboard label { display: flex; align-items: center; gap: 10px; padding: 5px 10px; background: var(--team-near); }
+.scoreboard { position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%); display: flex; max-width: calc(100% - 24px); overflow: hidden; border-radius: 8px; color: #fff; white-space: nowrap; font-size: clamp(11px, 1.2vw, 16px); }
+.scoreboard label { display: flex; align-items: center; min-width: 0; gap: 10px; padding: 5px 10px; background: var(--team-near); }
 .scoreboard label + label { background: var(--team-far); }
-.scoreboard input { width: 7ch; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; }
+.scoreboard input { width: 7ch; min-width: 0; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; text-overflow: ellipsis; }
 .scoreboard output { font-size: 1.4em; font-weight: 800; font-variant-numeric: tabular-nums; }
 .scoreboard small { align-content: center; padding: 0 6px; background: #3a3a48; }
 .workspace-panel { padding: 20px; }

@@ -442,7 +442,7 @@ function redraw() {
     if (lc) {
       line1 = lifecycleLabels[lc.status] || String(lc.status || '').replace(/_/g, ' ').toUpperCase();
       if (['reception_pending', 'playable_rally'].includes(lc.status) && ann.current_team) {
-        line1 += ` · ${ann.current_team} [${ann.contacts || 0}]`;
+        line1 += ` · ${teamLabel(ann.current_team, ann.current_team)} [${ann.contacts || 0}]`;
       }
     } else {
       line1 = (ann.state || '').replace(/_/g, ' ').toUpperCase();

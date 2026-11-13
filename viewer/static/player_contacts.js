@@ -26,7 +26,9 @@ function drawPlayerContactCandidate(ctx, ann, frameIndex, px, py, scale) {
   ctx.strokeRect(px(box[0]), py(box[1]), px(box[2]-box[0]), py(box[3]-box[1]));
   ctx.font = `bold ${Math.max(10, Math.round(12*scale))}px system-ui`;
   const actor = activePlayerContact.player_id || activePlayerContact.proposed_player_id;
-  ctx.fillText(`${actor || (candidate.side === 'a' ? 'Far player' : 'Unknown player')} · contact proposal`, px(box[0]), py(box[1])-8);
+  const fallback = candidate.side === 'a' ? 'Far player' : 'Unknown player';
+  const unknown = typeof TeamNames !== 'undefined' ? TeamNames.label(candidate.side, fallback) : fallback;
+  ctx.fillText(`${actor || unknown} · contact proposal`, px(box[0]), py(box[1])-8);
   ctx.restore();
 }
 
@@ -177,13 +179,14 @@ function renderPlayerContacts() {
       ? (contact.verified ? 'Human attribution · type still predicted' : 'Human: unresolved')
       : `Proposal · ${contact.reason.replace(/_/g, ' ')}`;
     if (contact.label_source !== 'human' && Number.isFinite(contact.near_side_score)) {
-      provenance.textContent += ` · near-side score ${contact.near_side_score.toFixed(2)}`;
+      const team = typeof TeamNames !== 'undefined' ? TeamNames.label('b', 'near-side') : 'near-side';
+      provenance.textContent += ` · ${team} score ${contact.near_side_score.toFixed(2)}`;
     }
     if (uncertain) provenance.textContent = 'Uncertain suggestion; excluded from total. ' + provenance.textContent;
     if (Number.isFinite(contact.actor_share)) provenance.textContent += ` · actor share ${contact.actor_share.toFixed(2)} (weak supervision)`;
     if (contact.label_source !== 'human' && contact.candidates && contact.candidates.length) {
       const candidates = contact.candidates.slice(0, 3).map(c =>
-        `${c.player_id || (c.side === 'a' ? 'far player' : 'unknown player')} @ f${c.frame}`).join(', ');
+        `${c.player_id || (typeof TeamNames !== 'undefined' ? TeamNames.label(c.side, c.side === 'a' ? 'far player' : 'unknown player') : (c.side === 'a' ? 'far player' : 'unknown player'))} @ f${c.frame}`).join(', ');
       provenance.textContent += ` · ${candidates}`;
     }
     const select = document.createElement('select');

@@ -317,7 +317,8 @@ function renderSetTrajectories() {
     row.dataset.start = String(pair.start);
     row.setAttribute('aria-pressed', String(pair === selected));
     row.classList.toggle('active', pair === selected);
-    const side = pair.team === 'team_b' ? 'Near' : pair.team === 'team_a' ? 'Far' : 'Unattributed';
+    const fallback = pair.team === 'team_b' ? 'Near' : pair.team === 'team_a' ? 'Far' : 'Unattributed';
+    const side = typeof TeamNames !== 'undefined' ? TeamNames.label(pair.team, fallback) : fallback;
     const quality = pair.complete ? '' : pair.hasPath ? ' · partial' : ' · no path';
     const swatch = document.createElement('span');
     swatch.className = 'set-trajectory-swatch';
@@ -354,6 +355,11 @@ function selectSetTrajectory(pair) {
   const list = document.getElementById('setTrajectoryList');
   state.selected = pair ? pair.start : null;
   state.clip = null;
+  // A previous highlight/roster selection must not mark an unrelated player
+  // while reviewing this set. Use only this pair's saved author and evidence.
+  activePlayerContact = pair ? (playerContactReport?.contacts || [])
+    .find(contact => contact.event_index === pair.setIndex) || null : null;
+  selectedPlayerId = pair?.setter || null;
   for (const row of list.children) {
     const active = Boolean(pair) && Number(row.dataset.start) === pair.start;
     row.classList.toggle('active', active);
@@ -366,6 +372,7 @@ function selectSetTrajectory(pair) {
     }
   }
   if (pair) {
+    if (selectedPlayerId) document.getElementById('togPlayers').checked = true;
     if (pair.hasPath) document.getElementById('togSetTrajectories').checked = true;
     const start = Math.max(0, pair.start - Math.round(SET_TRAJECTORY_LEAD_SECONDS * FPS));
     state.clip = {start, stop: pair.end + Math.round(SET_TRAJECTORY_TAIL_SECONDS * FPS)};

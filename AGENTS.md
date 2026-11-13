@@ -541,6 +541,8 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   column; the evidence-review link stays below the table. Point reviews append beside results, bound to both source hashes;
   confirming a winner never verifies a contact or attack outcome. See
   `docs/statistics_evidence.md`. Original FSM score/heatmap remain separate.
+- **Contact moments and author guards**: shared `contact_moments.py` groups duplicate model evidence for highlights/statistics; author eligibility respects measured proximity and strong continuous roster support. See `docs/contact_moments_and_authors_20261113.md`.
+- **Viewer names and controls**: `team_names.js` owns browser-local result-scoped team labels and live `team-names-changed` updates; `viewer_controls.css` styles native selects with a progressive `base-select` picker and native fallback. Keep unknown sides unknown and escape names in HTML templates.
 - **Pose input and net floor**: default `--pose-imgsz 2560`.
   `GameAnalyzer._validated_net_floor` falls back to the homography world-y=0
   line (`calibrated_court_midline_fallback`) when the detected divider fails the

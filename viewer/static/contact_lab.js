@@ -46,7 +46,9 @@ function labSeek(event,displayFrame=null,reviewNote='') {
   // Seek inside the frame, avoiding fractional-fps boundary rounding.
   labNode('labVideo').currentTime = (f+.25)/labBundle.fps;
   labLastFrame = -1;
-  const identity = event.player_id || event.proposed_player_id || (event.side_proposal === 'a' ? 'Far player' : 'Unknown near player');
+  const fallback = event.side_proposal === 'a' ? 'Far player' : 'Unknown near player';
+  const identity = event.player_id || event.proposed_player_id ||
+    (typeof TeamNames !== 'undefined' ? TeamNames.label(event.side_proposal, fallback) : fallback);
   const actor = (event.candidates || [])[0];
   const state = actor && actor.identity_resolution;
   const role = state && Number.isFinite(state.depth_m) ? ` Actor position: ${state.position}, ${state.depth_m.toFixed(1)} m from net (ground anchors; rotation unknown).` : '';
@@ -55,7 +57,7 @@ function labSeek(event,displayFrame=null,reviewNote='') {
     ? (action ? `Hand/forearm distance ${actor.distance_body_heights.toFixed(2)} body heights; relative arm motion ${Number.isFinite(action.relative_arm_speed) ? action.relative_arm_speed.toFixed(2)+' body heights/s' : 'unavailable'}. ` : 'No supported arm evidence. ')
     : `Flight ${event.detection_evidence.ballistic.toFixed(2)}, interaction ${event.detection_evidence.interaction.toFixed(2)}. `;
   labNode('labDetails').textContent = `${identity} · ${event.type} · detector f${event.frame}, evidence f${event.contact_frame ?? event.frame}, displayed f${f}. ` +
-    `${event.reason.replace(/_/g,' ')}; near-side score ${event.near_side_score.toFixed(2)} (uncalibrated). ` +
+    `${event.reason.replace(/_/g,' ')}; ${typeof TeamNames !== 'undefined' ? TeamNames.label('b', 'near-side') : 'near-side'} score ${event.near_side_score.toFixed(2)} (uncalibrated). ` +
     physical +
     (event.source_event_index == null ? 'New untyped proposal; no source event.' : `Source event ${event.source_event_index}, original f${event.original_frame}.`) +
     (actor ? ` ${event.side_accepted === false ? 'Rejected nearby pose' : 'Raw actor'} ${actor.raw_track_id}; identity method ${(state && (state.identity_method || state.method)) || 'source'}.` : '') + role + (reviewNote ? ` Human review: ${reviewNote}` : '');
