@@ -585,6 +585,8 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
 
 ## Research and experiment history
 
+Player tracker association comparison: `scripts/evaluation/compare_player_trackers.py`; fixed saved poses and cached embeddings, with protocol and limitations in `docs/player_tracker_comparison.md`.
+
 Dated experiment notes (annotation projects, benchmarks, measured numbers,
 artifact paths, ports and their caveats) live verbatim in
 `docs/agent_history.md`. Read the matching section before touching:
