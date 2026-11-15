@@ -17,9 +17,46 @@ from src.tracking.player_contacts import side
 from src.tracking.contact_author_person_ranker import person_candidates, pose_geometry, contact_distance
 
 ROOT = Path(__file__).resolve().parents[2]
-METHOD = "osnet_temporal_all_sides_soft_hgb_v1"
+METHOD = "osnet_temporal_all_sides_soft_hgb_v2"
 MODEL_SHA256 = "4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091"
 MAX_CONTACT_DISTANCE = .35
+# Identity-pass gallery views added to every automatic roster person.
+# docs/contact_author_method_comparison_20261114.md: with this gallery and
+# without the hard eligibility guards/substitution mask, held-out exact-person
+# recall rose from 352/585 to 437/585 on the same automatic analyses, and
+# precision rose too. The guards remain available as opt-in review flags.
+GALLERY_VIEWS = 12
+GALLERY_MIN_GAP = 90
+
+
+def identity_gallery_references(annotations, players, per_person=GALLERY_VIEWS, min_gap=GALLERY_MIN_GAP):
+    """Add clean identity-pass views to each automatic roster person.
+
+    Uses only the identity pass's own whole-video gallery keys and poses whose
+    association is strong (``reason=associated``), best appearance first and
+    spread at least ``min_gap`` frames apart. No contact label is read.
+    """
+    by_frame = {r["f"]: r for r in annotations["frames"]}
+    keys = (annotations.get("player_identity") or {}).get("gallery_keys") or {}
+    for person in players:
+        pid = person["player_id"]; chosen = [r["frame"] for r in person["references"]]
+        candidates = []
+        for key in keys.get(pid) or []:
+            frame, index = map(int, key.split(":"))
+            poses = (by_frame.get(frame) or {}).get("poses") or []
+            if index >= len(poses):
+                continue
+            identity = poses[index].get("identity") or {}
+            if poses[index].get("player_id") == pid and identity.get("reason") == "associated":
+                candidates.append((identity.get("appearance_distance", 1.), frame, poses[index]["bb"]))
+        added = 0
+        for _, frame, box in sorted(candidates, key=lambda c: (c[0], c[1])):
+            if added >= per_person:
+                break
+            if all(abs(frame - f) >= min_gap for f in chosen):
+                person["references"].append({"frame": frame, "bbox": box, "source": "identity_pass_gallery"})
+                chosen.append(frame); added += 1
+    return players
 
 
 def observed_roster_support(actor, contact_frame, observations, tracks):
@@ -71,7 +108,10 @@ def photo_roster(annotations, explicit=None, source_sha256=None):
             reference(person["reference_key"], person["player_id"])
         if set(identity.get("gallery_keys") or {})- {p["player_id"] for p in players}:
             raise ValueError("Saved roster is missing identity photo references")
+        identity_gallery_references(annotations, players)
         roster = {"schema": "contact_author_photo_roster_v1", "side": "b", "players": players,
+            "gallery": {"method": "identity_pass_associated_views", "per_person": GALLERY_VIEWS,
+                        "min_gap_frames": GALLERY_MIN_GAP},
             "label_source": seed.get("label_source", "model"), "verified": bool(seed.get("verified")),
             "scope": "identity_references_only", "video_sha256": source_sha256,
             "max_on_court": identity.get("max_on_court", 6)}
@@ -190,15 +230,56 @@ class ContactAuthorModel:
                 or len(self.bundle["heads"]["all_sides/hgb_soft"]) != 3 or len(self.bundle["team_models"]) != 3):
             raise ValueError("Unsupported contact author checkpoint contract")
 
-    def predict_features(self, features, contacts, on_court=None):
-        """``on_court`` (``player_id -> [[first, last], ...]``) excludes players
-        who were substituted off at the contact frame."""
+    def predict_features(self, features, contacts, on_court=None, guards=False):
+        """Pick the highest-scoring roster person (or ``other_team``).
+
+        By default every eligibility check is a review flag only: it is listed
+        in ``review_flags`` but does not change the answer. Held-out tests on
+        585 named contacts showed that applying them as hard rules removed
+        more correct answers than wrong ones. ``guards=True`` restores the
+        2026-11-13 behaviour: ``on_court`` (``player_id -> [[first, last],
+        ...]``) excludes substituted-off players, and distance, missing ball,
+        roster-conflict and replacement checks abstain.
+        """
+        if not guards:
+            return self._predict_ranked(features, contacts, on_court)
+        return self._predict_guarded(features, contacts, on_court)
+
+    def _team_posterior(self, features, contacts):
         from src.tracking.contact_author_person_ranker import chain_posterior
         expected = self.manifest["feature_views"]["all_sides"]
         if features["columns"] != expected["soft_columns"] or features["global_columns"] != expected["global_columns"]:
             raise ValueError("Contact author feature schema differs from checkpoint")
         emission = np.mean([m.predict_proba(features["global_features"])[:, 1] for m in self.bundle["team_models"]], axis=0)
-        posterior = chain_posterior(contacts, emission, self.bundle["transitions"], {c["video_id"] for c in contacts})
+        return emission, chain_posterior(contacts, emission, self.bundle["transitions"], {c["video_id"] for c in contacts})
+
+    def _predict_ranked(self, features, contacts, on_court):
+        emission, posterior = self._team_posterior(features, contacts)
+        predictions = []
+        for i, x in enumerate(features["candidate_features"]):
+            scores = np.mean([m.predict_proba(x)[:, 1] for m in self.bundle["heads"]["all_sides/hgb_soft"]], axis=0)
+            person = int(np.argmax(scores[:-1])); pid = features["options"][person]
+            label = "other_team" if posterior[i] < .5 else pid
+            # Review hint only: the former hard eligibility reason for the top person.
+            runs = (on_court or {}).get(pid)
+            actor = features["evidence"][i].get(pid) or {}
+            distance = actor.get("distance_body_heights"); support = actor.get("roster_support") or {}
+            flag = ("off_court" if runs is not None and not any(a <= contacts[i]["frame"] <= b for a, b in runs)
+                    else "no_observed_contact_evidence" if distance is None or not np.isfinite(distance) or actor.get("ball_out_of_frame")
+                    else "too_far_from_observed_ball" if distance > MAX_CONTACT_DISTANCE
+                    else "observed_roster_conflict" if support.get("player_id") and support["player_id"] != pid
+                    else None)
+            ranked = np.sort(np.asarray(scores[:-1], float))[::-1]
+            confidence = float(posterior[i]) * float(ranked[0]) if label != "other_team" else 1. - float(posterior[i])
+            predictions.append({"label": label, "scores": scores.tolist(), "near_side_score": float(posterior[i]),
+                "team_emission": float(emission[i]), "actor": features["evidence"][i].get(label),
+                "model_player_id": pid, "confidence": confidence,
+                "score_margin": float(ranked[0] - ranked[1]) if len(ranked) > 1 else float(ranked[0]),
+                "review_flags": {pid: flag} if flag else {}, "eligibility_rejections": {}})
+        return predictions
+
+    def _predict_guarded(self, features, contacts, on_court=None):
+        emission, posterior = self._team_posterior(features, contacts)
         predictions = []
         for i, x in enumerate(features["candidate_features"]):
             scores = np.mean([m.predict_proba(x)[:, 1] for m in self.bundle["heads"]["all_sides/hgb_soft"]], axis=0)
@@ -239,7 +320,8 @@ class ContactAuthorModel:
                 "model_player_id": original_label, "eligibility_rejections": rejected})
         return predictions
 
-    def attribute(self, annotations, events, *, roster=None, cache=None, assets=None, device="auto", require_cache=False, images=None):
+    def attribute(self, annotations, events, *, roster=None, cache=None, assets=None, device="auto", require_cache=False, images=None,
+                  guards=False):
         from src.models.inference_cache import ModelOutputCache, FrozenOSNet, collect_embeddings, osnet_feature_store, video_frames
         from src.models.player_reid_encoder import DEFAULT_ASSETS
         from src.tracking.player_contacts import CONTACT_TYPES, SCHEMA, summarize
@@ -276,7 +358,7 @@ class ContactAuthorModel:
                 images or (lambda wanted: video_frames(video, wanted)), encoder, store, batch_size=128)
             features = build_features(annotations, contacts, references, vectors, context_events=contacts)
             on_court = ((annotations.get("player_identity") or {}).get("substitutions") or {}).get("on_court")
-            proposals = self.predict_features(features, contacts, on_court)
+            proposals = self.predict_features(features, contacts, on_court, guards=guards)
             rows = []
             for contact, proposal in zip(contacts, proposals):
                 event = events[contact["event_index"]]; pid = proposal["label"]; actor = proposal.pop("actor")
@@ -293,7 +375,8 @@ class ContactAuthorModel:
             return summarize({"schema": SCHEMA, "method": METHOD, "side": "b", "label_source": "derived", "verified": False,
                 "roster_ids": features["options"][:-1], "contacts": rows,
                 "parameters": {"future_frames": True, "window_frames": 15, "stride": 3,
-                    "max_body_distance": MAX_CONTACT_DISTANCE, "roster_constraint": "continuous_observed_roster_v1"},
+                    "max_body_distance": MAX_CONTACT_DISTANCE, "roster_constraint": "continuous_observed_roster_v1",
+                    "hard_guards": bool(guards), "roster_gallery": references.get("gallery")},
                 "attribution": {"status": "completed", "model_sha256": self.sha256, "model_path": str(self.path.resolve()),
                     "training_sources": self.manifest["source_videos"], "roster_label_source": references.get("label_source", "unknown"),
                     "roster_verified": references.get("verified", False), "missing_osnet_crops": missing,
@@ -304,7 +387,8 @@ class ContactAuthorModel:
 
 
 def attribute_contacts(annotations, events, *, enabled=True, model_path=None, roster=None, cache=None,
-                       cache_dir=None, assets=None, device="auto", require_cache=False, use_registry=True, images=None):
+                       cache_dir=None, assets=None, device="auto", require_cache=False, use_registry=True, images=None,
+                       guards=False):
     """Shared pipeline/replay selection. Fallbacks are explicit in exported JSON."""
     from src.models.inference_cache import ModelOutputCache, DEFAULT_CACHE
     from src.models.model_registry import resolve_model
@@ -331,7 +415,7 @@ def attribute_contacts(annotations, events, *, enabled=True, model_path=None, ro
         cache = ModelOutputCache(video, cache_dir or DEFAULT_CACHE, require_cache)
     try:
         result = model.attribute(annotations, events, roster=roster, cache=cache, assets=assets,
-            device=device, require_cache=require_cache, images=images)
+            device=device, require_cache=require_cache, images=images, guards=guards)
         result["attribution"]["model_resolution"] = {**resolved.as_dict(), "sha256": model.sha256}
         result["attribution"]["model_cache"] = cache.summary()
         from src.models.inference_cache import canonical

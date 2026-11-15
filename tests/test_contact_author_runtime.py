@@ -53,7 +53,7 @@ def test_frozen_head_choice_and_feature_order_guard(model):
     assert result[0]["label"] == "P8"
     # P8 was substituted off at frame 10: the best on-court player gets the contact.
     benched = model.predict_features(features, [{"frame": 10, "type": "pass", "video_id": "test"}],
-                                     on_court={"P8": [[0, 5], [20, 40]]})
+                                     on_court={"P8": [[0, 5], [20, 40]]}, guards=True)
     assert benched[0]["label"] == "P1" and benched[0]["scores"][1] == pytest.approx(.8)
     features["columns"] = ["different"]
     with pytest.raises(ValueError, match="schema"): model.predict_features(features, [])
@@ -74,34 +74,70 @@ def test_features_ignore_author_targets_and_leave_source_poses_untouched():
     assert ann == before and first["evidence"][0]["P1"]["raw_track_id"] == 1
 
 
-def test_candidate_cannot_borrow_another_stable_roster_players_touch(model):
+def test_hard_guards_stop_borrowing_another_stable_roster_players_touch(model):
     setter = {"frame": 10, "distance_body_heights": .08,
               "roster_support": {"player_id": "P5", "strong_frames": 11}}
     features = {"columns": ["x"], "global_columns": ["g"], "global_features": np.ones((1, 1)),
         "candidate_features": [np.array([[.28], [.95], [.04]])], "options": ["P5", "P6", "other_team"],
         "evidence": [{"P5": deepcopy(setter), "P6": deepcopy(setter)}]}
     before = deepcopy(features)
-    result = model.predict_features(features, [{"frame": 10, "type": "set", "video_id": "unseen"}])[0]
+    result = model.predict_features(features, [{"frame": 10, "type": "set", "video_id": "unseen"}], guards=True)[0]
     assert result["label"] == "P5" and result["actor"] == setter
     assert result["scores"][1] == pytest.approx(.95)
     assert result["eligibility_rejections"] == {"P6": "observed_roster_conflict"}
     assert features["evidence"] == before["evidence"]
     # A benched or physically distant alternative must not inherit this touch.
     result = model.predict_features(features, [{"frame": 10, "type": "set", "video_id": "unseen"}],
-                                    on_court={"P5": [[20, 30]]})[0]
+                                    on_court={"P5": [[20, 30]]}, guards=True)[0]
     assert result["label"] is None
     features["evidence"][0]["P5"]["distance_body_heights"] = .8
-    assert model.predict_features(features, [{"frame": 10, "type": "set", "video_id": "unseen"}])[0]["label"] is None
+    assert model.predict_features(features, [{"frame": 10, "type": "set", "video_id": "unseen"}], guards=True)[0]["label"] is None
 
 
-def test_missing_ball_or_unconfirmed_replacement_does_not_inherit_a_touch(model):
+def test_hard_guards_abstain_on_missing_ball_or_unconfirmed_replacement(model):
     features = {"columns": ["x"], "global_columns": ["g"], "global_features": np.ones((1, 1)),
         "candidate_features": [np.array([[.9], [.1], [.04]])], "options": ["P1", "P2", "other_team"],
         "evidence": [{"P1": {"distance_body_heights": .8}, "P2": {"distance_body_heights": .1}}]}
     contacts = [{"frame": 10, "type": "attack", "video_id": "unseen"}]
-    assert model.predict_features(features, contacts)[0]["label"] is None
+    assert model.predict_features(features, contacts, guards=True)[0]["label"] is None
     features["evidence"] = [{}]
-    assert model.predict_features(features, contacts)[0]["label"] is None
+    assert model.predict_features(features, contacts, guards=True)[0]["label"] is None
+
+
+def test_default_ranking_keeps_guard_reasons_as_review_flags_only(model):
+    features = {"columns": ["x"], "global_columns": ["g"], "global_features": np.ones((1, 1)),
+        "candidate_features": [np.array([[.28], [.95], [.04]])], "options": ["P5", "P6", "other_team"],
+        "evidence": [{"P5": {"frame": 10, "distance_body_heights": .08},
+                      "P6": {"frame": 10, "distance_body_heights": .08, "roster_support": {"player_id": "P5"}}}]}
+    contacts = [{"frame": 10, "type": "set", "video_id": "unseen"}]
+    result = model.predict_features(features, contacts, on_court={"P6": [[20, 30]]})[0]
+    assert result["label"] == "P6" and result["model_player_id"] == "P6"
+    assert result["review_flags"] == {"P6": "off_court"} and result["eligibility_rejections"] == {}
+    assert result["confidence"] == pytest.approx(result["near_side_score"] * .95)
+    assert result["score_margin"] == pytest.approx(.95 - .28)
+    # Missing evidence is a flag, not an abstention.
+    features["evidence"] = [{}]
+    result = model.predict_features(features, contacts)[0]
+    assert result["label"] == "P6" and result["review_flags"] == {"P6": "no_observed_contact_evidence"}
+
+
+def test_automatic_roster_adds_spread_strong_identity_gallery_views():
+    def view(x, reason, distance, pid="P1"):
+        p = pose(x); p.update(team="b", player_id=pid, identity={"reason": reason, "appearance_distance": distance})
+        return p
+    frames = [{"f": 0, "poses": [view(10, "associated", .1)]},
+              {"f": 50, "poses": [view(10, "associated", .05)]},        # too close to the seed frame
+              {"f": 200, "poses": [view(10, "associated", .2)]},
+              {"f": 300, "poses": [view(10, "occluded_appearance_only", .01)]},  # weak association
+              {"f": 400, "poses": [view(10, "associated", .1, pid="P2")]}]       # other person's pose
+    ann = {"frames": frames, "player_identity": {"side": "b", "seed": {"assignments": {"0:0": "P1"}},
+        "gallery_keys": {"P1": ["0:0", "50:0", "200:0", "300:0", "400:0"]}}}
+    before = deepcopy(ann)
+    roster = runtime.photo_roster(ann)
+    refs = roster["players"][0]["references"]
+    assert [r["frame"] for r in refs] == [0, 200]
+    assert refs[1]["source"] == "identity_pass_gallery" and roster["gallery"]["per_person"] == runtime.GALLERY_VIEWS
+    assert ann == before
 
 
 @pytest.mark.parametrize("break_support", [None, "weak", "unknown", "disagreement", "teleport", "gap", "single", "raw_none"])

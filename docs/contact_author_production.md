@@ -1,5 +1,10 @@
 # Promoted contact-author model — 2026-11-07
 
+> 2026-11-14: the runtime default changed (method `osnet_temporal_all_sides_soft_hgb_v2`,
+> same checkpoint): identity-pass gallery views and no hard eligibility rules.
+> The runtime-eligibility rules below are opt-in (`--hard-guards`). See the
+> [method comparison](contact_author_method_comparison_20261114.md).
+
 The default author of a saved contact is now predicted by the expanded
 **all-side temporal OSNet + soft HistGradientBoosting** model. Event detection
 and event-type checkpoints are unchanged. The logical model `contact_author`

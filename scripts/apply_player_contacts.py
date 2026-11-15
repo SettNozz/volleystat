@@ -18,7 +18,7 @@ from src.tracking.player_contacts import build_player_contacts, source_fingerpri
 
 
 def rebuild(annotations_path: Path, output: Path, *, legacy=False, model=None, roster=None, cache_dir=None,
-            assets=None, device="auto", require_cache=True, use_registry=True):
+            assets=None, device="auto", require_cache=True, use_registry=True, hard_guards=False):
     path = annotations_path.resolve()
     if not path.name.endswith("_annotations.json"):
         raise ValueError("Expected <stem>_annotations.json")
@@ -33,7 +33,7 @@ def rebuild(annotations_path: Path, output: Path, *, legacy=False, model=None, r
     from src.tracking.contact_author_runtime import attribute_contacts
     report = attribute_contacts(annotations, stats.get("all_events") or [], enabled=not legacy,
         model_path=model, roster=roster, cache_dir=cache_dir, assets=assets, device=device,
-        require_cache=require_cache, use_registry=use_registry)
+        require_cache=require_cache, use_registry=use_registry, guards=hard_guards)
     report["rebuilt_from"] = {"annotations": str(path), "stats": str(stats_path),
                               **source_fingerprint(stats_bytes, annotations_bytes)}
     annotations["player_contacts"] = stats["player_contacts"] = report
@@ -59,11 +59,14 @@ def main():
     parser.add_argument("--require-model-cache", action="store_true", help="Explicit cache-only replay (the default)")
     parser.add_argument("--capture-missing-reid", action="store_true", help="Allow only genuinely missing OSNet crops")
     parser.add_argument("--no-model-registry", action="store_true")
+    parser.add_argument("--hard-guards", action="store_true",
+                        help="Restore the 2026-11-13 abstaining eligibility guards and substitution mask")
     args = parser.parse_args()
     if args.capture_missing_reid and args.require_model_cache: parser.error("Choose cache-only replay or missing-crop capture")
     print(json.dumps(rebuild(args.annotations, args.output, legacy=args.legacy, model=args.model, roster=args.roster,
         cache_dir=args.model_cache_dir, assets=args.assets, device=args.device,
-        require_cache=not args.capture_missing_reid, use_registry=not args.no_model_registry), ensure_ascii=False, indent=2))
+        require_cache=not args.capture_missing_reid, use_registry=not args.no_model_registry,
+        hard_guards=args.hard_guards), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
