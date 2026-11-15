@@ -77,7 +77,7 @@ Open [localhost:5050](http://localhost:5050). Choose **Upload**, provide a local
 
 Saved analyses appear in the [results library](http://localhost:5050/library). The shared top menu offers **Video Analysis**, **Visual Stats**, **Player statistics**, **Set analysis** and **Player highlights**. The main video view shows the team lineup beside **Events**, including saved substitutions. **Edit players** adds names, jersey numbers, positions and photo choices; these browser-local profiles carry into highlights and statistics. Photo controls appear only inside the editor. Highlights share the main video and overlays, with a selected-player portrait, player/type filters, adjustable contact windows and sequential playback. **Set analysis** fills the panel height. Press **Space** outside interactive controls and dialogs to play or pause.
 
-Highlights and player statistics count repeated model proposals as one moment only when they share observed contact evidence; source events and human reviews remain intact. Contact authors must agree with strong, continuous roster evidence and remain close to the saved ball. Selecting a set focuses its saved setter. See [contact validation](docs/contact_moments_and_authors_20261113.md) for rules and limits.
+Highlights and player statistics count repeated model proposals as one moment only when they share observed contact evidence; source events and human reviews remain intact. Contact authors use the automatic roster with identity-pass gallery views; former proximity/roster rules are review flags. Selecting a set focuses its saved setter. See [contact validation](docs/contact_moments_and_authors_20261113.md) and the [method comparison](docs/contact_author_method_comparison_20261114.md).
 
 Rename either team directly on the scoreboard. The name updates filters, set paths, event cards, charts, player statistics and point-review labels immediately, and stays saved for that result in this browser. Shared select styling keeps the same keyboard controls and form values across the viewer, library, upload and review pages.
 
@@ -112,7 +112,7 @@ Default output is JSON plus interactive overlays on the original video. Keep the
 ## Current scope and limits
 
 - **Camera setup matters.** Calibration is required per placement. Current geometry is 2D image/court geometry; displayed attack height is an approximation, not a measured 3D trajectory.
-- **Predictions need review.** Full-match identity and contact-author accuracy with automatic rosters have not been established. Unknown players and unresolved outcomes remain explicit.
+- **Predictions need review.** With automatic rosters, held-out contact-author exact-person recall is about 75% on ten development videos (36–92% per video); it is not an untouched test. Unknown players and unresolved outcomes remain explicit.
 - **Event paths differ.** Viewer analyses enable the configured contact spotter when its checkpoint is available. CLI analyses enable it with `--contact-spotter`; otherwise contacts/rallies use the FSM. With spotting enabled, score and attack heatmap remain FSM-derived.
 - **Match context needs input.** Configure warm-up/non-game intervals, set boundaries and team-side switches for the recording. The contact spotter does not distinguish warm-up from match play.
 - **Estimates retain provenance.** Ball-gap reconstruction is off by default. Missing off-camera ball positions remain missing; reconstructed positions are derived data, never detector ground truth or human labels.

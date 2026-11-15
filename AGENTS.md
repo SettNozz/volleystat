@@ -503,7 +503,11 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   `scripts/apply_player_contacts.py` replays cache-only; `--capture-missing-reid`
   permits missing OSNet crops only. Human attribution reviews append to
   `<stem>_player_contact_reviews.jsonl`, bound to SHA256 of both analysis
-  files. No measured attribution score exists for automatic rosters. See
+  files. Method `..._soft_hgb_v2`: automatic roster plus up to 12 identity-pass
+  gallery views per person; argmax of model scores. The 2026-11-13 eligibility
+  rules and substitution mask are `review_flags` only (`--hard-guards` restores
+  them): held-out automatic-roster exact person 352 -> 437/585 (74.7%);
+  human-confirmed photos 483/585. See `docs/contact_author_method_comparison_20261114.md`,
   `docs/contact_author_production.md`, `docs/player_contacts.md`.
 - **Contact side** (default on, `--no-contact-side`): `src/tracking/contact_side.py`
   runs after the spotter on the final `all_events`, with no inference. Ball box
@@ -541,7 +545,7 @@ paths and experiment history: `docs/agent_history.md` and the linked docs.
   column; the evidence-review link stays below the table. Point reviews append beside results, bound to both source hashes;
   confirming a winner never verifies a contact or attack outcome. See
   `docs/statistics_evidence.md`. Original FSM score/heatmap remain separate.
-- **Contact moments and author guards**: shared `contact_moments.py` groups duplicate model evidence for highlights/statistics; author eligibility respects measured proximity and strong continuous roster support. See `docs/contact_moments_and_authors_20261113.md`.
+- **Contact moments**: shared `contact_moments.py` groups duplicate model evidence for highlights/statistics. The 2026-11-13 author guards are opt-in since 2026-11-14 (they cost held-out accuracy). See `docs/contact_moments_and_authors_20261113.md`.
 - **Viewer names and controls**: `team_names.js` owns browser-local result-scoped team labels and live `team-names-changed` updates; `viewer_controls.css` styles native selects with a progressive `base-select` picker and native fallback. Keep unknown sides unknown and escape names in HTML templates.
 - **Pose input and net floor**: default `--pose-imgsz 2560`.
   `GameAnalyzer._validated_net_floor` falls back to the homography world-y=0
