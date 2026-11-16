@@ -9,9 +9,16 @@ registry copy); the loader verifies the complete pinned SHA256 before loading.
 The method's development whole-source-held-out result is 470/565 (83.19%) exact
 near-person recall, 307/381 (80.58%) on seven new sources, after the photo-reference
 guard. Selection used these folds; there is no untouched final-test score. The
-all-ten-source final fit has no score on its own training data. Photo rosters
-were human-confirmed in evaluation; automatic roster quality is unmeasured.
+all-ten-source final fit has no untouched held-out score. Photo rosters were
+human-confirmed in those development folds.
 See the [full experiment history](experiments/contact_expanded_training_20261106_v1.md).
+
+The [2026-11-14 automatic-roster benchmark](experiments/current_contact_system_benchmark_20261114_v1.md)
+measures commit `5bd1d8af`: 362/585 exact named authors (61.88% recall,
+71.68% precision) at reference contacts across ten training sources. On the
+three sources with audited timing, contact plus exact-person detection has
+74.47% recall and 83.33% precision at +/-5 frames. These are descriptive
+development-data measurements, not unseen-match accuracy.
 
 ## Installation and default analysis
 

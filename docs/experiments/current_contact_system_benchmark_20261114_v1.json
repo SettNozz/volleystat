@@ -1,0 +1,1393 @@
+{
+  "schema": "current_contact_system_benchmark_report_v1",
+  "experiment_date": "2026-11-14",
+  "measured_commit": "5bd1d8af7b037b31bc0d18eb5dfd17d625476451",
+  "local_run": "results/contact_system_benchmark_20261114_v1",
+  "local_metrics_sha256": "a9b6f2e532fa777729b3a3df315eb39da6e4aabe915a57e17b46e3be0ba4617c",
+  "human_snapshot_sha256": "68796849cbaf3070f7c7c54de397d2176c2a0bf5d5746b725bb1cd255b820cf1",
+  "human_source_revisions": [
+    421,
+    862
+  ],
+  "source_count": 10,
+  "protocol": {
+    "training": false,
+    "automatic_roster": true,
+    "substitutions": true,
+    "human_author_targets_used_by_automatic_pipeline": false,
+    "human_photo_rosters_used_by_automatic_pipeline": false,
+    "id_naming": "One-to-one evaluation naming from confirmed reference boxes and frozen photo embeddings only; no contact-author targets. A later ID hijack cannot invalidate clear original setup-photo naming.",
+    "photo_guard_source_frames": 60,
+    "timestamp_tolerances_frames": [
+      5,
+      10,
+      15
+    ],
+    "event_pairing": "Maximum-cardinality one-to-one matching, then minimum total timestamp error; identity labels never choose pairs.",
+    "abstentions_and_unmapped_ids_count_as_errors": true,
+    "calibration": "Frozen existing per-camera geometry; no net recalibration.",
+    "model_cache": "Existing compatible raw outputs reused; only missing stages captured. Exact LF/CRLF-only backend equivalence audited against identical weights, runtime and settings.",
+    "render_video": false
+  },
+  "model_sha256": {
+    "ball_detector": "8081c66377234fc4c16108ec8a23775fcbd8131add58c60b6fdd6a6b5fd7f618",
+    "pose_estimator": "29b17eaf3a3117cbea906090dbedf9159f7c6a49db58ec8b99ed2dfde1cf6eb2",
+    "player_reid": "48df972f72887b95cf3b43b3a07c3a7d2398381aea0f9cae64a7ef11d512b727",
+    "contact_spotter": "86a2999795939ad3fb0cdd726fb1fa927d9db80555fdd9b0945aa09d635c7042",
+    "contact_author": "4fd55ffaea4a7280a1a87bb358c303fcfeb7a364bed92324389fe018dbf96091"
+  },
+  "conditional_author": {
+    "contacts": 1137,
+    "named_targets": 585,
+    "other_team_targets": 552,
+    "correct_named": 362,
+    "exact_person_recall": 0.6188034188034188,
+    "person_predictions": 505,
+    "exact_person_precision": 0.7168316831683168,
+    "person_f1": 0.6642201834862386,
+    "author_or_other_team_accuracy": 0.781882145998241,
+    "correct_author_or_other_team": 889,
+    "other_team_recall": 0.9547101449275363,
+    "unmapped_named_targets": 42,
+    "unmapped_person_predictions": 42,
+    "named_errors": {
+      "correct": 362,
+      "unresolved": 78,
+      "wrong_person_or_unmapped": 130,
+      "wrong_team": 15
+    }
+  },
+  "conditional_author_photo_guard": {
+    "contacts": 1105,
+    "named_targets": 565,
+    "other_team_targets": 540,
+    "correct_named": 351,
+    "exact_person_recall": 0.6212389380530974,
+    "person_predictions": 486,
+    "exact_person_precision": 0.7222222222222222,
+    "person_f1": 0.6679352997145576,
+    "author_or_other_team_accuracy": 0.783710407239819,
+    "correct_author_or_other_team": 866,
+    "other_team_recall": 0.9537037037037037,
+    "unmapped_named_targets": 40,
+    "unmapped_person_predictions": 40,
+    "named_errors": {
+      "unresolved": 78,
+      "correct": 351,
+      "wrong_person_or_unmapped": 122,
+      "wrong_team": 14
+    }
+  },
+  "source_specific_person_macro_f1": 0.5925064104586064,
+  "reference_time_recovery": {
+    "scope": "Selected reviewed contacts, including seven sources with unverified model-proposed timestamps. Unreviewed predictions are not scored here; no exhaustive precision/F1 claim.",
+    "by_tolerance": {
+      "5": {
+        "named_targets": 585,
+        "exact_named_hits": 342,
+        "exact_named_recovery": 0.5846153846153846,
+        "reviewed_contacts_matched": 1068,
+        "reviewed_contacts": 1137
+      },
+      "10": {
+        "named_targets": 585,
+        "exact_named_hits": 342,
+        "exact_named_recovery": 0.5846153846153846,
+        "reviewed_contacts_matched": 1076,
+        "reviewed_contacts": 1137
+      },
+      "15": {
+        "named_targets": 585,
+        "exact_named_hits": 342,
+        "exact_named_recovery": 0.5846153846153846,
+        "reviewed_contacts_matched": 1077,
+        "reviewed_contacts": 1137
+      }
+    }
+  },
+  "exhaustive_three_source_detection": {
+    "all_frames": {
+      "5": {
+        "tp": 390,
+        "fp": 7,
+        "fn": 7,
+        "precision": 0.982367758186398,
+        "recall": 0.982367758186398,
+        "f1": 0.982367758186398,
+        "exact_person_detection": {
+          "tp": 140,
+          "fp": 28,
+          "fn": 48,
+          "precision": 0.8333333333333334,
+          "recall": 0.7446808510638298,
+          "f1": 0.7865168539325843
+        }
+      },
+      "10": {
+        "tp": 390,
+        "fp": 7,
+        "fn": 7,
+        "precision": 0.982367758186398,
+        "recall": 0.982367758186398,
+        "f1": 0.982367758186398,
+        "exact_person_detection": {
+          "tp": 140,
+          "fp": 28,
+          "fn": 48,
+          "precision": 0.8333333333333334,
+          "recall": 0.7446808510638298,
+          "f1": 0.7865168539325843
+        }
+      },
+      "15": {
+        "tp": 390,
+        "fp": 7,
+        "fn": 7,
+        "precision": 0.982367758186398,
+        "recall": 0.982367758186398,
+        "f1": 0.982367758186398,
+        "exact_person_detection": {
+          "tp": 140,
+          "fp": 28,
+          "fn": 48,
+          "precision": 0.8333333333333334,
+          "recall": 0.7446808510638298,
+          "f1": 0.7865168539325843
+        }
+      }
+    },
+    "human_in_play": {
+      "5": {
+        "tp": 390,
+        "fp": 7,
+        "fn": 7,
+        "precision": 0.982367758186398,
+        "recall": 0.982367758186398,
+        "f1": 0.982367758186398,
+        "exact_person_detection": {
+          "tp": 140,
+          "fp": 28,
+          "fn": 48,
+          "precision": 0.8333333333333334,
+          "recall": 0.7446808510638298,
+          "f1": 0.7865168539325843
+        }
+      },
+      "10": {
+        "tp": 390,
+        "fp": 7,
+        "fn": 7,
+        "precision": 0.982367758186398,
+        "recall": 0.982367758186398,
+        "f1": 0.982367758186398,
+        "exact_person_detection": {
+          "tp": 140,
+          "fp": 28,
+          "fn": 48,
+          "precision": 0.8333333333333334,
+          "recall": 0.7446808510638298,
+          "f1": 0.7865168539325843
+        }
+      },
+      "15": {
+        "tp": 390,
+        "fp": 7,
+        "fn": 7,
+        "precision": 0.982367758186398,
+        "recall": 0.982367758186398,
+        "f1": 0.982367758186398,
+        "exact_person_detection": {
+          "tp": 140,
+          "fp": 28,
+          "fn": 48,
+          "precision": 0.8333333333333334,
+          "recall": 0.7446808510638298,
+          "f1": 0.7865168539325843
+        }
+      }
+    }
+  },
+  "sources": [
+    {
+      "source_video": "j0gRhgFCgIs_4_4k",
+      "source_video_sha256": "34fe6b409445cbf969c1c5307562de82b37fb0dec381c490fe60c5ae045702fe",
+      "frames": 19222,
+      "fps": 29.97002997002997,
+      "named_targets": 59,
+      "other_team_targets": 62,
+      "mapped_automatic_ids": 6,
+      "author_model_status": "completed",
+      "identity_method": "osnet_tracklet_roster_v5",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 121,
+        "named_targets": 59,
+        "other_team_targets": 62,
+        "correct_named": 41,
+        "exact_person_recall": 0.6949152542372882,
+        "person_predictions": 49,
+        "exact_person_precision": 0.8367346938775511,
+        "person_f1": 0.7592592592592593,
+        "author_or_other_team_accuracy": 0.8181818181818182,
+        "correct_author_or_other_team": 99,
+        "other_team_recall": 0.9354838709677419,
+        "named_errors": {
+          "correct": 41,
+          "unresolved": 11,
+          "wrong_person_or_unmapped": 7
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 118,
+        "named_targets": 57,
+        "other_team_targets": 61,
+        "correct_named": 39,
+        "exact_person_recall": 0.6842105263157895,
+        "person_predictions": 47,
+        "exact_person_precision": 0.8297872340425532,
+        "person_f1": 0.75,
+        "author_or_other_team_accuracy": 0.8135593220338984,
+        "correct_author_or_other_team": 96,
+        "other_team_recall": 0.9344262295081968,
+        "named_errors": {
+          "unresolved": 11,
+          "correct": 39,
+          "wrong_person_or_unmapped": 7
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 119,
+          "reviewed_contact_recall": 0.9834710743801653,
+          "named_contacts_detected": 58,
+          "exact_named_hits": 42,
+          "exact_named_recovery": 0.711864406779661,
+          "audited_named_targets": 59,
+          "audited_exact_named_hits": 42,
+          "audited_exact_named_recovery": 0.711864406779661
+        },
+        "10": {
+          "reviewed_contacts_matched": 119,
+          "reviewed_contact_recall": 0.9834710743801653,
+          "named_contacts_detected": 58,
+          "exact_named_hits": 42,
+          "exact_named_recovery": 0.711864406779661,
+          "audited_named_targets": 59,
+          "audited_exact_named_hits": 42,
+          "audited_exact_named_recovery": 0.711864406779661
+        },
+        "15": {
+          "reviewed_contacts_matched": 119,
+          "reviewed_contact_recall": 0.9834710743801653,
+          "named_contacts_detected": 58,
+          "exact_named_hits": 42,
+          "exact_named_recovery": 0.711864406779661,
+          "audited_named_targets": 59,
+          "audited_exact_named_hits": 42,
+          "audited_exact_named_recovery": 0.711864406779661
+        }
+      },
+      "exhaustive_detection": {
+        "all_frames": {
+          "5": {
+            "tp": 124,
+            "fp": 1,
+            "fn": 1,
+            "precision": 0.992,
+            "recall": 0.992,
+            "f1": 0.992,
+            "ignored_predictions_near_unaudited_contacts": 0,
+            "audited_truth_contacts": 125,
+            "exact_person_detection": {
+              "tp": 42,
+              "fp": 9,
+              "fn": 17,
+              "precision": 0.8235294117647058,
+              "recall": 0.711864406779661,
+              "f1": 0.7636363636363637
+            }
+          },
+          "10": {
+            "tp": 124,
+            "fp": 1,
+            "fn": 1,
+            "precision": 0.992,
+            "recall": 0.992,
+            "f1": 0.992,
+            "ignored_predictions_near_unaudited_contacts": 0,
+            "audited_truth_contacts": 125,
+            "exact_person_detection": {
+              "tp": 42,
+              "fp": 9,
+              "fn": 17,
+              "precision": 0.8235294117647058,
+              "recall": 0.711864406779661,
+              "f1": 0.7636363636363637
+            }
+          },
+          "15": {
+            "tp": 124,
+            "fp": 1,
+            "fn": 1,
+            "precision": 0.992,
+            "recall": 0.992,
+            "f1": 0.992,
+            "ignored_predictions_near_unaudited_contacts": 0,
+            "audited_truth_contacts": 125,
+            "exact_person_detection": {
+              "tp": 42,
+              "fp": 9,
+              "fn": 17,
+              "precision": 0.8235294117647058,
+              "recall": 0.711864406779661,
+              "f1": 0.7636363636363637
+            }
+          }
+        },
+        "human_in_play": {
+          "5": {
+            "tp": 124,
+            "fp": 1,
+            "fn": 1,
+            "precision": 0.992,
+            "recall": 0.992,
+            "f1": 0.992,
+            "ignored_predictions_near_unaudited_contacts": 0,
+            "audited_truth_contacts": 125,
+            "exact_person_detection": {
+              "tp": 42,
+              "fp": 9,
+              "fn": 17,
+              "precision": 0.8235294117647058,
+              "recall": 0.711864406779661,
+              "f1": 0.7636363636363637
+            }
+          },
+          "10": {
+            "tp": 124,
+            "fp": 1,
+            "fn": 1,
+            "precision": 0.992,
+            "recall": 0.992,
+            "f1": 0.992,
+            "ignored_predictions_near_unaudited_contacts": 0,
+            "audited_truth_contacts": 125,
+            "exact_person_detection": {
+              "tp": 42,
+              "fp": 9,
+              "fn": 17,
+              "precision": 0.8235294117647058,
+              "recall": 0.711864406779661,
+              "f1": 0.7636363636363637
+            }
+          },
+          "15": {
+            "tp": 124,
+            "fp": 1,
+            "fn": 1,
+            "precision": 0.992,
+            "recall": 0.992,
+            "f1": 0.992,
+            "ignored_predictions_near_unaudited_contacts": 0,
+            "audited_truth_contacts": 125,
+            "exact_person_detection": {
+              "tp": 42,
+              "fp": 9,
+              "fn": 17,
+              "precision": 0.8235294117647058,
+              "recall": 0.711864406779661,
+              "f1": 0.7636363636363637
+            }
+          }
+        }
+      }
+    },
+    {
+      "source_video": "Khe4P8QcJkg_5_4k",
+      "source_video_sha256": "31211686d6c2eb95c50814d9a789da3ac85db1cee3e295c7e858eff14527bafd",
+      "frames": 21300,
+      "fps": 29.97002997002997,
+      "named_targets": 76,
+      "other_team_targets": 79,
+      "mapped_automatic_ids": 6,
+      "author_model_status": "completed",
+      "identity_method": "osnet_tracklet_roster_v5",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 155,
+        "named_targets": 76,
+        "other_team_targets": 79,
+        "correct_named": 58,
+        "exact_person_recall": 0.7631578947368421,
+        "person_predictions": 69,
+        "exact_person_precision": 0.8405797101449275,
+        "person_f1": 0.8,
+        "author_or_other_team_accuracy": 0.832258064516129,
+        "correct_author_or_other_team": 129,
+        "other_team_recall": 0.8987341772151899,
+        "named_errors": {
+          "correct": 58,
+          "unresolved": 7,
+          "wrong_person_or_unmapped": 9,
+          "wrong_team": 2
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 150,
+        "named_targets": 74,
+        "other_team_targets": 76,
+        "correct_named": 57,
+        "exact_person_recall": 0.7702702702702703,
+        "person_predictions": 67,
+        "exact_person_precision": 0.8507462686567164,
+        "person_f1": 0.8085106382978723,
+        "author_or_other_team_accuracy": 0.8333333333333334,
+        "correct_author_or_other_team": 125,
+        "other_team_recall": 0.8947368421052632,
+        "named_errors": {
+          "unresolved": 7,
+          "correct": 57,
+          "wrong_person_or_unmapped": 8,
+          "wrong_team": 2
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 151,
+          "reviewed_contact_recall": 0.9741935483870968,
+          "named_contacts_detected": 74,
+          "exact_named_hits": 55,
+          "exact_named_recovery": 0.7236842105263158,
+          "audited_named_targets": 76,
+          "audited_exact_named_hits": 55,
+          "audited_exact_named_recovery": 0.7236842105263158
+        },
+        "10": {
+          "reviewed_contacts_matched": 151,
+          "reviewed_contact_recall": 0.9741935483870968,
+          "named_contacts_detected": 74,
+          "exact_named_hits": 55,
+          "exact_named_recovery": 0.7236842105263158,
+          "audited_named_targets": 76,
+          "audited_exact_named_hits": 55,
+          "audited_exact_named_recovery": 0.7236842105263158
+        },
+        "15": {
+          "reviewed_contacts_matched": 151,
+          "reviewed_contact_recall": 0.9741935483870968,
+          "named_contacts_detected": 74,
+          "exact_named_hits": 55,
+          "exact_named_recovery": 0.7236842105263158,
+          "audited_named_targets": 76,
+          "audited_exact_named_hits": 55,
+          "audited_exact_named_recovery": 0.7236842105263158
+        }
+      },
+      "exhaustive_detection": {
+        "all_frames": {
+          "5": {
+            "tp": 150,
+            "fp": 1,
+            "fn": 3,
+            "precision": 0.9933774834437086,
+            "recall": 0.9803921568627451,
+            "f1": 0.9868421052631579,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 153,
+            "exact_person_detection": {
+              "tp": 55,
+              "fp": 14,
+              "fn": 21,
+              "precision": 0.7971014492753623,
+              "recall": 0.7236842105263158,
+              "f1": 0.7586206896551724
+            }
+          },
+          "10": {
+            "tp": 150,
+            "fp": 1,
+            "fn": 3,
+            "precision": 0.9933774834437086,
+            "recall": 0.9803921568627451,
+            "f1": 0.9868421052631579,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 153,
+            "exact_person_detection": {
+              "tp": 55,
+              "fp": 14,
+              "fn": 21,
+              "precision": 0.7971014492753623,
+              "recall": 0.7236842105263158,
+              "f1": 0.7586206896551724
+            }
+          },
+          "15": {
+            "tp": 150,
+            "fp": 1,
+            "fn": 3,
+            "precision": 0.9933774834437086,
+            "recall": 0.9803921568627451,
+            "f1": 0.9868421052631579,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 153,
+            "exact_person_detection": {
+              "tp": 55,
+              "fp": 14,
+              "fn": 21,
+              "precision": 0.7971014492753623,
+              "recall": 0.7236842105263158,
+              "f1": 0.7586206896551724
+            }
+          }
+        },
+        "human_in_play": {
+          "5": {
+            "tp": 150,
+            "fp": 1,
+            "fn": 3,
+            "precision": 0.9933774834437086,
+            "recall": 0.9803921568627451,
+            "f1": 0.9868421052631579,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 153,
+            "exact_person_detection": {
+              "tp": 55,
+              "fp": 14,
+              "fn": 21,
+              "precision": 0.7971014492753623,
+              "recall": 0.7236842105263158,
+              "f1": 0.7586206896551724
+            }
+          },
+          "10": {
+            "tp": 150,
+            "fp": 1,
+            "fn": 3,
+            "precision": 0.9933774834437086,
+            "recall": 0.9803921568627451,
+            "f1": 0.9868421052631579,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 153,
+            "exact_person_detection": {
+              "tp": 55,
+              "fp": 14,
+              "fn": 21,
+              "precision": 0.7971014492753623,
+              "recall": 0.7236842105263158,
+              "f1": 0.7586206896551724
+            }
+          },
+          "15": {
+            "tp": 150,
+            "fp": 1,
+            "fn": 3,
+            "precision": 0.9933774834437086,
+            "recall": 0.9803921568627451,
+            "f1": 0.9868421052631579,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 153,
+            "exact_person_detection": {
+              "tp": 55,
+              "fp": 14,
+              "fn": 21,
+              "precision": 0.7971014492753623,
+              "recall": 0.7236842105263158,
+              "f1": 0.7586206896551724
+            }
+          }
+        }
+      }
+    },
+    {
+      "source_video": "j3BO9GgUFBI_3_4k",
+      "source_video_sha256": "89103de6ff8bd339a5177dfbaaee1aaffbdc2d610301646b8b67cd216cc48628",
+      "frames": 21300,
+      "fps": 29.97002997002997,
+      "named_targets": 53,
+      "other_team_targets": 65,
+      "mapped_automatic_ids": 6,
+      "author_model_status": "completed",
+      "identity_method": "osnet_tracklet_roster_v5",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 118,
+        "named_targets": 53,
+        "other_team_targets": 65,
+        "correct_named": 44,
+        "exact_person_recall": 0.8301886792452831,
+        "person_predictions": 46,
+        "exact_person_precision": 0.9565217391304348,
+        "person_f1": 0.8888888888888888,
+        "author_or_other_team_accuracy": 0.923728813559322,
+        "correct_author_or_other_team": 109,
+        "other_team_recall": 1,
+        "named_errors": {
+          "unresolved": 7,
+          "correct": 44,
+          "wrong_person_or_unmapped": 2
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 118,
+        "named_targets": 53,
+        "other_team_targets": 65,
+        "correct_named": 44,
+        "exact_person_recall": 0.8301886792452831,
+        "person_predictions": 46,
+        "exact_person_precision": 0.9565217391304348,
+        "person_f1": 0.8888888888888888,
+        "author_or_other_team_accuracy": 0.923728813559322,
+        "correct_author_or_other_team": 109,
+        "other_team_recall": 1,
+        "named_errors": {
+          "unresolved": 7,
+          "correct": 44,
+          "wrong_person_or_unmapped": 2
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 115,
+          "reviewed_contact_recall": 0.9745762711864406,
+          "named_contacts_detected": 50,
+          "exact_named_hits": 43,
+          "exact_named_recovery": 0.8113207547169812,
+          "audited_named_targets": 53,
+          "audited_exact_named_hits": 43,
+          "audited_exact_named_recovery": 0.8113207547169812
+        },
+        "10": {
+          "reviewed_contacts_matched": 115,
+          "reviewed_contact_recall": 0.9745762711864406,
+          "named_contacts_detected": 50,
+          "exact_named_hits": 43,
+          "exact_named_recovery": 0.8113207547169812,
+          "audited_named_targets": 53,
+          "audited_exact_named_hits": 43,
+          "audited_exact_named_recovery": 0.8113207547169812
+        },
+        "15": {
+          "reviewed_contacts_matched": 115,
+          "reviewed_contact_recall": 0.9745762711864406,
+          "named_contacts_detected": 50,
+          "exact_named_hits": 43,
+          "exact_named_recovery": 0.8113207547169812,
+          "audited_named_targets": 53,
+          "audited_exact_named_hits": 43,
+          "audited_exact_named_recovery": 0.8113207547169812
+        }
+      },
+      "exhaustive_detection": {
+        "all_frames": {
+          "5": {
+            "tp": 116,
+            "fp": 5,
+            "fn": 3,
+            "precision": 0.9586776859504132,
+            "recall": 0.9747899159663865,
+            "f1": 0.9666666666666667,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 119,
+            "exact_person_detection": {
+              "tp": 43,
+              "fp": 5,
+              "fn": 10,
+              "precision": 0.8958333333333334,
+              "recall": 0.8113207547169812,
+              "f1": 0.8514851485148515
+            }
+          },
+          "10": {
+            "tp": 116,
+            "fp": 5,
+            "fn": 3,
+            "precision": 0.9586776859504132,
+            "recall": 0.9747899159663865,
+            "f1": 0.9666666666666667,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 119,
+            "exact_person_detection": {
+              "tp": 43,
+              "fp": 5,
+              "fn": 10,
+              "precision": 0.8958333333333334,
+              "recall": 0.8113207547169812,
+              "f1": 0.8514851485148515
+            }
+          },
+          "15": {
+            "tp": 116,
+            "fp": 5,
+            "fn": 3,
+            "precision": 0.9586776859504132,
+            "recall": 0.9747899159663865,
+            "f1": 0.9666666666666667,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 119,
+            "exact_person_detection": {
+              "tp": 43,
+              "fp": 5,
+              "fn": 10,
+              "precision": 0.8958333333333334,
+              "recall": 0.8113207547169812,
+              "f1": 0.8514851485148515
+            }
+          }
+        },
+        "human_in_play": {
+          "5": {
+            "tp": 116,
+            "fp": 5,
+            "fn": 3,
+            "precision": 0.9586776859504132,
+            "recall": 0.9747899159663865,
+            "f1": 0.9666666666666667,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 119,
+            "exact_person_detection": {
+              "tp": 43,
+              "fp": 5,
+              "fn": 10,
+              "precision": 0.8958333333333334,
+              "recall": 0.8113207547169812,
+              "f1": 0.8514851485148515
+            }
+          },
+          "10": {
+            "tp": 116,
+            "fp": 5,
+            "fn": 3,
+            "precision": 0.9586776859504132,
+            "recall": 0.9747899159663865,
+            "f1": 0.9666666666666667,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 119,
+            "exact_person_detection": {
+              "tp": 43,
+              "fp": 5,
+              "fn": 10,
+              "precision": 0.8958333333333334,
+              "recall": 0.8113207547169812,
+              "f1": 0.8514851485148515
+            }
+          },
+          "15": {
+            "tp": 116,
+            "fp": 5,
+            "fn": 3,
+            "precision": 0.9586776859504132,
+            "recall": 0.9747899159663865,
+            "f1": 0.9666666666666667,
+            "ignored_predictions_near_unaudited_contacts": 1,
+            "audited_truth_contacts": 119,
+            "exact_person_detection": {
+              "tp": 43,
+              "fp": 5,
+              "fn": 10,
+              "precision": 0.8958333333333334,
+              "recall": 0.8113207547169812,
+              "f1": 0.8514851485148515
+            }
+          }
+        }
+      }
+    },
+    {
+      "source_video": "JIZ3exHe3hA_4k",
+      "source_video_sha256": "d8d4bfe9c8e0071a9b12559802c39b11943ec701ced030f70a8b0ca7b9e3885d",
+      "frames": 17592,
+      "fps": 29.97002997002997,
+      "named_targets": 49,
+      "other_team_targets": 60,
+      "mapped_automatic_ids": 7,
+      "author_model_status": "completed",
+      "identity_method": "osnet_tracklet_roster_v5",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 109,
+        "named_targets": 49,
+        "other_team_targets": 60,
+        "correct_named": 33,
+        "exact_person_recall": 0.673469387755102,
+        "person_predictions": 43,
+        "exact_person_precision": 0.7674418604651163,
+        "person_f1": 0.717391304347826,
+        "author_or_other_team_accuracy": 0.8348623853211009,
+        "correct_author_or_other_team": 91,
+        "other_team_recall": 0.9666666666666667,
+        "named_errors": {
+          "correct": 33,
+          "wrong_person_or_unmapped": 8,
+          "unresolved": 6,
+          "wrong_team": 2
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 104,
+        "named_targets": 47,
+        "other_team_targets": 57,
+        "correct_named": 31,
+        "exact_person_recall": 0.6595744680851063,
+        "person_predictions": 41,
+        "exact_person_precision": 0.7560975609756098,
+        "person_f1": 0.7045454545454546,
+        "author_or_other_team_accuracy": 0.8269230769230769,
+        "correct_author_or_other_team": 86,
+        "other_team_recall": 0.9649122807017544,
+        "named_errors": {
+          "wrong_person_or_unmapped": 8,
+          "correct": 31,
+          "unresolved": 6,
+          "wrong_team": 2
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 90,
+          "reviewed_contact_recall": 0.8256880733944955,
+          "named_contacts_detected": 43,
+          "exact_named_hits": 29,
+          "exact_named_recovery": 0.5918367346938775,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "10": {
+          "reviewed_contacts_matched": 92,
+          "reviewed_contact_recall": 0.8440366972477065,
+          "named_contacts_detected": 43,
+          "exact_named_hits": 29,
+          "exact_named_recovery": 0.5918367346938775,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "15": {
+          "reviewed_contacts_matched": 92,
+          "reviewed_contact_recall": 0.8440366972477065,
+          "named_contacts_detected": 43,
+          "exact_named_hits": 29,
+          "exact_named_recovery": 0.5918367346938775,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        }
+      },
+      "exhaustive_detection": {}
+    },
+    {
+      "source_video": "LdOghv6rt_4_4k",
+      "source_video_sha256": "61be3498f2138b9f58776d059edd459f09f49d1349256e4ff5aac232d0279b48",
+      "frames": 21300,
+      "fps": 29.97002997002997,
+      "named_targets": 69,
+      "other_team_targets": 47,
+      "mapped_automatic_ids": 6,
+      "author_model_status": "completed",
+      "identity_method": "osnet_tracklet_roster_v5",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 116,
+        "named_targets": 69,
+        "other_team_targets": 47,
+        "correct_named": 23,
+        "exact_person_recall": 0.3333333333333333,
+        "person_predictions": 54,
+        "exact_person_precision": 0.42592592592592593,
+        "person_f1": 0.37398373983739835,
+        "author_or_other_team_accuracy": 0.5948275862068966,
+        "correct_author_or_other_team": 69,
+        "other_team_recall": 0.9787234042553191,
+        "named_errors": {
+          "unresolved": 15,
+          "wrong_person_or_unmapped": 30,
+          "correct": 23,
+          "wrong_team": 1
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 112,
+        "named_targets": 67,
+        "other_team_targets": 45,
+        "correct_named": 22,
+        "exact_person_recall": 0.3283582089552239,
+        "person_predictions": 52,
+        "exact_person_precision": 0.4230769230769231,
+        "person_f1": 0.3697478991596639,
+        "author_or_other_team_accuracy": 0.5892857142857143,
+        "correct_author_or_other_team": 66,
+        "other_team_recall": 0.9777777777777777,
+        "named_errors": {
+          "unresolved": 15,
+          "wrong_person_or_unmapped": 29,
+          "correct": 22,
+          "wrong_team": 1
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 107,
+          "reviewed_contact_recall": 0.9224137931034483,
+          "named_contacts_detected": 66,
+          "exact_named_hits": 21,
+          "exact_named_recovery": 0.30434782608695654,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "10": {
+          "reviewed_contacts_matched": 107,
+          "reviewed_contact_recall": 0.9224137931034483,
+          "named_contacts_detected": 66,
+          "exact_named_hits": 21,
+          "exact_named_recovery": 0.30434782608695654,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "15": {
+          "reviewed_contacts_matched": 108,
+          "reviewed_contact_recall": 0.9310344827586207,
+          "named_contacts_detected": 67,
+          "exact_named_hits": 21,
+          "exact_named_recovery": 0.30434782608695654,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        }
+      },
+      "exhaustive_detection": {}
+    },
+    {
+      "source_video": "QhqMwaCf8iw_4k",
+      "source_video_sha256": "ece2aecd82dd7fe24e50043cfde9d8884c9bdd613e0352487e77f7d9acf37ebd",
+      "frames": 21270,
+      "fps": 29.97002997002997,
+      "named_targets": 53,
+      "other_team_targets": 29,
+      "mapped_automatic_ids": 12,
+      "author_model_status": "completed",
+      "identity_method": "osnet_tracklet_roster_v5",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 82,
+        "named_targets": 53,
+        "other_team_targets": 29,
+        "correct_named": 29,
+        "exact_person_recall": 0.5471698113207547,
+        "person_predictions": 47,
+        "exact_person_precision": 0.6170212765957447,
+        "person_f1": 0.58,
+        "author_or_other_team_accuracy": 0.7073170731707317,
+        "correct_author_or_other_team": 58,
+        "other_team_recall": 1,
+        "named_errors": {
+          "wrong_person_or_unmapped": 18,
+          "unresolved": 5,
+          "correct": 29,
+          "wrong_team": 1
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 77,
+        "named_targets": 48,
+        "other_team_targets": 29,
+        "correct_named": 28,
+        "exact_person_recall": 0.5833333333333334,
+        "person_predictions": 42,
+        "exact_person_precision": 0.6666666666666666,
+        "person_f1": 0.6222222222222222,
+        "author_or_other_team_accuracy": 0.7402597402597403,
+        "correct_author_or_other_team": 57,
+        "other_team_recall": 1,
+        "named_errors": {
+          "wrong_person_or_unmapped": 14,
+          "unresolved": 5,
+          "correct": 28,
+          "wrong_team": 1
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 74,
+          "reviewed_contact_recall": 0.9024390243902439,
+          "named_contacts_detected": 50,
+          "exact_named_hits": 28,
+          "exact_named_recovery": 0.5283018867924528,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "10": {
+          "reviewed_contacts_matched": 75,
+          "reviewed_contact_recall": 0.9146341463414634,
+          "named_contacts_detected": 50,
+          "exact_named_hits": 28,
+          "exact_named_recovery": 0.5283018867924528,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "15": {
+          "reviewed_contacts_matched": 75,
+          "reviewed_contact_recall": 0.9146341463414634,
+          "named_contacts_detected": 50,
+          "exact_named_hits": 28,
+          "exact_named_recovery": 0.5283018867924528,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        }
+      },
+      "exhaustive_detection": {}
+    },
+    {
+      "source_video": "TcUru_ou4CQ_4k",
+      "source_video_sha256": "c1d1c44496d78da8abda8ee5e91c3c506a1fd85b5c6bee8d31a7fa899db707a9",
+      "frames": 21300,
+      "fps": 29.97002997002997,
+      "named_targets": 55,
+      "other_team_targets": 43,
+      "mapped_automatic_ids": 4,
+      "author_model_status": "completed",
+      "identity_method": "osnet_frozen_gallery_kalman_roster_v4",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 98,
+        "named_targets": 55,
+        "other_team_targets": 43,
+        "correct_named": 29,
+        "exact_person_recall": 0.5272727272727272,
+        "person_predictions": 46,
+        "exact_person_precision": 0.6304347826086957,
+        "person_f1": 0.5742574257425742,
+        "author_or_other_team_accuracy": 0.7244897959183674,
+        "correct_author_or_other_team": 71,
+        "other_team_recall": 0.9767441860465116,
+        "named_errors": {
+          "correct": 29,
+          "unresolved": 8,
+          "wrong_person_or_unmapped": 16,
+          "wrong_team": 2
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 98,
+        "named_targets": 55,
+        "other_team_targets": 43,
+        "correct_named": 29,
+        "exact_person_recall": 0.5272727272727272,
+        "person_predictions": 46,
+        "exact_person_precision": 0.6304347826086957,
+        "person_f1": 0.5742574257425742,
+        "author_or_other_team_accuracy": 0.7244897959183674,
+        "correct_author_or_other_team": 71,
+        "other_team_recall": 0.9767441860465116,
+        "named_errors": {
+          "correct": 29,
+          "unresolved": 8,
+          "wrong_person_or_unmapped": 16,
+          "wrong_team": 2
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 94,
+          "reviewed_contact_recall": 0.9591836734693877,
+          "named_contacts_detected": 52,
+          "exact_named_hits": 27,
+          "exact_named_recovery": 0.4909090909090909,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "10": {
+          "reviewed_contacts_matched": 94,
+          "reviewed_contact_recall": 0.9591836734693877,
+          "named_contacts_detected": 52,
+          "exact_named_hits": 27,
+          "exact_named_recovery": 0.4909090909090909,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "15": {
+          "reviewed_contacts_matched": 94,
+          "reviewed_contact_recall": 0.9591836734693877,
+          "named_contacts_detected": 52,
+          "exact_named_hits": 27,
+          "exact_named_recovery": 0.4909090909090909,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        }
+      },
+      "exhaustive_detection": {}
+    },
+    {
+      "source_video": "X6JdbC8SM_U_4k",
+      "source_video_sha256": "bb7255294938b8f1babdec2e0d245c7d17c06c125287af656809a656b3009e1c",
+      "frames": 21300,
+      "fps": 29.97002997002997,
+      "named_targets": 45,
+      "other_team_targets": 41,
+      "mapped_automatic_ids": 8,
+      "author_model_status": "completed",
+      "identity_method": "osnet_tracklet_roster_v5",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 86,
+        "named_targets": 45,
+        "other_team_targets": 41,
+        "correct_named": 19,
+        "exact_person_recall": 0.4222222222222222,
+        "person_predictions": 38,
+        "exact_person_precision": 0.5,
+        "person_f1": 0.4578313253012048,
+        "author_or_other_team_accuracy": 0.6744186046511628,
+        "correct_author_or_other_team": 58,
+        "other_team_recall": 0.9512195121951219,
+        "named_errors": {
+          "correct": 19,
+          "wrong_person_or_unmapped": 17,
+          "wrong_team": 4,
+          "unresolved": 5
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 77,
+        "named_targets": 39,
+        "other_team_targets": 38,
+        "correct_named": 16,
+        "exact_person_recall": 0.41025641025641024,
+        "person_predictions": 33,
+        "exact_person_precision": 0.48484848484848486,
+        "person_f1": 0.4444444444444444,
+        "author_or_other_team_accuracy": 0.6753246753246753,
+        "correct_author_or_other_team": 52,
+        "other_team_recall": 0.9473684210526315,
+        "named_errors": {
+          "correct": 16,
+          "wrong_person_or_unmapped": 15,
+          "wrong_team": 3,
+          "unresolved": 5
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 82,
+          "reviewed_contact_recall": 0.9534883720930233,
+          "named_contacts_detected": 44,
+          "exact_named_hits": 18,
+          "exact_named_recovery": 0.4,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "10": {
+          "reviewed_contacts_matched": 82,
+          "reviewed_contact_recall": 0.9534883720930233,
+          "named_contacts_detected": 44,
+          "exact_named_hits": 18,
+          "exact_named_recovery": 0.4,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "15": {
+          "reviewed_contacts_matched": 82,
+          "reviewed_contact_recall": 0.9534883720930233,
+          "named_contacts_detected": 44,
+          "exact_named_hits": 18,
+          "exact_named_recovery": 0.4,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        }
+      },
+      "exhaustive_detection": {}
+    },
+    {
+      "source_video": "qDzHtxhNkBA_4k",
+      "source_video_sha256": "8caaa60a4dd6b4c6d256ced9da9396788c0b8cfadab071027b832cc7ca0da625",
+      "frames": 20049,
+      "fps": 29.97002997002997,
+      "named_targets": 36,
+      "other_team_targets": 25,
+      "mapped_automatic_ids": 5,
+      "author_model_status": "completed",
+      "identity_method": "osnet_tracklet_roster_v5",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 61,
+        "named_targets": 36,
+        "other_team_targets": 25,
+        "correct_named": 15,
+        "exact_person_recall": 0.4166666666666667,
+        "person_predictions": 31,
+        "exact_person_precision": 0.4838709677419355,
+        "person_f1": 0.44776119402985076,
+        "author_or_other_team_accuracy": 0.639344262295082,
+        "correct_author_or_other_team": 39,
+        "other_team_recall": 0.96,
+        "named_errors": {
+          "correct": 15,
+          "wrong_person_or_unmapped": 16,
+          "unresolved": 5
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 60,
+        "named_targets": 35,
+        "other_team_targets": 25,
+        "correct_named": 14,
+        "exact_person_recall": 0.4,
+        "person_predictions": 30,
+        "exact_person_precision": 0.4666666666666667,
+        "person_f1": 0.4307692307692308,
+        "author_or_other_team_accuracy": 0.6333333333333333,
+        "correct_author_or_other_team": 38,
+        "other_team_recall": 0.96,
+        "named_errors": {
+          "wrong_person_or_unmapped": 16,
+          "correct": 14,
+          "unresolved": 5
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 59,
+          "reviewed_contact_recall": 0.9672131147540983,
+          "named_contacts_detected": 36,
+          "exact_named_hits": 13,
+          "exact_named_recovery": 0.3611111111111111,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "10": {
+          "reviewed_contacts_matched": 59,
+          "reviewed_contact_recall": 0.9672131147540983,
+          "named_contacts_detected": 36,
+          "exact_named_hits": 13,
+          "exact_named_recovery": 0.3611111111111111,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "15": {
+          "reviewed_contacts_matched": 59,
+          "reviewed_contact_recall": 0.9672131147540983,
+          "named_contacts_detected": 36,
+          "exact_named_hits": 13,
+          "exact_named_recovery": 0.3611111111111111,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        }
+      },
+      "exhaustive_detection": {}
+    },
+    {
+      "source_video": "xZbD8fx3D4k_1_4k",
+      "source_video_sha256": "c44cdf7b40c63ca5dbcc3e756f968f02b1dcd567bab6aa2a8b0dbf57211cd811",
+      "frames": 21300,
+      "fps": 29.97002997002997,
+      "named_targets": 90,
+      "other_team_targets": 101,
+      "mapped_automatic_ids": 6,
+      "author_model_status": "completed",
+      "identity_method": "osnet_tracklet_roster_v5",
+      "author_method": "osnet_temporal_all_sides_soft_hgb_v1",
+      "conditional_author": {
+        "contacts": 191,
+        "named_targets": 90,
+        "other_team_targets": 101,
+        "correct_named": 71,
+        "exact_person_recall": 0.7888888888888889,
+        "person_predictions": 82,
+        "exact_person_precision": 0.8658536585365854,
+        "person_f1": 0.8255813953488372,
+        "author_or_other_team_accuracy": 0.8691099476439791,
+        "correct_author_or_other_team": 166,
+        "other_team_recall": 0.9405940594059405,
+        "named_errors": {
+          "correct": 71,
+          "wrong_person_or_unmapped": 7,
+          "unresolved": 9,
+          "wrong_team": 3
+        }
+      },
+      "conditional_author_photo_guard": {
+        "contacts": 191,
+        "named_targets": 90,
+        "other_team_targets": 101,
+        "correct_named": 71,
+        "exact_person_recall": 0.7888888888888889,
+        "person_predictions": 82,
+        "exact_person_precision": 0.8658536585365854,
+        "person_f1": 0.8255813953488372,
+        "author_or_other_team_accuracy": 0.8691099476439791,
+        "correct_author_or_other_team": 166,
+        "other_team_recall": 0.9405940594059405,
+        "named_errors": {
+          "correct": 71,
+          "wrong_person_or_unmapped": 7,
+          "unresolved": 9,
+          "wrong_team": 3
+        }
+      },
+      "reference_time_recovery": {
+        "5": {
+          "reviewed_contacts_matched": 177,
+          "reviewed_contact_recall": 0.9267015706806283,
+          "named_contacts_detected": 85,
+          "exact_named_hits": 66,
+          "exact_named_recovery": 0.7333333333333333,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "10": {
+          "reviewed_contacts_matched": 182,
+          "reviewed_contact_recall": 0.9528795811518325,
+          "named_contacts_detected": 85,
+          "exact_named_hits": 66,
+          "exact_named_recovery": 0.7333333333333333,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        },
+        "15": {
+          "reviewed_contacts_matched": 182,
+          "reviewed_contact_recall": 0.9528795811518325,
+          "named_contacts_detected": 85,
+          "exact_named_hits": 66,
+          "exact_named_recovery": 0.7333333333333333,
+          "audited_named_targets": 0,
+          "audited_exact_named_hits": 0,
+          "audited_exact_named_recovery": null
+        }
+      },
+      "exhaustive_detection": {}
+    }
+  ],
+  "validation": {
+    "all_ten_runs_completed": true,
+    "paired_stats_and_annotations_author_reports_equal": true,
+    "human_snapshot_unchanged": true,
+    "checked_model_files_match_registry_pins": true,
+    "adversarial_timestamp_matching_cases_passed": 500,
+    "frozen_photo_naming_with_later_id_hijack_regression_passed": true,
+    "scoring_revision_model_labels_and_evidence_unchanged": true,
+    "scoring_revision_max_numeric_difference": 3.3306690738754696e-16
+  },
+  "limitations": [
+    "All ten sources overlap final-fit author training; descriptive development evaluation only.",
+    "Known-contact control supplies reviewed/proposed timestamps and types; it does not measure contact detection.",
+    "The seven expansion videos have selected author labels and unaudited model times; no exhaustive detection precision/recall claim.",
+    "Automatic IDs are named from confirmed photos only, never optimized against contact-author labels.",
+    "Full detection uses audited contact times on three full-gold videos; unsure authors excluded only from person metrics.",
+    "Human non_game frames are excluded only in the explicitly named human_in_play diagnostic."
+  ]
+}

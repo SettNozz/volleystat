@@ -4,7 +4,18 @@ Moved verbatim from `AGENTS.md` on 2026-11-08 to keep the always-loaded agent
 context small. Rules and caveats here still apply to their subsystems; code,
 CLI `--help`, tests and config override prose when they disagree.
 
-Sections: Human contact-author annotation (2026-10-31); Human contact-author benchmark (2026-10-31); OSNet/temporal author follow-up and unseen-video inference; Per-player contacts (2026-10-30); Offline pose completion pilot (2026-10-30); Isolated contact-author learning (2026-10-30); Volleyball contact lab (2026-10-30); P4 case corrections (2026-10-30); Experimental people masks; Archived research (2026-10-30); Dense contact spotting and constrained decoding (2026-10-27); Expanded contact-author/type experiments (2026-11-06); Persistent player identity pilot (2026-10-29); Main-workflow player identity (user-requested adoption); Model-output capture and replay (2026-10-30).
+Sections: Automatic-roster contact benchmark (2026-11-14); Human contact-author annotation (2026-10-31); Human contact-author benchmark (2026-10-31); OSNet/temporal author follow-up and unseen-video inference; Per-player contacts (2026-10-30); Offline pose completion pilot (2026-10-30); Isolated contact-author learning (2026-10-30); Volleyball contact lab (2026-10-30); P4 case corrections (2026-10-30); Experimental people masks; Archived research (2026-10-30); Dense contact spotting and constrained decoding (2026-10-27); Expanded contact-author/type experiments (2026-11-06); Persistent player identity pilot (2026-10-29); Main-workflow player identity (user-requested adoption); Model-output capture and replay (2026-10-30).
+
+## Automatic-roster contact benchmark (2026-11-14)
+
+Ten-source production inference at `5bd1d8af` completed with automatic rosters
+and no training. Conditional exact-person recall: 362/585 (61.88%); precision:
+71.68%; F1: 66.42%. Three-source audited contact-plus-person detection at +/-5
+frames: 74.47% recall / 83.33% precision / 78.65% F1. All ten sources overlap
+author training; the three exhaustive sources also trained the spotter.
+Aggregate evidence, source/model fingerprints and limitations:
+[benchmark report](experiments/current_contact_system_benchmark_20261114_v1.md).
+Local detailed run: `results/contact_system_benchmark_20261114_v1/`.
 
 ## Human contact-author annotation (2026-10-31)
 
