@@ -7,6 +7,11 @@ const uploadCalibration = (() => {
   const refresh = el('refreshNetFloor');
   const netProfile = el('netProfile');
   const time = el('previewTime'), timeline = el('previewTimeline');
+  const lensEnabled = el('lensCorrectionEnabled');
+  const lensFov = el('lensFov'), lensBalance = el('lensBalance');
+  const lensSettings = () => lensEnabled?.checked ? {
+    enabled: true, horizontal_fov_deg: Number(lensFov.value), balance: Number(lensBalance.value),
+  } : null;
   let lastSecond = null;
   let original, edit, anchors, drag, path, pending;
   let requestNumber = 0;
@@ -58,6 +63,7 @@ const uploadCalibration = (() => {
         body: JSON.stringify({
           video_path: selectedPath, setup_id: setupId,
           seconds,
+          lens_correction: lensSettings(),
         }),
       });
       const contentType = response.headers.get('Content-Type') || '';
@@ -88,6 +94,7 @@ const uploadCalibration = (() => {
         setup.value = setupId;
         original = {
           frame_width: w, frame_height: h,
+          lens_correction: data.lens_correction || null,
           court_corners: data.court_corners ||
             [[w * .2, h * .4], [w * .8, h * .4], [w * .97, h * .94], [w * .03, h * .94]],
           net_tape: data.net_tape.length === 3
@@ -200,7 +207,8 @@ const uploadCalibration = (() => {
     const frame = new Image();
     frame.onload = () => { if (fullFrame === frame && loupeAt) drawLoupe(loupeAt); };
     frame.src = '/api/analysis_calibration/frame?' +
-      new URLSearchParams({ video_path: selectedPath, seconds: String(seconds) });
+      new URLSearchParams({ video_path: selectedPath, seconds: String(seconds),
+        lens_correction: JSON.stringify(lensSettings()) });
     fullFrame = frame;
   }
 
@@ -336,6 +344,27 @@ const uploadCalibration = (() => {
     drawLoupe(loupeAt);
   }, { passive: false });
   input.addEventListener('input', close);
+  input.addEventListener('change', () => {
+    if (input.value.trim()) load();
+  });
+  function updateLensLabels() {
+    el('lensCorrectionSettings').hidden = !lensEnabled.checked;
+    el('lensFovValue').textContent = lensFov.value + '°';
+    el('lensBalanceValue').textContent = Math.round(Number(lensBalance.value) * 100) + '%';
+  }
+  function changeLens() {
+    // Raw-image handles cannot survive a change to the image projection.
+    const seconds = Number(time.value);
+    close();
+    setPreviewTime(seconds);
+    updateLensLabels();
+    if (input.value.trim()) load();
+  }
+  lensEnabled?.addEventListener('change', changeLens);
+  [lensFov, lensBalance].forEach(control => {
+    control?.addEventListener('input', updateLensLabels);
+    control?.addEventListener('change', changeLens);
+  });
   el('previewCalibration').addEventListener('click', () => load({ keepEdits: Boolean(edit) }));
   el('seekCalibration').addEventListener('click', () => seek(Number(time.value)));
   time.addEventListener('keydown', event => {
@@ -347,7 +376,10 @@ const uploadCalibration = (() => {
   el('previewForward').addEventListener('click', () => seek(Number(time.value) + 5));
   setup.addEventListener('change', () => load({ setupId: setup.value }));
   el('resetCalibration').addEventListener('click', reset);
-  el('cancelCalibration').addEventListener('click', close);
+  el('cancelCalibration').addEventListener('click', () => {
+    if (lensEnabled) { lensEnabled.checked = false; updateLensLabels(); }
+    close();
+  });
   mode.addEventListener('change', () => {
     drag = null;
     hideLoupe();
@@ -359,9 +391,16 @@ const uploadCalibration = (() => {
   return {
     analysisOptions(selectedPath) {
       if (pending) throw new Error('Wait for the calibration preview to load.');
+      const lens = lensSettings();
+      const editedLens = edit?.lens_correction;
+      if (lens && (!edit || selectedPath !== path ||
+          !editedLens || editedLens.horizontal_fov_deg !== lens.horizontal_fov_deg ||
+          editedLens.balance !== lens.balance || !editedLens.enabled)) {
+        throw new Error('Preview the lens correction and align the court before analyzing.');
+      }
       if (!edit || selectedPath !== path) return {};
       if (!courtCornersAreConvex(edit.court_corners)) throw new Error('Fix the court outline before analyzing.');
-      return { calibration: structuredClone(edit) };
+      return { calibration: structuredClone(edit), ...(lens ? { lens_correction: lens } : {}) };
     },
   };
 })();
