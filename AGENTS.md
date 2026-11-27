@@ -343,7 +343,8 @@ Viewer uploads select the ball batch automatically. Prefer compatible cached det
 
 New analysis accepts a dropped video file: `/api/upload_video` copies it to
 `data/uploads/` (same name + size reuses the copy) because browsers never expose
-a dropped file's path. It can preview a source frame and adjust saved court
+a dropped file's path. The court preview opens automatically after upload/reuse
+or a committed path change. It can preview a source frame and adjust saved court
 lines/corners and net tape before processing; a magnifier shows a native-res
 crop (`/api/analysis_calibration/frame`) around the active handle. Confirmed geometry is stored as a job-local
 `court_calibration.json`; net detection is disabled for that job and its floor
@@ -352,6 +353,10 @@ camera setups are not modified.
 Preview must show the same upper tape, lower mesh edge and player divider as
 the final result. Explicit tape endpoints retain their native X coordinates;
 manual net geometry bypasses automatic detection, including floor refresh.
+Optional Wide/fisheye correction (`src/video/lens_correction.py`) prepares a separate
+video before analysis; preview and export share the same maps. Calibrate the corrected
+image, bind handles to the lens settings, and use that video for inference and playback.
+Never reuse raw-image detections on corrected pixels. See `docs/lens_correction.md`.
 Saving a manual viewer correction must persist tape endpoints, mesh bottom and
 the court-centre divider together; reloading must preserve all three lines.
 

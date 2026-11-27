@@ -62,6 +62,7 @@ from src.viewer_app.court_correction import (
 )
 from src.viewer_app.media import _stream_video, _decode_thumbnail, _decode_player_portrait
 from src.viewer_app.uploads import UploadError, find_existing_upload, store_upload
+from src.video.lens_correction import LensCorrection, prepare_video, rectify_frame
 
 app = Flask(__name__, template_folder="viewer/templates", static_folder="viewer/static")
 # Jinja caches compiled templates in memory, so UI edits need a server restart
@@ -227,6 +228,7 @@ def _run_analysis(
     refresh_net_floor: bool = True,
     net_height_m: float = 2.34,
     calibration: dict | None = None,
+    lens_correction: dict | None = None,
 ):
     """Run analysis in background thread."""
     jobs[job_id] = {"status": "running", "progress": 0, "message": "Starting..."}
@@ -234,6 +236,29 @@ def _run_analysis(
         from src.pipeline.game_analyzer import GameAnalyzer
         output_dir = RESULTS_DIR / job_id
         output_dir.mkdir(exist_ok=True)
+        def update_progress(update: dict) -> None:
+            """Publish preparation and analyzer progress for the polling endpoint."""
+            current = dict(jobs.get(job_id) or {})
+            if current.get("status") == "done":
+                return
+            current.update(update)
+            current["status"] = "running"
+            jobs[job_id] = current
+
+        profile = LensCorrection.from_dict(lens_correction)
+        if profile.enabled:
+            prepared, provenance = prepare_video(
+                video_path, profile, directory=PROJECT_ROOT / "data" / "rectified_videos",
+                progress=update_progress,
+            )
+            video_path = str(prepared)
+            (output_dir / "video_preprocessing.json").write_text(
+                json.dumps(provenance, indent=2), encoding="utf-8",
+            )
+            jobs[job_id] = {
+                "status": "running", "progress": 0,
+                "message": "Starting analysis of the corrected video...",
+            }
         calibration_options = {}
         if calibration is not None:
             path = output_dir / "court_calibration.json"
@@ -242,15 +267,6 @@ def _run_analysis(
                 "calibration_path": str(path.resolve()),
                 "enable_net_detection": False,
             }
-
-        def update_progress(update: dict) -> None:
-            """Publish analyzer progress atomically for the polling endpoint."""
-            current = dict(jobs.get(job_id) or {})
-            if current.get("status") == "done":
-                return
-            current.update(update)
-            current["status"] = "running"
-            jobs[job_id] = current
 
         analyzer = GameAnalyzer(
             # The results page draws overlays from annotations on top of the
@@ -383,12 +399,17 @@ def analysis_calibration():
         if not video_path.is_file() or not math.isfinite(seconds) or seconds < 0:
             raise ValueError("Choose an existing video and a nonnegative preview time")
         frame, last_second = _calibration_frame(video_path, seconds)
+        lens = LensCorrection.from_dict(data.get("lens_correction"))
+        frame = rectify_frame(frame, lens)
         height, width = frame.shape[:2]
         shared = PROJECT_ROOT / "court_calibration.json"
         source = json.loads(shared.read_text(encoding="utf-8")) if shared.is_file() else {}
         setup = _setup_store().get(data.get("setup_id")) if data.get("setup_id") else None
         if setup:
             source = setup.to_dict()
+        if lens.enabled and source.get("lens_correction") != lens.to_dict():
+            # Saved raw-image geometry is not a calibration of this corrected view.
+            source = {}
         sw, sh = source.get("frame_width", 3840), source.get("frame_height", 2160)
         corners = source.get("court_corners")
         net = source.get("net_line_points") or []
@@ -409,6 +430,7 @@ def analysis_calibration():
             image="data:image/jpeg;base64," + base64.b64encode(encoded).decode("ascii"),
             frame_width=width, frame_height=height,
             last_second=last_second,
+            lens_correction=lens.to_dict() if lens.enabled else None,
             court_corners=scale_corners(corners, (sw, sh), (width, height)) if corners else None,
             net_tape=[
                 [width * (left / sw if left is not None else .15),
@@ -436,6 +458,8 @@ def analysis_calibration_frame():
         if not video_path.is_file() or not math.isfinite(seconds) or seconds < 0:
             raise ValueError("Choose an existing video and a nonnegative preview time")
         frame, _ = _calibration_frame(video_path, seconds)
+        lens = LensCorrection.from_dict(json.loads(request.args.get("lens_correction", "null")))
+        frame = rectify_frame(frame, lens)
         ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
         if not ok:
             raise ValueError("Could not encode preview frame")
@@ -487,15 +511,29 @@ def analyze():
         return jsonify({"error": f"Video not found: {video_path_raw}"}), 400
 
     job_args = (str(video_path), skip_frames, refresh_net_floor, net_height_m)
+    try:
+        lens = LensCorrection.from_dict(data.get("lens_correction"))
+        if lens.enabled and "calibration" not in data:
+            raise ValueError("Preview the lens correction and align the court before analyzing")
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 400
     if "calibration" in data:
         try:
             edit = data["calibration"]
+            if not isinstance(edit, dict):
+                raise ValueError("Calibration must be an object")
+            if edit.get("lens_correction") != (lens.to_dict() if lens.enabled else None):
+                raise ValueError("Lens settings changed; reload the preview and align the court")
             frame, _ = _calibration_frame(video_path)
             height, width = frame.shape[:2]
             if (edit["frame_width"], edit["frame_height"]) != (width, height):
                 raise ValueError("Video size changed; reload the calibration preview")
             calibration = _manual_calibration(edit, width, height, net_height_m)
             job_args = (str(video_path), skip_frames, False, net_height_m, calibration)
+            if lens.enabled:
+                calibration["lens_correction"] = lens.to_dict()
+                calibration["coordinate_space"] = "rectified_image_pixels"
+                job_args += (lens.to_dict(),)
         except (KeyError, TypeError, ValueError, OverflowError) as exc:
             return jsonify(error=f"Invalid calibration: {exc}"), 400
 

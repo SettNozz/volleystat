@@ -41,11 +41,13 @@ The viewer requires `flask` and `flask-cors`; feature/annotation workflows use `
 Start `python viewer.py` and open [localhost:5050](http://localhost:5050). A second instance can use `python viewer.py --port 5051`. On Windows, `scripts/start_viewer.ps1 [-Port 5050]` starts the viewer (or reuses a running one) and opens the library; `scripts/install_viewer_shortcut.ps1 [-StartMenu]` creates a "CourtSense" desktop shortcut for it with the project icon (`viewer/static/brand/`).
 
 1. Choose **Upload** and provide a path or drop a video. Dropped files are copied into `data/uploads/`; the same name and size reuse the existing copy.
-2. Open **Preview and edit court & net**. Start from a saved camera setup or the default calibration. Drag court lines/corners and net tape handles. The handle magnifier shows a native-resolution crop; use the mouse wheel to change its zoom.
+2. The court and net preview opens automatically after upload or reuse of an existing copy. For a typed path, leave the path field to open it. **Preview and edit court & net** can reopen the editor. Start from a saved camera setup or the default calibration. Drag court lines/corners and net tape handles. The handle magnifier shows a native-resolution crop; use the mouse wheel to change its zoom.
 3. Choose a clearer preview time if needed, then start **Analyze Video**. Edited geometry is saved for that job. Manual mode uses the drawn court centre line as the floor divider and bypasses automatic net detection. **Use automatic settings** restores the automatic workflow.
 4. Open the result and inspect overlays and events. The original recording remains the video source; saved annotations supply the overlays.
 
 The preview and result share three net references: upper tape, lower mesh edge and player divider. Open the gear at the video's upper right, then **Calibration & sync**, to save a manual correction for all three together. Named camera setups live in `configs/court_setups.json`; job-local calibration does not change shared setups.
+
+For GoPro Wide/fisheye sources, enable **Straighten Wide / fisheye footage** and adjust the preview before placing court/net handles. Lens changes reset those handles. Analysis first creates a reusable corrected video, and both models and result playback consume that file. See [lens correction](lens_correction.md) for the CLI and limits with unknown HyperSmooth settings.
 
 ### Review tools
 

@@ -33,8 +33,9 @@
 
   function usePath(path, message) {
     input.value = path;
-    // Same event as typing: closes a calibration preview of the old video.
+    // Invalidate old geometry, then preview the video once its stored path is ready.
     input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new Event('change'));
     show(message);
   }
 

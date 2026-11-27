@@ -115,6 +115,19 @@ button.link-button:hover { background: none; }
         <span id="uploadText" role="status"></span>
       </div>
     </div>
+    <label class="check-label">
+      <input type="checkbox" id="lensCorrectionEnabled">
+      Straighten Wide / fisheye footage
+    </label>
+    <div id="lensCorrectionSettings" hidden>
+      <label for="lensFov">Wide correction: <output id="lensFovValue">130°</output></label>
+      <input type="range" id="lensFov" min="60" max="170" step="0.1" value="130" style="width:100%">
+      <label for="lensBalance">Framing: <output id="lensBalanceValue">50%</output></label>
+      <input type="range" id="lensBalance" min="0" max="1" step="0.05" value="0.5" style="width:100%">
+      <p class="hint">Adjust until court lines look straight, then align the court and net.
+        Lower framing crops the edges; higher framing keeps more of the view and may show black borders.
+        Check several preview times if camera stabilization was enabled.</p>
+    </div>
     <button type="button" id="previewCalibration">Preview and edit court &amp; net</button>
     <p class="hint" id="calibrationStatus" role="status"></p>
     <section id="calibrationEditor" hidden aria-label="Court and net calibration">
